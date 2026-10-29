@@ -6,6 +6,8 @@ export interface LoadedPlugin {
   hooks: ServerHooks
 }
 
+export type HookArgs<K extends keyof ServerHooks> = NonNullable<ServerHooks[K]> extends (...args: infer A) => unknown ? A : never;
+
 type TransformHook = "content.beforeValidate" | "content.beforeWrite" | "content.beforeDelete" | "content.read" | "media.beforeUpload";
 
 export class PluginHost {
@@ -29,14 +31,10 @@ export class PluginHost {
   }
 
   /** Transforming hooks run in config order, each mutating `output`. */
-  async transform<K extends TransformHook>(
-    hook: K,
-    input: Parameters<NonNullable<ServerHooks[K]>>[0],
-    output: Parameters<NonNullable<ServerHooks[K]>>[1]
-  ): Promise<void> {
+  async transform<K extends TransformHook>(hook: K, ...args: HookArgs<K>): Promise<void> {
     for(const plugin of this.plugins) {
-      const fn = plugin.hooks[hook] as ((i: unknown, o: unknown) => unknown) | undefined;
-      if(fn) await fn(input, output);
+      const fn = plugin.hooks[hook] as ((...a: HookArgs<K>) => unknown) | undefined;
+      if(fn) await fn(...args);
     }
   }
 

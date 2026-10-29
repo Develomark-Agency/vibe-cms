@@ -1,25 +1,20 @@
+import { toPlainText } from "@vibe-cms/rich-text";
 import { defineServer } from "vibe-cms/server";
+import type config from "../../../vibe-cms.config.ts";
 import type { ViewsPlugin } from "./index.ts";
 
-function words(value: unknown): number {
-  if(typeof value === "string") return value.split(/\s+/).filter(Boolean).length;
-  if(Array.isArray(value)) return value.reduce((n: number, item) => n + words(item), 0);
-  if(value && typeof value === "object") {
-    const node = value as Record<string, unknown>;
-    return words(node.text) + words(node.children) + words(node.items);
-  }
-  return 0;
-}
-
-export default defineServer<typeof ViewsPlugin>(({ bindings, options, log }) => {
+// A site's own plugin can know the site's content types: hooks are typed against `config`.
+export default defineServer<typeof ViewsPlugin, typeof config>(({ bindings, options, log }) => {
   const types = options.types ?? ["post"];
   function counter(id: string) {
     return bindings.counters.get(bindings.counters.idFromName(id));
   }
   return {
-    // transform: derive a field the schema doesn't have to know about
-    "content.beforeWrite": ({ type }, output) => {
-      if(type === "post") output.doc.readingMinutes = Math.max(1, Math.round(words(output.doc.body) / 220));
+    // transform: derive a field. It's declared in the schema (read-only in the editor).
+    "content.beforeWrite": (_input, output) => {
+      if(output.type !== "post" || !output.valid) return;
+      const words = toPlainText(output.doc.body).split(/\s+/).filter(Boolean).length;
+      output.doc.readingMinutes = Math.max(1, Math.round(words / 220));
     },
     // observe
     "content.afterWrite": ({ type, id, action }) => {

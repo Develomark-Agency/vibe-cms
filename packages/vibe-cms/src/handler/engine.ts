@@ -6,18 +6,19 @@ import type {
   ArraySchema,
   AssetMeta,
   AssetSchema,
+  DocumentData,
   ObjectSchema,
   OptionalSchema,
   RefSchema,
   UnionSchema
 } from "../schema/types.ts";
-import { findReferences, pickUnionOption, schemaAt, validate, type Issue } from "../schema/validate.ts";
+import { findReferences, isRecord, pickUnionOption, schemaAt, validate, type Issue } from "../schema/validate.ts";
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeMatches } from "./analyze.ts";
 import { can, require } from "./auth.ts";
 import { all, first, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type VersionRow } from "./db.ts";
 import type { D1, ExecutionContext, R2 } from "./platform.ts";
-import type { PluginHost } from "./plugins.ts";
+import type { HookArgs, PluginHost } from "./plugins.ts";
 import { SqlBuilder } from "./sql.ts";
 
 export interface EngineState {
@@ -38,7 +39,7 @@ export interface RequestScope {
   ctx?: ExecutionContext
 }
 
-export type Doc = Record<string, unknown> & { id: string, $meta: DocumentMeta };
+export type Doc = DocumentData & { id: string, $meta: DocumentMeta };
 
 /** D1 caps bound parameters per statement at 100. */
 const MAX_PARAMS = 90;
@@ -90,8 +91,9 @@ export class Engine {
     return locale;
   }
 
-  private afterWrite(input: Parameters<PluginHost["observe"]>[0]) {
-    const promise = this.state.plugins.observe(input);
+  /** `valid` says whether `doc` passed validation; the engine itself is type-erased. */
+  private afterWrite(input: { type: string, id: string, locale: string, action: WriteAction | "delete", valid: boolean, doc: DocumentData | null }) {
+    const promise = this.state.plugins.observe(input as Parameters<PluginHost["observe"]>[0]);
     if(this.scope.ctx) this.scope.ctx.waitUntil(promise);
     else return promise;
   }
@@ -166,7 +168,8 @@ export class Engine {
     if(args.with) await this.expand(type, docs, args.with, locale, drafts);
     if(this.state.plugins.has.read) {
       for(const doc of docs) {
-        const output = { doc: doc as Record<string, unknown> };
+        // The engine is type-erased: published reads are valid documents, drafts may not be.
+        const output = { type, drafts, doc: doc as DocumentData } as HookArgs<"content.read">[1];
         await this.state.plugins.transform("content.read", { type, drafts }, output);
         Object.assign(doc, output.doc);
       }
@@ -175,7 +178,7 @@ export class Engine {
   }
 
   private toDoc(row: DocumentRow, drafts: boolean): Doc {
-    const data = JSON.parse((drafts ? row.draft : row.published) ?? "{}") as Record<string, unknown>;
+    const data = JSON.parse((drafts ? row.draft : row.published) ?? "{}") as DocumentData;
     return {
       ...data,
       id: row.id,
@@ -237,7 +240,7 @@ export class Engine {
     for(const doc of docs) {
       if(isArray) {
         const values = (doc[key] as unknown[] | undefined) ?? [];
-        doc[key] = values.map(v => found.get(target(v)?.id ?? "")).filter(Boolean);
+        doc[key] = values.map(v => found.get(target(v)?.id ?? "")).filter((d): d is Doc => d !== undefined);
       } else if(doc[key] !== undefined) {
         doc[key] = found.get(target(doc[key])?.id ?? "") ?? null;
       }
@@ -413,7 +416,7 @@ export class Engine {
          updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
       [id, input.type, locale, draft, this.state.schemaHash, now, now, session?.sub ?? null]
     );
-    this.afterWrite({ type: input.type, id, locale, action, doc });
+    this.afterWrite({ type: input.type, id, locale, action, valid: issues.length === 0, doc });
     if(input.publish) return this.publish(input.type, id, locale);
     return { ...(await this.getDocument(input.type, id, locale)), issues };
   }
@@ -434,18 +437,21 @@ export class Engine {
     session: Session | null
   ) {
     const hookInput = { type, id, locale, action, session: session ?? undefined };
-    const input = { doc: structuredClone((data ?? {}) as Record<string, unknown>) };
+    const input = { doc: structuredClone((data ?? {}) as DocumentData) };
     await this.state.plugins.transform("content.beforeValidate", hookInput, input);
-    const result = validate<Record<string, unknown>>(schema, input.doc);
-    const issues = [...result.issues, ...await this.checkReferences(schema, result.value)];
-    const output = { doc: result.value };
+    const first = validate<DocumentData>(schema, input.doc);
+    const valid = first.issues.length === 0 && (await this.checkReferences(schema, first.value)).length === 0;
+    const output = { type, valid, doc: first.value } as HookArgs<"content.beforeWrite">[1];
     try {
-      await this.state.plugins.transform("content.beforeWrite", hookInput, output);
+      await this.state.plugins.transform("content.beforeWrite", { ...hookInput, valid }, output);
     } catch (error) {
       if(error instanceof HttpError) throw error;
       throw new HttpError(422, (error as Error).message || "Rejected by a plugin");
     }
-    return { doc: output.doc, issues };
+    // Plugins may only set fields the schema declares; validate their output too.
+    const result = validate<DocumentData>(schema, output.doc);
+    const issues = [...result.issues, ...await this.checkReferences(schema, result.value)];
+    return { doc: result.value, issues };
   }
 
   /** Every ref must point at an existing document of the right type; every asset must exist and fit its field. */
@@ -508,7 +514,7 @@ export class Engine {
       [data, data, ver, now, now, session?.sub ?? null, id, locale]
     );
     await run(this.db, "DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'publish'", [id, locale]);
-    this.afterWrite({ type, id, locale, action: "publish", doc });
+    this.afterWrite({ type, id, locale, action: "publish", valid: true, doc });
     return { ...(await this.getDocument(type, id, locale)), issues: [] };
   }
 
@@ -530,7 +536,7 @@ export class Engine {
     if(!row || row.type !== type) throw new HttpError(404, "Document not found");
     await run(this.db, "UPDATE vibe_documents SET published = NULL, published_ver = NULL, published_at = NULL WHERE id = ? AND locale = ?", [id, locale]);
     await run(this.db, "DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'unpublish'", [id, locale]);
-    this.afterWrite({ type, id, locale, action: "unpublish", doc: null });
+    this.afterWrite({ type, id, locale, action: "unpublish", valid: false, doc: null });
     return this.getDocument(type, id, locale);
   }
 
@@ -555,7 +561,7 @@ export class Engine {
         this.db.prepare("DELETE FROM vibe_documents WHERE id = ? AND locale = ?").bind(id, locale),
         this.db.prepare("DELETE FROM vibe_schedules WHERE id = ? AND locale = ?").bind(id, locale)
       ]);
-      this.afterWrite({ type, id, locale, action: "delete", doc: null });
+      this.afterWrite({ type, id, locale, action: "delete", valid: false, doc: null });
       return { deleted: true };
     }
     if(!options.force) {
@@ -570,7 +576,7 @@ export class Engine {
       this.db.prepare("DELETE FROM vibe_versions WHERE id = ?").bind(id),
       this.db.prepare("DELETE FROM vibe_schedules WHERE id = ?").bind(id)
     ]);
-    this.afterWrite({ type, id, locale: "*", action: "delete", doc: null });
+    this.afterWrite({ type, id, locale: "*", action: "delete", valid: false, doc: null });
     return { deleted: true };
   }
 
@@ -649,14 +655,14 @@ export class Engine {
           this.db.prepare("DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'publish'").bind(item.id, item.locale)
         ]);
         const row = await this.getRow(item.id, item.locale);
-        this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "publish", doc: row?.published ? JSON.parse(row.published) : null });
+        this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "publish", valid: Boolean(row?.published), doc: row?.published ? JSON.parse(row.published) as DocumentData : null });
       } else if(item.action === "unpublish") {
         await this.db.batch([
           this.db.prepare("UPDATE vibe_documents SET published = NULL, published_ver = NULL, published_at = NULL WHERE id = ? AND locale = ?")
             .bind(item.id, item.locale),
           this.db.prepare("DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'unpublish'").bind(item.id, item.locale)
         ]);
-        this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "unpublish", doc: null });
+        this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "unpublish", valid: false, doc: null });
       }
     }
     return due.length;
@@ -827,15 +833,15 @@ export function mapAssets(schema: AnySchema, value: unknown, fn: (value: unknown
       return mapAssets((schema as OptionalSchema).inner, value, fn);
     case "asset": {
       const fields = (schema as AssetSchema).fields;
-      const inner: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+      const inner: { [key: string]: unknown } = { ...(isRecord(value) ? value : {}) };
       for(const [key, field] of Object.entries(fields)) inner[key] = mapAssets(field, inner[key], fn);
       return fn(inner);
     }
     case "array":
       return Array.isArray(value) ? value.map(item => mapAssets((schema as ArraySchema).item, item, fn)) : value;
     case "object": {
-      if(typeof value !== "object") return value;
-      const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+      if(!isRecord(value)) return value;
+      const out: { [key: string]: unknown } = { ...value };
       for(const [key, field] of Object.entries((schema as ObjectSchema).shape)) {
         if(key in out) out[key] = mapAssets(field, out[key], fn);
       }

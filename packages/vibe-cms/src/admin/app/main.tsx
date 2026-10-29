@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
+import type { IconName } from "../../icons.ts";
 import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
@@ -41,7 +42,7 @@ const queryClient = new QueryClient({
 });
 
 /** Collections and plugins name an icon from this set, or pass their own component. */
-function Icon({ name, className }: { name?: string | ComponentType<{ className?: string }>, className?: string }) {
+function Icon({ name, className }: { name?: IconName | ComponentType<{ className?: string }>, className?: string }) {
   if(typeof name === "function") {
     const Component = name;
     return <Component className={className} />;
@@ -259,19 +260,24 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
+          {/* Opens the palette; styled as a field so it doesn't read as a page. */}
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            aria-label="Search"
+            className="mt-1 flex h-8 w-full items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-2.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+          >
+            <SearchIcon className="size-4 shrink-0" />
+            <span className="flex-1 text-left group-data-[collapsible=icon]:hidden">Search…</span>
+            <Kbd className="group-data-[collapsible=icon]:hidden">⌘J</Kbd>
+          </button>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton isActive={active("/")} render={<Link to="/" />} tooltip="Dashboard"><HomeIcon /> <span>Dashboard</span></SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton onClick={() => setPaletteOpen(true)} tooltip="Search">
-                    <SearchIcon /> <span>Search</span>
-                    <Kbd className="ml-auto group-data-[collapsible=icon]:hidden">⌘J</Kbd>
-                  </SidebarMenuButton>
+                  <NavButton active={active("/")} to="/" tooltip="Dashboard"><HomeIcon /> <span>Dashboard</span></NavButton>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
@@ -282,15 +288,15 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
               <SidebarMenu>
                 {collections.map(type => (
                   <SidebarMenuItem key={type}>
-                    <SidebarMenuButton isActive={active(`/content/${type}`)} render={<Link to={`/content/${type}${locale !== config.defaultLocale ? `?locale=${locale}` : ""}`} />} tooltip={collectionLabel(config, type)}>
+                    <NavButton active={active(`/content/${type}`)} to={`/content/${type}${locale !== config.defaultLocale ? `?locale=${locale}` : ""}`} tooltip={collectionLabel(config, type)}>
                       <Icon name={collectionSettings(config, type).icon ?? "file-text"} />
                       <span>{collectionLabel(config, type)}</span>
-                    </SidebarMenuButton>
+                    </NavButton>
                   </SidebarMenuItem>
                 ))}
                 {session.permissions.media.read && (
                   <SidebarMenuItem>
-                    <SidebarMenuButton isActive={active("/media")} render={<Link to="/media" />} tooltip="Media"><ImageIcon /> <span>Media</span></SidebarMenuButton>
+                    <NavButton active={active("/media")} to="/media" tooltip="Media"><ImageIcon /> <span>Media</span></NavButton>
                   </SidebarMenuItem>
                 )}
               </SidebarMenu>
@@ -303,10 +309,10 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
                 <SidebarMenu>
                   {singletons.map(type => (
                     <SidebarMenuItem key={type}>
-                      <SidebarMenuButton isActive={active(`/content/${type}`)} render={<Link to={`/content/${type}`} />} tooltip={collectionLabel(config, type)}>
+                      <NavButton active={active(`/content/${type}`)} to={`/content/${type}`} tooltip={collectionLabel(config, type)}>
                         <Icon name={collectionSettings(config, type).icon ?? "settings"} />
                         <span>{collectionLabel(config, type)}</span>
-                      </SidebarMenuButton>
+                      </NavButton>
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>
@@ -320,9 +326,9 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
                 <SidebarMenu>
                   {plugins.slots.nav!.map(item => (
                     <SidebarMenuItem key={item.to}>
-                      <SidebarMenuButton isActive={active(item.to)} render={<Link to={item.to} />} tooltip={item.label}>
+                      <NavButton active={active(item.to)} to={item.to} tooltip={item.label}>
                         <Icon name={item.icon} /> <span>{item.label}</span>
-                      </SidebarMenuButton>
+                      </NavButton>
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>
@@ -386,7 +392,9 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
             </div>
           )}
         </div>
-        <ErrorBoundary resetKey={path}>{page}</ErrorBoundary>
+        <div className="min-h-full" style={{ viewTransitionName: "page" }}>
+          <ErrorBoundary resetKey={path}>{page}</ErrorBoundary>
+        </div>
       </SidebarInset>
       <ErrorBoundary resetKey={paletteOpen}><Palette open={paletteOpen} onOpenChange={setPaletteOpen} /></ErrorBoundary>
       <Toaster position="bottom-right" />
@@ -413,6 +421,19 @@ function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: s
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * A sidebar link. The active highlight is one shared element (a named view
+ * transition), so it slides from item to item when you navigate.
+ */
+function NavButton({ to, active, tooltip, children }: { to: string, active: boolean, tooltip: string, children: React.ReactNode }) {
+  return (
+    <SidebarMenuButton isActive={active} tooltip={tooltip} className="isolate data-active:bg-transparent" render={<Link to={to} />}>
+      {active && <span aria-hidden className="absolute inset-0 -z-10 rounded-md bg-sidebar-accent" style={{ viewTransitionName: "nav-active" }} />}
+      {children}
+    </SidebarMenuButton>
   );
 }
 

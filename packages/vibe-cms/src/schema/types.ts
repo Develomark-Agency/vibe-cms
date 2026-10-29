@@ -6,12 +6,27 @@ export interface Types<I, O = I> {
   output: O
 }
 
+/** Any value a document can hold. Content is stored as JSON. */
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
+export type JsonObject = { [key: string]: JsonValue | undefined };
+
+/**
+ * A document's data when the content type isn't known statically: inside the
+ * engine, the schema-driven editor, and plugins written for any site.
+ */
+export type DocumentData = JsonObject;
+
 export interface BaseSchema<I = unknown, O = I> {
   kind: "field",
   type: string,
   label?: string,
   description?: string,
   widget?: WidgetDescriptor<any, any>,
+  /** Shown but not editable, e.g. a value a plugin derives on write. */
+  readOnly?: boolean,
+  /** Not shown in the editor at all. */
+  hidden?: boolean,
   readonly "~types"?: Types<I, O>
 }
 
@@ -21,7 +36,11 @@ export type AnySchema = BaseSchema<any, any>;
 export interface FieldOptions<T> {
   label?: string,
   description?: string,
-  widget?: WidgetDescriptor<T, any>
+  widget?: WidgetDescriptor<T, any>,
+  /** Shown but not editable, e.g. a value a plugin derives on write. */
+  readOnly?: boolean,
+  /** Not shown in the editor at all. */
+  hidden?: boolean
 }
 
 export interface TextOptions extends FieldOptions<string> {

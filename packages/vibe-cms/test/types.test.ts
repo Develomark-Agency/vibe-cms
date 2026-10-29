@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { defineConfig, definePlugin, defineWidget, type Infer, type InferOutput } from "../src/index.ts";
 import { createHandler } from "../src/handler/index.ts";
+import { defineServer } from "../src/server/index.ts";
 import { image } from "../src/media/index.ts";
 import v from "../src/schema/index.ts";
 import type { D1 } from "../src/handler/platform.ts";
@@ -54,5 +55,81 @@ test("plugin binding contracts flow into createHandler", () => {
   createHandler(config, { bindings: () => ({ db, search: { cache } }) });
   // @ts-expect-error Property 'search' is missing
   createHandler(config, { bindings: () => ({ db }) });
+  expect(true).toBe(true);
+});
+
+test("hooks are typed per content type when given the site's config", () => {
+  const Audit = definePlugin()(() => ({ name: "audit", options: {} }));
+  const site = defineConfig({
+    schemas: {
+      post: v.object({ title: v.text(), words: v.optional(v.number({ readOnly: true })) }),
+      author: v.object({ name: v.text() })
+    }
+  });
+  defineServer<typeof Audit, typeof site>(() => ({
+    "content.beforeWrite": (_input, output) => {
+      if(output.type === "post" && output.valid) {
+        output.doc.words = output.doc.title.split(" ").length;
+        // @ts-expect-error not a field of posts
+        output.doc.wordz = 1;
+      }
+      if(output.type === "author" && output.valid) {
+        // @ts-expect-error authors have no title
+        void output.doc.title;
+      }
+      if(!output.valid) {
+        // Drafts that don't validate are plain JSON.
+        void output.doc.anything;
+      }
+    }
+  }));
+  // @ts-expect-error "pots" isn't a content type
+  defineServer<typeof Audit, typeof site>(() => ({ "content.beforeDelete": ({ type }) => void (type === "pots") }));
+  expect(true).toBe(true);
+});
+
+test("config strings are checked against the config's own schemas", () => {
+  const schemas = {
+    post: v.object({ title: v.text(), slug: v.text(), views: v.number(), author: v.ref("author") }),
+    author: v.object({ name: v.text() })
+  };
+  defineConfig({
+    locales: ["en", "fr"],
+    defaultLocale: "fr",
+    schemas,
+    collections: {
+      post: { title: "title", icon: "newspaper", preview: "/{locale}/posts/{slug}" },
+      author: { icon: "user-round" }
+    },
+    permissions: {
+      roles: { editor: { post: ["read", "write"], write: { locales: ["fr"] } } },
+      users: { "jane@example.com": ["editor"] }
+    }
+  });
+  // @ts-expect-error not an icon
+  defineConfig({ schemas, collections: { post: { icon: "ajlkwerjawl" } } });
+  // @ts-expect-error `views` is a number, not a text field
+  defineConfig({ schemas, collections: { post: { title: "views" } } });
+  // @ts-expect-error `slugg` isn't a field
+  defineConfig({ schemas, collections: { post: { preview: "/posts/{slugg}" } } });
+  // @ts-expect-error "pots" isn't a content type
+  defineConfig({ schemas, collections: { pots: { icon: "file" } } });
+  // @ts-expect-error "de" isn't one of the locales
+  defineConfig({ locales: ["en", "fr"], defaultLocale: "de", schemas });
+  // @ts-expect-error roles can only name content types
+  defineConfig({ schemas, permissions: { roles: { editor: { pots: ["read"] } } } });
+  // @ts-expect-error users can only be given roles that exist
+  defineConfig({ schemas, permissions: { roles: { editor: { post: ["read"] } }, users: { "a@b.c": ["admin"] } } });
+  // @ts-expect-error v.ref("authr") points at nothing
+  defineConfig({ schemas: { post: v.object({ author: v.ref("authr") }), author: v.object({ name: v.text() }) } });
+  expect(true).toBe(true);
+});
+
+test("query locales are the site's locales", () => {
+  const site = defineConfig({ locales: ["en", "fr"], schemas: { post: v.object({ title: v.text() }) } });
+  const cms = createHandler(site, { bindings: () => ({ db: {} as D1 }) }).client({});
+  void cms.query(site.schemas.post).findMany({ locale: "fr" });
+  // @ts-expect-error "de" isn't one of the site's locales
+  void cms.query(site.schemas.post).findMany({ locale: "de" });
   expect(true).toBe(true);
 });

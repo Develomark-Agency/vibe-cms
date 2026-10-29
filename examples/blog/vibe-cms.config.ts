@@ -41,6 +41,8 @@ export default defineConfig({
       tags: v.array(v.text()),
       layout: v.enum(["default", "wide"]),
       body: richText(),
+      // Kept up to date by the views plugin on every write.
+      readingMinutes: v.optional(v.number({ integer: true, label: "Reading time (minutes)", readOnly: true })),
       seo: v.optional(v.object({
         description: v.text({ max: 160 })
       }))

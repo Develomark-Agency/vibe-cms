@@ -1,7 +1,8 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownIcon, ArrowUpIcon, CopyIcon, FileTextIcon, FolderIcon, ImageIcon, PlusIcon, SearchIcon, Trash2Icon, UploadIcon } from "lucide-react";
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import type { Asset, DocumentSummary } from "../index.ts";
+import type { DocumentData } from "../../schema/types.ts";
 import { Button } from "../components/ui/button.tsx";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../components/ui/empty.tsx";
 import { Input } from "../components/ui/input.tsx";
@@ -18,11 +19,12 @@ import { AssetPreview, AssetThumb, describeAsset, FolderSelect, useUpload } from
 import { Link, navigate, useLocation } from "./router.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 
-interface ListedDoc extends DocumentSummary {
-  $meta: { status: "draft" | "published" | "changed", updatedAt: string, locale: string, publishedAt: string | null }
-}
-
 const PAGE = 25;
+
+/** Position in a `.stagger` list (see styles.css). */
+export function staggerIndex(i: number): CSSProperties {
+  return { "--i": i } as CSSProperties;
+}
 
 function useDebounced<T>(value: T, ms = 200): T {
   const [debounced, setDebounced] = useState(value);
@@ -48,7 +50,7 @@ export function ListPage({ type }: { type: string }) {
 
   const list = useQuery({
     queryKey: ["documents", type, locale, query, page, sort],
-    queryFn: () => cms.api<{ docs: ListedDoc[], total: number }>(
+    queryFn: () => cms.api<{ docs: DocumentSummary[], total: number }>(
       `/documents/${type}?${new URLSearchParams({ locale, search: query, limit: String(PAGE), offset: String(page * PAGE), sort })}`
     ),
     placeholderData: keepPreviousData
@@ -142,9 +144,9 @@ export function ListPage({ type }: { type: string }) {
                 <SortHead field="$updatedAt" className="w-40 pr-4 text-right">Updated</SortHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
-              {list.data!.docs.map(doc => (
-                <TableRow key={doc.id} className="cursor-pointer" onClick={() => navigate(`/content/${type}/${doc.id}`)}>
+            <TableBody className="stagger">
+              {list.data!.docs.map((doc, i) => (
+                <TableRow key={doc.id} style={staggerIndex(i)} className="cursor-pointer" onClick={() => navigate(`/content/${type}/${doc.id}`)}>
                   <TableCell className="max-w-0 pl-4 font-medium">
                     <Link to={`/content/${type}/${doc.id}`} className="block truncate" onClick={e => e.stopPropagation()}>{documentTitle(config, type, doc)}</Link>
                     {doc.$meta.locale !== locale && <span className="text-xs font-normal text-muted-foreground">Not translated · showing {localeName(doc.$meta.locale)}</span>}
@@ -186,7 +188,7 @@ export function Dashboard() {
   const stats = useQuery({
     queryKey: ["dashboard", locale],
     queryFn: async () => Promise.all(types.map(async type => {
-      const result = await cms.api<{ docs: ListedDoc[], total: number }>(`/documents/${type}?locale=${locale}&limit=5`);
+      const result = await cms.api<{ docs: DocumentSummary[], total: number }>(`/documents/${type}?locale=${locale}&limit=5`);
       return { type, ...result };
     }))
   });
@@ -203,15 +205,16 @@ export function Dashboard() {
         <h1 className="text-2xl font-semibold tracking-tight">{config.name ?? info.site.name}</h1>
         <p className="text-sm text-muted-foreground">Welcome back{session.user.name ? `, ${session.user.name.split(" ")[0]}` : ""}.</p>
       </div>
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {types.map(type => {
+      <section className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {types.map((type, i) => {
           const entry = stats.data?.find(s => s.type === type);
           const settings = collectionSettings(config, type);
           return (
             <Link
               key={type}
               to={`/content/${type}`}
-              className="group/card flex flex-col gap-3 rounded-xl border bg-card p-4 transition-shadow hover:shadow-md"
+              style={staggerIndex(i)}
+              className="group/card flex flex-col gap-3 rounded-xl border bg-card p-4 transition-[box-shadow,translate,border-color] duration-200 hover:-translate-y-0.5 hover:border-foreground/15 hover:shadow-md"
             >
               <span className="text-sm text-muted-foreground">{collectionLabel(config, type)}</span>
               <span className="text-2xl font-semibold tabular-nums">
@@ -223,14 +226,15 @@ export function Dashboard() {
       </section>
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-medium text-muted-foreground">Recently edited</h2>
-        <div className="overflow-hidden rounded-xl border">
+        <div className="stagger overflow-hidden rounded-xl border">
           {stats.isLoading ? <Delayed><div className="p-6"><Spinner /></div></Delayed>
             : recent.length === 0 ? <p className="p-6 text-sm text-muted-foreground">Nothing yet. Pick a content type to start writing.</p>
-              : recent.map(({ type, doc }) => (
+              : recent.map(({ type, doc }, i) => (
                 <Link
                   key={doc.id}
                   to={`/content/${type}/${doc.id}`}
-                  className="flex items-center gap-3 border-b px-4 py-2.5 text-sm last:border-b-0 hover:bg-muted/50"
+                  style={staggerIndex(i)}
+                  className="flex items-center gap-3 border-b px-4 py-2.5 text-sm transition-colors last:border-b-0 hover:bg-muted/50"
                 >
                   <StatusDot status={doc.$meta.status} />
                   <span className="min-w-0 flex-1 truncate font-medium">{documentTitle(config, type, doc)}</span>
@@ -308,8 +312,8 @@ export function MediaPage() {
       {list.isLoading ? (
         <Delayed><div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">{Array.from({ length: 12 }, (_, i) => <Skeleton key={i} className="aspect-[4/3.6]" />)}</div></Delayed>
       ) : list.data?.assets.length ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-          {list.data.assets.map(asset => <AssetThumb key={asset.id} asset={asset} selected={selected === asset.id} onClick={() => setSelected(asset.id)} />)}
+        <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+          {list.data.assets.map((asset, i) => <AssetThumb key={asset.id} style={staggerIndex(i)} asset={asset} selected={selected === asset.id} onClick={() => setSelected(asset.id)} />)}
         </div>
       ) : (
         <Empty className="border border-dashed">
@@ -422,7 +426,7 @@ function UsageLink({ type, id, locale }: { type: string, id: string, locale: str
   const { cms, config } = useAdmin();
   const doc = useQuery({
     queryKey: ["document", type, id, locale],
-    queryFn: () => cms.api<{ draft: Record<string, unknown> | null, status: "draft" }>(`/documents/${type}/${id}?locale=${locale}`)
+    queryFn: () => cms.api<{ draft: DocumentData | null, status: "draft" }>(`/documents/${type}/${id}?locale=${locale}`)
   });
   return (
     <Link to={`/content/${type}/${id}?locale=${locale}`} className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-muted">

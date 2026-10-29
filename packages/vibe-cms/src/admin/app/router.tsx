@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from "react";
+import { flushSync } from "react-dom";
 import { onPanelNavigate, postToPanel } from "./session.ts";
 
 const listeners = new Set<() => void>();
@@ -40,12 +41,23 @@ export function setNavigationBlocker(fn: (() => boolean) | undefined) {
   blocker = fn;
 }
 
+/**
+ * Moving to another page animates through the View Transitions API (see
+ * styles.css); changing only the query string (sorting, paging, locale) doesn't.
+ */
+function emitWithTransition(pageChanged: boolean) {
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(!pageChanged || reduced || !document.startViewTransition) return emit();
+  document.startViewTransition(() => flushSync(emit));
+}
+
 export function navigate(to: string, options: { replace?: boolean } = {}) {
   if(blocker && !blocker()) return;
   const url = base + (to.startsWith("/") ? to : `/${to}`);
+  const pageChanged = new URL(url, location.href).pathname !== location.pathname;
   if(options.replace) history.replaceState(null, "", url);
   else history.pushState(null, "", url);
-  emit();
+  emitWithTransition(pageChanged);
 }
 
 export function useNavigationSync() {

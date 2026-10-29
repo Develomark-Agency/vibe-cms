@@ -1,7 +1,9 @@
 import type { ComponentType, ReactNode } from "react";
 import type { AnyConfig } from "../config.ts";
+import type { IconName } from "../icons.ts";
 import type { QueryClient } from "../query/index.ts";
-import type { AnySchema } from "../schema/types.ts";
+import type { AnySchema, DocumentData, JsonValue } from "../schema/types.ts";
+import type { DocumentMeta } from "../query/index.ts";
 import type { Issue } from "../schema/validate.ts";
 
 export interface FieldDescriptor {
@@ -34,10 +36,8 @@ export interface Asset {
   createdBy: string
 }
 
-export interface DocumentSummary {
-  id: string,
-  [key: string]: unknown
-}
+/** A document as listed by the editor API: its draft data plus ID and metadata. */
+export type DocumentSummary = DocumentData & { id: string, $meta: DocumentMeta };
 
 export interface AdminClient {
   /** Authenticated request to the site's API, relative to `/_vibe/api`. */
@@ -88,7 +88,7 @@ export interface DocumentSlotProps {
   type: string,
   id: string | null,
   locale: string,
-  value: Record<string, unknown>,
+  value: DocumentData,
   status: "draft" | "published" | "changed" | null,
   cms: AdminClient
 }
@@ -96,8 +96,8 @@ export interface DocumentSlotProps {
 export interface NavItem {
   label: string,
   to: string,
-  /** An icon name like `"search"` (see the admin's icon set), or a component. */
-  icon?: string | ComponentType<{ className?: string }>
+  /** An icon from the editor's set, or your own component. */
+  icon?: IconName | ComponentType<{ className?: string }>
 }
 
 export interface DocumentAction {
@@ -135,8 +135,8 @@ export interface ListFilter {
 
 export interface FieldDecoratorProps {
   field: FieldDescriptor,
-  value: unknown,
-  onChange(value: unknown): void,
+  value: JsonValue | undefined,
+  onChange(value: JsonValue | undefined): void,
   cms: AdminClient,
   children: ReactNode
 }

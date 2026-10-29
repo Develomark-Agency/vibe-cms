@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckIcon, ChevronsUpDownIcon, ExternalLinkIcon, FileIcon, FilmIcon, ImageIcon, LibraryIcon, SearchIcon, UploadIcon, XIcon } from "lucide-react";
-import { useRef, useState, type DragEvent, type ReactNode } from "react";
+import { ChevronsUpDownIcon, ExternalLinkIcon, FileIcon, FilmIcon, ImageIcon, LibraryIcon, SearchIcon, UploadIcon, XIcon } from "lucide-react";
+import { useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import type { AnySchema, AssetSchema, RefSchema } from "../../schema/types.ts";
 import type { Issue, Path } from "../../schema/validate.ts";
+import type { DocumentData, JsonValue } from "../../schema/types.ts";
 import type { Asset, FieldDescriptor } from "../index.ts";
 import type { AssetPickerOptions } from "../../media/index.ts";
 import { Badge } from "../components/ui/badge.tsx";
@@ -23,8 +24,8 @@ import { StatusDot } from "./status.tsx";
 
 interface PickerProps {
   schema: AnySchema,
-  value: unknown,
-  onChange(value: unknown): void,
+  value: JsonValue | undefined,
+  onChange(value: JsonValue | undefined): void,
   path: Path,
   issues: Issue[],
   readOnly: boolean,
@@ -35,8 +36,8 @@ interface PickerProps {
 
 interface DocumentState {
   id: string,
-  draft: Record<string, unknown> | null,
-  fallback: Record<string, unknown> | null,
+  draft: DocumentData | null,
+  fallback: DocumentData | null,
   status: "draft" | "published" | "changed" | null
 }
 
@@ -137,14 +138,14 @@ function DocumentPicker({ id, type, selected, onSelect, readOnly, invalid }: {
                 <CommandItem
                   key={doc.id}
                   value={doc.id}
+                  data-checked={selected?.id === doc.id}
                   onSelect={() => {
                     onSelect(doc.id);
                     setOpen(false);
                   }}
                 >
                   <StatusDot status={(doc.$meta as { status: "draft" } | undefined)?.status} />
-                  <span className="truncate">{documentTitle(config, type, doc)}</span>
-                  {selected?.id === doc.id && <CheckIcon className="ml-auto" />}
+                  <span className="min-w-0 flex-1 truncate">{documentTitle(config, type, doc)}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -185,7 +186,7 @@ export function useUpload() {
 
 export function AssetControl({ schema, value, onChange, path, issues, readOnly, doc, optional, field, options }: PickerProps & { options: AssetPickerOptions }) {
   const s = schema as AssetSchema;
-  const usage = value && typeof value === "object" ? value as Record<string, unknown> & { asset: string } : undefined;
+  const usage = value && typeof value === "object" ? value as DocumentData & { asset: string } : undefined;
   const asset = useAsset(usage?.asset);
   const { upload, uploading } = useUpload();
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -383,11 +384,12 @@ export function AssetPreview({ asset, focal, onFocal, className }: {
   );
 }
 
-export function AssetThumb({ asset, selected, onClick }: { asset: Asset, selected?: boolean, onClick?(): void }) {
+export function AssetThumb({ asset, selected, onClick, style }: { asset: Asset, selected?: boolean, onClick?(): void, style?: CSSProperties }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      style={style}
       className={cn(
         "group/thumb flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-shadow hover:shadow-md focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
         selected && "ring-2 ring-primary"

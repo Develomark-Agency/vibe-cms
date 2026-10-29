@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import type { AnyConfig, Collection, CollectionSettings } from "../../config.ts";
 import type { AnySchema, ObjectSchema, OptionalSchema } from "../../schema/types.ts";
 import type { AdminClient, AdminPlugin } from "../index.ts";
+import type { DocumentData } from "../../schema/types.ts";
 import type { SessionState, SiteInfo } from "./client.ts";
 
 export interface AdminContextValue {
@@ -69,7 +70,7 @@ export function titleField(config: AnyConfig, type: string): string | undefined 
   return Object.entries(shape).find(([, schema]) => unwrap(schema).type === "text")?.[0];
 }
 
-export function documentTitle(config: AnyConfig, type: string, doc: Record<string, unknown> | null | undefined): string {
+export function documentTitle(config: AnyConfig, type: string, doc: DocumentData | null | undefined): string {
   const field = titleField(config, type);
   const value = field ? doc?.[field] : undefined;
   return typeof value === "string" && value.trim() ? value : "Untitled";

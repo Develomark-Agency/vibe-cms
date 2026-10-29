@@ -2,6 +2,7 @@ import { collectionInfo, columnInfo, type AnyConfig, type Collection, type Colle
 import type {
   ArraySchema,
   AssetSchema,
+  DocumentData,
   Input,
   ObjectSchema,
   OptionalSchema,
@@ -135,14 +136,18 @@ export interface WithOptions {
 
 export type WithSpec = Record<string, true | WithOptions>;
 
-export interface FindOptions<W extends WithSpec = WithSpec> {
+export interface FindOptions<W extends WithSpec = WithSpec, L extends string = string> {
   where?: Condition,
   orderBy?: Order[],
   limit?: number,
   offset?: number,
-  locale?: string,
+  /** One of the site's `locales`; falls back to the default locale per document. */
+  locale?: L,
   with?: W
 }
+
+/** The site's locales, from `defineConfig({ locales })`. */
+export type LocaleOf<Cfg> = Cfg extends { locales: ReadonlyArray<infer L extends string> } ? L : string;
 
 export interface QueryArgs {
   where?: Condition,
@@ -167,13 +172,14 @@ export type SerializedQuery = Pick<QueryRequest, "type" | "op" | "args" | "draft
 
 export type Executor = (queries: SerializedQuery[]) => Promise<unknown[]>;
 
-export interface DocumentMeta {
+// A type alias (not an interface) so documents carrying it stay valid JSON objects.
+export type DocumentMeta = {
   locale: string,
   createdAt: string,
   updatedAt: string,
   publishedAt: string | null,
   status: "draft" | "published" | "changed"
-}
+};
 
 type SchemasOf<Cfg> = Cfg extends { schemas: infer S } ? S : never;
 
@@ -189,7 +195,7 @@ type Optionality<S> = S extends OptionalSchema<any> ? undefined : never;
 
 type TargetDoc<Cfg, To, Spec> = To extends keyof SchemasOf<Cfg>
   ? Result<Cfg, SchemasOf<Cfg>[To], Spec extends { with: infer W } ? W : {}>
-  : Doc<CollectionMarker> & Record<string, unknown>;
+  : Doc<CollectionMarker> & DocumentData;
 
 type ExpandField<Cfg, S, Spec> = Unwrap<S> extends RefSchema<infer To>
   ? TargetDoc<Cfg, To, Spec> | null | Optionality<S>
@@ -218,10 +224,10 @@ export type WithFor<Cfg, C> = { [K in RefKeys<ShapeOf<C>>]?: true | WithOptions 
 };
 
 export interface QueryBuilder<Cfg, C> {
-  findMany<const W extends WithFor<Cfg, C> = {}>(options?: FindOptions<W & WithSpec>): QueryRequest<Array<Result<Cfg, C, W>>>,
-  findFirst<const W extends WithFor<Cfg, C> = {}>(options?: FindOptions<W & WithSpec>): QueryRequest<Result<Cfg, C, W> | null>,
-  findById<const W extends WithFor<Cfg, C> = {}>(id: string, options?: Omit<FindOptions<W & WithSpec>, "where">): QueryRequest<Result<Cfg, C, W> | null>,
-  count(options?: Pick<FindOptions, "where" | "locale">): QueryRequest<number>
+  findMany<const W extends WithFor<Cfg, C> = {}>(options?: FindOptions<W & WithSpec, LocaleOf<Cfg>>): QueryRequest<Array<Result<Cfg, C, W>>>,
+  findFirst<const W extends WithFor<Cfg, C> = {}>(options?: FindOptions<W & WithSpec, LocaleOf<Cfg>>): QueryRequest<Result<Cfg, C, W> | null>,
+  findById<const W extends WithFor<Cfg, C> = {}>(id: string, options?: Omit<FindOptions<W & WithSpec, LocaleOf<Cfg>>, "where">): QueryRequest<Result<Cfg, C, W> | null>,
+  count(options?: Pick<FindOptions<WithSpec, LocaleOf<Cfg>>, "where" | "locale">): QueryRequest<number>
 }
 
 export interface QueryOptions {

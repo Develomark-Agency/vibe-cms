@@ -5,9 +5,10 @@ import {
   SettingsIcon, ShoppingBagIcon, SparklesIcon, StarIcon, TagIcon, UserIcon, UserRoundIcon, UsersIcon, WrenchIcon,
   type LucideIcon
 } from "lucide-react";
+import type { IconName } from "../../icons.ts";
 
 /** Icon names accepted by `collections.<type>.icon` and plugin nav items. */
-export const navIcons: Record<string, LucideIcon> = {
+export const navIcons: Record<IconName, LucideIcon> = {
   "book-open": BookOpenIcon, box: BoxIcon, briefcase: BriefcaseIcon, building: BuildingIcon, calendar: CalendarIcon,
   "chart-bar": ChartBarIcon, file: FileIcon, "file-text": FileTextIcon, film: FilmIcon, folder: FolderIcon, globe: GlobeIcon,
   heart: HeartIcon, home: HomeIcon, image: ImageIcon, inbox: InboxIcon, layers: LayersIcon, layout: LayoutIcon, link: LinkIcon,

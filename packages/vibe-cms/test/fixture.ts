@@ -38,7 +38,9 @@ export const config = defineConfig({
       author: v.optional(v.ref("author")),
       related: v.optional(v.array(v.ref("post"))),
       cover: v.optional(image({ minWidth: 100 })),
-      seo: v.optional(v.object({ description: v.text({ max: 160 }) }))
+      seo: v.optional(v.object({ description: v.text({ max: 160 }) })),
+      // Derived by the audit plugin on every write.
+      searchText: v.optional(v.text({ hidden: true }))
     })
   }
 });

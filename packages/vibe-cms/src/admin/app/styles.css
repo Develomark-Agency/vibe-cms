@@ -139,3 +139,51 @@
     font-feature-settings: "cv11", "ss01";
   }
 }
+
+/* --- Motion ------------------------------------------------------------------ */
+
+@theme {
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Page changes: the frame stays still, the page content swaps, the nav highlight slides. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+::view-transition-old(page) {
+  animation: 90ms ease-out both vibe-fade-out;
+}
+
+::view-transition-new(page) {
+  animation: 220ms var(--ease-out-soft) both vibe-rise-in;
+}
+
+::view-transition-group(nav-active) {
+  animation-duration: 240ms;
+  animation-timing-function: var(--ease-out-soft);
+}
+
+@keyframes vibe-fade-out {
+  to { opacity: 0; }
+}
+
+@keyframes vibe-rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+/* Lists and grids enter in a short cascade. Children set `--i` (their index). */
+.stagger > * {
+  animation: 260ms var(--ease-out-soft) both vibe-rise-in;
+  animation-delay: calc(min(var(--i, 0), 12) * 22ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  .stagger > * {
+    animation: none !important;
+  }
+}

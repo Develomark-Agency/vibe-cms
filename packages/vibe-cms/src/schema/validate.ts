@@ -11,7 +11,9 @@ import type {
   RefSchema,
   Shape,
   TextSchema,
-  UnionSchema
+  UnionSchema,
+  JsonObject,
+  JsonValue
 } from "./types.ts";
 
 export type Path = Array<string | number>;
@@ -120,22 +122,27 @@ function check(schema: AnySchema, value: unknown, path: Path, issues: Issue[]): 
       const s = schema as AssetSchema;
       const asset = value as { asset?: unknown };
       if(typeof asset !== "object" || typeof asset.asset !== "string") return fail("Must be an asset");
-      const fields = checkShape(s.fields, value, path, issues) as Record<string, unknown>;
-      return { asset: asset.asset, ...fields };
+      const fields = checkShape(s.fields, value, path, issues);
+      return { asset: asset.asset, ...(isRecord(fields) ? fields : {}) };
     }
     default:
       return fail(`Unknown field type "${schema.type}"`);
   }
 }
 
+/** Input arrives as untrusted JSON; this is the one place it's treated as a plain object. */
+export function isRecord(value: unknown): value is { readonly [key: string]: unknown } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function checkShape(shape: Shape, value: unknown, path: Path, issues: Issue[]) {
-  if(typeof value !== "object" || value === null || Array.isArray(value)) {
+  if(!isRecord(value)) {
     issues.push({ path, message: "Must be an object" });
     return value;
   }
-  const out: Record<string, unknown> = {};
+  const out: { [key: string]: unknown } = {};
   for(const [key, field] of Object.entries(shape)) {
-    const result = check(field, (value as Record<string, unknown>)[key], [...path, key], issues);
+    const result = check(field, value[key], [...path, key], issues);
     if(result !== undefined) out[key] = result;
   }
   return out;
@@ -164,7 +171,7 @@ export function matchesDiscriminators(option: AnySchema, value: unknown): boolea
   if(typeof value !== "object" || value === null) return false;
   const literals = Object.entries((option as ObjectSchema).shape).filter(([, s]) => s.type === "literal");
   if(literals.length === 0) return false;
-  return literals.every(([key, s]) => (value as Record<string, unknown>)[key] === (s as LiteralSchema).value);
+  return isRecord(value) && literals.every(([key, s]) => value[key] === (s as LiteralSchema).value);
 }
 
 export interface FoundReference {
@@ -188,7 +195,7 @@ export function findReferences(schema: AnySchema, value: unknown, path: Path = [
       case "asset":
         found.push({ kind: "asset", schema: s as AssetSchema, value: v, path: p });
         for(const [key, field] of Object.entries((s as AssetSchema).fields)) {
-          visit(field, (v as Record<string, unknown>)[key], [...p, key]);
+          visit(field, isRecord(v) ? v[key] : undefined, [...p, key]);
         }
         return;
       case "array":
@@ -196,7 +203,7 @@ export function findReferences(schema: AnySchema, value: unknown, path: Path = [
         return;
       case "object":
         for(const [key, field] of Object.entries((s as ObjectSchema).shape)) {
-          visit(field, (v as Record<string, unknown>)[key], [...p, key]);
+          visit(field, isRecord(v) ? v[key] : undefined, [...p, key]);
         }
         return;
       case "union": {
@@ -230,7 +237,7 @@ export function schemaAt(schema: AnySchema, path: Path): AnySchema | undefined {
 }
 
 /** Builds an empty value for a schema, used when creating documents and list items. */
-export function emptyValue(schema: AnySchema): unknown {
+export function emptyValue(schema: AnySchema): JsonValue | undefined {
   switch(schema.type) {
     case "optional": return undefined;
     case "text": return "";
@@ -241,7 +248,7 @@ export function emptyValue(schema: AnySchema): unknown {
     case "enum": return (schema as EnumSchema).values[0];
     case "array": return [];
     case "object": {
-      const out: Record<string, unknown> = {};
+      const out: JsonObject = {};
       for(const [key, field] of Object.entries((schema as ObjectSchema).shape)) {
         const value = emptyValue(field);
         if(value !== undefined) out[key] = value;

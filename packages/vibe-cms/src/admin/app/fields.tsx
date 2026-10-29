@@ -11,7 +11,9 @@ import type {
   ObjectSchema,
   OptionalSchema,
   TextSchema,
-  UnionSchema
+  UnionSchema,
+  DocumentData,
+  JsonValue
 } from "../../schema/types.ts";
 import { emptyValue, matchesDiscriminators, type Issue, type Path } from "../../schema/validate.ts";
 import { Badge } from "../components/ui/badge.tsx";
@@ -30,8 +32,8 @@ import { AssetControl, RefControl } from "./pickers.tsx";
 
 export interface FieldProps {
   schema: AnySchema,
-  value: unknown,
-  onChange(value: unknown): void,
+  value: JsonValue | undefined,
+  onChange(value: JsonValue | undefined): void,
   path: Path,
   name: string,
   issues: Issue[],
@@ -63,7 +65,10 @@ export function Field(props: FieldProps) {
   const { schema, path, issues, name } = props;
   const { locale, plugins, cms } = useAdmin();
   const inner = unwrap(schema);
-  if(inner.type === "literal") return null;
+  if(inner.type === "literal" || schema.hidden || inner.hidden) return null;
+  // Derived fields (`readOnly`) are shown but never edited.
+  const derived = Boolean(schema.readOnly || inner.readOnly);
+  props = { ...props, readOnly: props.readOnly || derived };
   const errors = issues.filter(issue => samePath(issue.path, path)).map(issue => issue.message);
   const label = props.label ?? schema.label ?? inner.label ?? humanize(name);
   const descriptor: FieldDescriptor = {
@@ -99,7 +104,8 @@ export function Field(props: FieldProps) {
       <div className="flex items-baseline justify-between gap-2">
         <label className={cn("text-sm font-medium leading-none", errors.length && "text-destructive")} htmlFor={fieldId(path)}>
           {label}
-          {schema.type === "optional" ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Optional</span> : null}
+          {derived ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Set automatically</span>
+            : schema.type === "optional" ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Optional</span> : null}
         </label>
         {grouped && !widget && Array.isArray(props.value) ? <span className="text-xs text-muted-foreground">{props.value.length} items</span> : null}
       </div>
@@ -135,8 +141,8 @@ function loadWidget(descriptor: WidgetDescriptor): Promise<WidgetImpl> {
 function WidgetHost({ descriptor, field, value, onChange }: {
   descriptor: WidgetDescriptor,
   field: FieldDescriptor,
-  value: unknown,
-  onChange(value: unknown): void
+  value: JsonValue | undefined,
+  onChange(value: JsonValue | undefined): void
 }) {
   const { cms } = useAdmin();
   const [impl, setImpl] = useState<WidgetImpl | Error | null>(null);
@@ -255,7 +261,7 @@ export function slugify(input: string): string {
   return input.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-export const FormValueContext = createContext<Record<string, unknown> | null>(null);
+export const FormValueContext = createContext<DocumentData | null>(null);
 
 function useFormValue() {
   return useContext(FormValueContext);
@@ -450,7 +456,7 @@ function TagControl({ value, onChange, path, readOnly }: ControlProps) {
 
 function ObjectControl({ schema, value, onChange, path, issues, readOnly, optional, doc, bare }: ControlProps) {
   const s = schema as ObjectSchema;
-  const obj = (value && typeof value === "object" ? value : undefined) as Record<string, unknown> | undefined;
+  const obj = (value && typeof value === "object" ? value : undefined) as DocumentData | undefined;
   if(!obj) {
     if(readOnly) return <p className="text-sm text-muted-foreground">Not set</p>;
     return (
@@ -531,6 +537,13 @@ function UnionControl({ schema, value, onChange, path, issues, readOnly, doc, na
   );
 }
 
+function moveItem(items: JsonValue[], from: number, to: number): JsonValue[] {
+  const next = [...items];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item!);
+  return next;
+}
+
 /** Stable React keys for array items across add / remove / move. */
 function useItemKeys(length: number) {
   const keys = useRef<string[]>([]);
@@ -560,7 +573,7 @@ function itemSummary(schema: AnySchema, value: unknown, index: number): string {
   }
   if(inner.type === "object" && value && typeof value === "object") {
     const text = Object.entries((inner as ObjectSchema).shape)
-      .map(([key, field]) => (unwrap(field).type === "text" ? (value as Record<string, unknown>)[key] : undefined))
+      .map(([key, field]) => (unwrap(field).type === "text" ? (value as DocumentData)[key] : undefined))
       .find(v => typeof v === "string" && v.trim());
     if(typeof text === "string") return text;
   }
@@ -579,9 +592,9 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
   const atMax = s.max !== undefined && items.length >= s.max;
   const simple = ["ref", "asset", "text", "number", "date", "enum"].includes(item.type);
 
-  function add(next: unknown) {
+  function add(next: JsonValue | undefined) {
     insert(items.length);
-    onChange([...items, next]);
+    onChange([...items, next ?? null]);
   }
 
   const addButton = readOnly || atMax ? null : variants ? (
@@ -611,15 +624,11 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
           <div className="flex shrink-0 items-center opacity-60 transition-opacity group-hover/item:opacity-100">
             <Button variant="ghost" size="icon-xs" aria-label="Move up" disabled={i === 0} onClick={() => {
               move(i, i - 1);
-              const next = [...items];
-              [next[i - 1], next[i]] = [next[i], next[i - 1]];
-              onChange(next);
+              onChange(moveItem(items, i, i - 1));
             }}><ChevronUpIcon /></Button>
             <Button variant="ghost" size="icon-xs" aria-label="Move down" disabled={i === items.length - 1} onClick={() => {
               move(i, i + 1);
-              const next = [...items];
-              [next[i + 1], next[i]] = [next[i], next[i + 1]];
-              onChange(next);
+              onChange(moveItem(items, i, i + 1));
             }}><ChevronDownIcon /></Button>
             {!simple && (
               <Button variant="ghost" size="icon-xs" aria-label="Duplicate" disabled={atMax} onClick={() => {
@@ -638,7 +647,7 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
             <div key={key} className="group/item flex items-start gap-1">
               <div className="min-w-0 flex-1">
                 <Field bare schema={s.item} name={String(i)} path={itemPath} value={entry} issues={issues} readOnly={readOnly} doc={doc}
-                  onChange={next => onChange(items.map((v, j) => (j === i ? next : v)))} />
+                  onChange={next => onChange(items.map((v, j) => (j === i ? next ?? null : v)))} />
               </div>
               {controls}
             </div>
@@ -675,7 +684,7 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                   issues={issues}
                   readOnly={readOnly}
                   doc={doc}
-                  onChange={next => onChange(items.map((v, j) => (j === i ? next : v)))}
+                  onChange={next => onChange(items.map((v, j) => (j === i ? next ?? null : v)))}
                 />
               </div>
             )}

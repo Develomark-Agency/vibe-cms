@@ -22,6 +22,10 @@ How the code settles questions the design docs leave open, and where it delibera
 - **Public reads:** published content is readable without a token (`POST /_vibe/api/query`, CORS-enabled). Drafts need a session. Pagination is `limit`/`offset`.
 - **Unknown object keys are dropped** by validation; `content.beforeWrite` runs after validation, so plugins can still add derived fields (the example adds `readingMinutes`).
 
+- **Plugin-derived fields are declared in the schema.** The result of `content.beforeWrite` is validated again, so undeclared fields are dropped. Mark derived fields `readOnly` (shown, not editable) or `hidden`.
+- **Typed hooks:** `defineServer<typeof Plugin, typeof config>` types document hooks against the site's content types. The document lives on `output` next to `type` and `valid` (TypeScript can't narrow one parameter from a check on another), so `if(output.type === "post" && output.valid)` gives a typed post. Drafts that fail validation stay plain JSON. Plugins written for any site get `DocumentData` (JSON) throughout.
+- **Config strings are checked by `defineConfig`:** collection keys, `title` (a text field), `preview` placeholders (`"/posts/{slug}"`; `{id}` and `{locale}` too), `icon` (the editor's icon set), role rule keys, user role names, `defaultLocale`, and `v.ref()` targets. Query `locale` options take the site's locales.
+
 ## Auth
 
 - **Dev sessions:** with `dev` (default: Vite's `import.meta.env.DEV`), `POST /_vibe/api/session { dev: true }` signs in a local developer with every permission. An embedded editor in dev mode also posts navigation and title messages to any parent, since no code tells it who the panel is.

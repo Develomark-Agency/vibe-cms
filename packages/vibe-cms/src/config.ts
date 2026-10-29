@@ -1,6 +1,18 @@
 import type { PluginDescriptor } from "./descriptor.ts";
-import type { AnySchema, Input, ObjectSchema, OptionalSchema, Shape } from "./schema/types.ts";
+import type {
+  AnySchema,
+  ArraySchema,
+  AssetSchema,
+  Input,
+  ObjectSchema,
+  OptionalSchema,
+  RefSchema,
+  Shape,
+  TextSchema,
+  UnionSchema
+} from "./schema/types.ts";
 import type { AuthDescriptor } from "./auth/index.ts";
+import type { IconName } from "./icons.ts";
 
 export type Action = "read" | "write" | "publish" | "delete";
 
@@ -23,16 +35,23 @@ export interface Permissions {
   users?: Record<string, string[]>
 }
 
-export interface CollectionSettings {
-  /** Field used as the document title in lists. Defaults to the first text field. */
-  title?: string,
+type TextKeys<S> = S extends ObjectSchema<infer Sh>
+  ? { [K in keyof Sh & string]: Unwrap<Sh[K]> extends TextSchema ? K : never }[keyof Sh & string]
+  : string;
+
+export interface CollectionSettings<S = ObjectSchema<any>> {
+  /** Text field used as the document title in lists. Defaults to the first text field. */
+  title?: TextKeys<S>,
   /** Shown in the editor navigation. */
   label?: string,
   /** Only one document of this type, e.g. site settings. */
   singleton?: boolean,
-  /** Lucide icon name for the navigation. */
-  icon?: string,
-  /** Builds a preview URL on the site for a document. */
+  /** Icon in the editor navigation. */
+  icon?: IconName,
+  /**
+   * The document's URL on the site, for the editor's "View on site" button.
+   * `{field}` placeholders are filled from the document; `{id}` and `{locale}` also work.
+   */
   preview?: string
 }
 
@@ -42,7 +61,7 @@ export interface ConfigInput {
   /** Display name for the panel's site list. */
   name?: string,
   schemas: Record<string, ObjectSchema<any>>,
-  collections?: Record<string, CollectionSettings>,
+  collections?: Record<string, CollectionSettings<any>>,
   plugins?: ReadonlyArray<PluginDescriptor<any, any, any>>,
   locales?: readonly string[],
   defaultLocale?: string,
@@ -86,7 +105,61 @@ export type Config<C extends ConfigInput = ConfigInput> = Omit<C, "schemas"> & {
 
 export type AnyConfig = Config<ConfigInput>;
 
-export function defineConfig<const C extends ConfigInput>(input: C): Config<C> {
+// --- Checks that tie the config's strings to its own schemas ----------------------
+
+type Types<C extends ConfigInput> = keyof C["schemas"] & string;
+type Locales<C> = C extends { locales: ReadonlyArray<infer L extends string> } ? L : string;
+type RoleNames<C> = C extends { permissions: { roles: infer R } } ? keyof R & string : string;
+type Extra<T, Allowed> = { [K in Exclude<keyof T, Allowed>]: never };
+
+/** Every content type a `v.ref("...")` anywhere in a schema points at. */
+type RefTargets<S> =
+  S extends RefSchema<infer To> ? (To extends string ? To : never)
+    : S extends OptionalSchema<infer I> ? RefTargets<I>
+      : S extends ArraySchema<infer I> ? RefTargets<I>
+        : S extends UnionSchema<infer O> ? RefTargets<O[number]>
+          : S extends AssetSchema<infer F> ? { [K in keyof F]: RefTargets<F[K]> }[keyof F]
+            : S extends ObjectSchema<infer Sh> ? { [K in keyof Sh]: RefTargets<Sh[K]> }[keyof Sh]
+              : never;
+
+type UnknownRefTargets<C extends ConfigInput> = Exclude<{ [K in Types<C>]: RefTargets<C["schemas"][K]> }[Types<C>], Types<C>>;
+
+type RuleChecks<C extends ConfigInput> = {
+  all?: boolean,
+  publish?: boolean,
+  write?: { locales: ReadonlyArray<Locales<C>> },
+  media?: readonly Action[]
+} & { [T in Types<C> | "*"]?: readonly Action[] };
+
+type Placeholders<T> = T extends `${string}{${infer K}}${infer Rest}` ? K | Placeholders<Rest> : never;
+type FieldKeys<S> = S extends ObjectSchema<infer Sh> ? keyof Sh & string : string;
+
+/** `"/posts/{slug}"` stays as is; `"/posts/{slugg}"` becomes an error message naming the unknown field. */
+type CheckPreview<T, S> = [Exclude<Placeholders<T>, FieldKeys<S> | "id" | "locale">] extends [never]
+  ? T
+  : `Unknown field in preview: {${Exclude<Placeholders<T>, FieldKeys<S> | "id" | "locale"> & string}}`;
+
+type CollectionChecks<C extends ConfigInput> = {
+  [K in Types<C>]?: CollectionSettings<C["schemas"][K]> & {
+    preview?: CheckPreview<NonNullable<NonNullable<C["collections"]>[K]>["preview"], C["schemas"][K]>
+  }
+};
+
+type ConfigChecks<C extends ConfigInput> = {
+  collections?: CollectionChecks<C> & Extra<C["collections"], Types<C>>,
+  defaultLocale?: Locales<C>,
+  permissions?: {
+    roles?: {
+      [R in keyof NonNullable<NonNullable<C["permissions"]>["roles"]>]:
+        RuleChecks<C> & Extra<NonNullable<NonNullable<C["permissions"]>["roles"]>[R], keyof RuleChecks<C>>
+    },
+    users?: Record<string, ReadonlyArray<RoleNames<C>>>
+  }
+} & ([UnknownRefTargets<C>] extends [never] ? {} : {
+  "~error": `v.ref("${UnknownRefTargets<C> & string}") points at a content type that isn't in schemas`
+});
+
+export function defineConfig<const C extends ConfigInput>(input: C & ConfigChecks<C>): Config<C> {
   const schemas: Record<string, Collection> = {};
   for(const [name, schema] of Object.entries(input.schemas)) {
     if(!/^[a-zA-Z][\w-]*$/.test(name)) throw new Error(`vibe-cms: invalid content type name "${name}"`);
@@ -164,7 +237,7 @@ export class HttpError extends Error {
 
 /** The schema tree as plain data: what the admin receives and what gets hashed for `schema_hash`. */
 export function serializeConfig(config: AnyConfig) {
-  const schemas: Record<string, unknown> = {};
+  const schemas: Record<string, ObjectSchema> = {};
   for(const [name, collection] of Object.entries(config.schemas as Record<string, Collection>)) {
     schemas[name] = collection["~collection"].schema;
   }

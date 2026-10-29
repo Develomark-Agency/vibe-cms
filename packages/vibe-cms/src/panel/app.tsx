@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CheckIcon,
   ChevronsUpDownIcon,
   ExternalLinkIcon,
   GlobeIcon,
@@ -13,7 +12,7 @@ import {
   StarIcon,
   Trash2Icon
 } from "lucide-react";
-import { StrictMode, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { StrictMode, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { Button } from "../admin/components/ui/button.tsx";
@@ -61,6 +60,25 @@ function useRoute(): { siteId: string | null, rest: string } {
   const path = useSyncExternalStore(subscribe, () => location.pathname + location.search);
   const match = /^\/s\/([^/?]+)(.*)$/.exec(path);
   return match ? { siteId: decodeURIComponent(match[1]!), rest: match[2] || "/" } : { siteId: null, rest: "/" };
+}
+
+/**
+ * Clicks inside the framed editor never reach this document, so popups can't
+ * see them as outside clicks, and focus (and Escape) moves into the frame.
+ * Close when the window loses focus to an iframe.
+ */
+function useCloseOnFrameFocus(open: boolean, close: () => void) {
+  useEffect(() => {
+    if(!open) return;
+    function onBlur() {
+      // activeElement updates after blur fires.
+      setTimeout(() => {
+        if(document.activeElement instanceof HTMLIFrameElement) close();
+      });
+    }
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
+  }, [open]);
 }
 
 function sortSites(sites: PanelSite[]): PanelSite[] {
@@ -120,6 +138,9 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
   const { siteId, rest } = useRoute();
   const [addOpen, setAddOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  useCloseOnFrameFocus(accountOpen, () => setAccountOpen(false));
+  useCloseOnFrameFocus(paletteOpen, () => setPaletteOpen(false));
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => backend.sites() });
   const site = sites.data?.find(s => s.id === siteId) ?? null;
 
@@ -192,7 +213,7 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
             Jump to… <Kbd>⌘K</Kbd>
           </Button>
           {backend.mode === "local" && <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">Local</span>}
-          <DropdownMenu>
+          <DropdownMenu open={accountOpen} onOpenChange={setAccountOpen}>
             <DropdownMenuTrigger render={
               <Button variant="ghost" size="icon-sm" aria-label="Account" className="rounded-full bg-muted text-xs font-medium">
                 {(user.name ?? user.email ?? "?").charAt(0).toUpperCase()}
@@ -239,8 +260,8 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
                   go(`/s/${encodeURIComponent(s.id)}/`);
                 }}>
                   <SiteMark site={s} className="size-5" />
-                  <span className="truncate">{s.name}</span>
-                  {s.favorite && <StarIcon className="ml-auto fill-amber-400 text-amber-400" />}
+                  <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                  {s.favorite && <StarIcon className="fill-amber-400 text-amber-400" />}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -264,6 +285,7 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
 
 function SiteSwitcher({ sites, current, onAdd }: { sites: PanelSite[], current: PanelSite | null, onAdd(): void }) {
   const [open, setOpen] = useState(false);
+  useCloseOnFrameFocus(open, () => setOpen(false));
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={
@@ -280,14 +302,13 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: PanelSite[], current: 
             <CommandEmpty>No sites.</CommandEmpty>
             <CommandGroup>
               {sortSites(sites).map(site => (
-                <CommandItem key={site.id} value={`${site.name} ${site.url}`} onSelect={() => {
+                <CommandItem key={site.id} value={`${site.name} ${site.url}`} data-checked={current?.id === site.id} onSelect={() => {
                   setOpen(false);
                   go(`/s/${encodeURIComponent(site.id)}/`);
                 }}>
                   <SiteMark site={site} className="size-5" />
-                  <span className="truncate">{site.name}</span>
+                  <span className="min-w-0 flex-1 truncate">{site.name}</span>
                   {site.favorite && <StarIcon className="fill-amber-400 text-amber-400" />}
-                  {current?.id === site.id && <CheckIcon className="ml-auto" />}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -344,9 +365,9 @@ function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
             <EmptyContent><Button onClick={onAdd}><PlusIcon /> Add your first site</Button></EmptyContent>
           </Empty>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {list.map(site => (
-              <div key={site.id} className="group/card relative flex items-center gap-3 rounded-xl border bg-card p-4 transition-shadow hover:shadow-md">
+          <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {list.map((site, i) => (
+              <div key={site.id} style={{ "--i": i } as CSSProperties} className="group/card relative flex items-center gap-3 rounded-xl border bg-card p-4 transition-[box-shadow,translate,border-color] duration-200 hover:-translate-y-0.5 hover:border-foreground/15 hover:shadow-md">
                 <SiteMark site={site} className="size-10 rounded-lg text-sm" />
                 <button className="min-w-0 flex-1 text-left after:absolute after:inset-0" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
                   <span className="block truncate font-medium">{site.name}</span>
@@ -477,7 +498,7 @@ function SiteFrame({ backend, site, initialPath, onShortcut }: { backend: PanelB
 
   return (
     <div className="absolute inset-0">
-      <iframe ref={frame} src={src} title={`${site.name} editor`} className={cn("size-full border-0 bg-background", state === "denied" && "invisible")} allow="clipboard-write" />
+      <iframe ref={frame} src={src} title={`${site.name} editor`} className={cn("size-full border-0 bg-background transition-opacity duration-300 ease-out", state === "ready" ? "opacity-100" : "opacity-0", state === "denied" && "invisible")} allow="clipboard-write" />
       {state === "loading" && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background"><Delayed><Spinner className="size-5" /></Delayed></div>
       )}

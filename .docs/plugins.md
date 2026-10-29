@@ -58,9 +58,10 @@ export default defineServer<typeof SearchPlugin>(async ({ bindings, options, cms
     await session.reindex(doc.id);
   },
 
-  // transform
-  "content.beforeWrite": async ({ type, doc }, output) => {
-    if (type === "post") {
+  // transform: `output` carries `type` and `valid`, so narrowing it narrows `output.doc`.
+  // `searchText` must be declared in the post schema; undeclared fields are dropped.
+  "content.beforeWrite": async (input, output) => {
+    if (output.type === "post" && output.valid) {
       output.doc.searchText = extractText(output.doc.body);
     }
   },

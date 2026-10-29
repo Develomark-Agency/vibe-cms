@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emptyValue, validate, type Issue } from "../../schema/validate.ts";
+import type { DocumentData } from "../../schema/types.ts";
 import type { DocumentSlotProps } from "../index.ts";
 import {
   AlertDialog,
@@ -61,8 +62,8 @@ export interface DocumentState {
   locale: string,
   exists: boolean,
   locales: Array<{ locale: string, status: "draft" | "published" | "changed", updatedAt: string }>,
-  draft: Record<string, unknown> | null,
-  published: Record<string, unknown> | null,
+  draft: DocumentData | null,
+  published: DocumentData | null,
   status: "draft" | "published" | "changed" | null,
   publishedVer: number | null,
   createdAt: string | null,
@@ -70,12 +71,18 @@ export interface DocumentState {
   updatedBy: string | null,
   publishedAt: string | null,
   schedules: Array<{ action: "publish" | "unpublish", runAt: string, ver: number | null, createdBy: string }>,
-  fallback: Record<string, unknown> | null,
+  fallback: DocumentData | null,
   issues?: Issue[]
 }
 
-function fillPreview(template: string, value: Record<string, unknown>, locale: string): string {
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => (key === "locale" ? locale : encodeURIComponent(String(value[key] ?? ""))));
+/** Fills `{field}`, `{id}` and `{locale}` in a collection's preview template. */
+function fillPreview(template: string, doc: DocumentData, id: string, locale: string): string {
+  return template.replace(/\{(\w+)\}/g, (_, key: string) => {
+    if(key === "locale") return locale;
+    if(key === "id") return id;
+    const value = doc[key];
+    return typeof value === "string" || typeof value === "number" ? encodeURIComponent(value) : "";
+  });
 }
 
 export function EditorPage({ type, id }: { type: string, id: string | null }) {
@@ -94,13 +101,13 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     retry: false
   });
 
-  const baseline = useMemo<Record<string, unknown> | null>(() => {
-    if(id === null) return emptyValue(schema) as Record<string, unknown>;
+  const baseline = useMemo<DocumentData | null>(() => {
+    if(id === null) return emptyValue(schema) as DocumentData;
     if(!doc.data) return null;
-    return doc.data.draft ?? doc.data.fallback ?? (emptyValue(schema) as Record<string, unknown>);
+    return doc.data.draft ?? doc.data.fallback ?? (emptyValue(schema) as DocumentData);
   }, [id, doc.data, schema]);
 
-  const [value, setValue] = useState<Record<string, unknown> | null>(baseline);
+  const [value, setValue] = useState<DocumentData | null>(baseline);
   const [serverIssues, setServerIssues] = useState<Issue[]>([]);
   const [showIssues, setShowIssues] = useState(false);
   const [busy, setBusy] = useState<null | "save" | "publish" | "unpublish" | "delete">(null);
@@ -291,7 +298,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const slotProps: DocumentSlotProps = { type, id, locale, value, status, cms };
   const actions = plugins.slots["document.actions"]!.filter(a => !a.types || a.types.includes(type));
   const panels = plugins.slots["document.sidebar"]!.filter(p => !p.types || p.types.includes(type));
-  const previewUrl = settings.preview && status ? fillPreview(settings.preview, (doc.data?.published ?? value), locale) : null;
+  const previewUrl = settings.preview && status && id ? fillPreview(settings.preview, doc.data?.published ?? value, id, locale) : null;
   const readOnly = !canWriteLocale;
 
   return (
@@ -652,7 +659,7 @@ function HistorySheet({ open, onOpenChange, type, id, doc, onRestore, readOnly }
   const version = useQuery({
     queryKey: ["version", type, id, locale, selected],
     enabled: selected !== null,
-    queryFn: () => cms.api<{ ver: number, data: Record<string, unknown> }>(`/documents/${type}/${id}/versions/${selected}?locale=${locale}`)
+    queryFn: () => cms.api<{ ver: number, data: DocumentData }>(`/documents/${type}/${id}/versions/${selected}?locale=${locale}`)
   });
   const schema = collectionSchema(config, type);
   return (
