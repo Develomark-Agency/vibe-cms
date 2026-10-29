@@ -1,0 +1,17 @@
+{
+  "name": "vibe-cms-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*", "examples/*"],
+  "scripts": {
+    "typecheck": "bun run --filter '*' typecheck",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "@types/bun": "latest",
+    "oxlint": "^1.90.0",
+    "typescript": "^7"
+  }
+}

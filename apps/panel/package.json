@@ -1,0 +1,9 @@
+{
+  "name": "@vibe-cms/panel",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module"
+}
