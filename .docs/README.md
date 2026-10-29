@@ -17,6 +17,7 @@ Package subpaths used throughout (`vibe-cms/schema`, `vibe-cms/handler`, `vibe-c
 | [storage.md](./storage.md) | JSON documents in D1, drafts, versions, i18n, scheduling, media |
 | [query-api.md](./query-api.md) | Typed query builder, in-process and HTTP access, `useContent` |
 | [panel-and-auth.md](./panel-and-auth.md) | The admin panel, multi-site, OIDC identity, the shared site list |
+| [implementation.md](./implementation.md) | How the implementation settles open questions, and where it differs |
 
 ## The shape of a project
 

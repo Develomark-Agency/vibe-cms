@@ -1,0 +1,35 @@
+---
+import { renderRichText } from "@vibe-cms/rich-text";
+import { eq } from "vibe-cms/query";
+import Base from "../../layouts/Base.astro";
+import { cms, post } from "../../content.ts";
+
+const locale = Astro.url.searchParams.get("lang") ?? undefined;
+const entry = await cms.query(post).findFirst({
+  where: eq(post.slug, Astro.params.slug!),
+  locale,
+  with: { author: true }
+});
+if(!entry) return new Response("Not found", { status: 404 });
+---
+
+<Base title={entry.title} description={entry.seo?.description ?? entry.excerpt}>
+  <article class={entry.layout}>
+    {entry.cover && (
+      <img
+        src={entry.cover.url}
+        alt={entry.cover.alt}
+        width={entry.cover.width}
+        height={entry.cover.height}
+        style={entry.cover.focal ? `object-position: ${entry.cover.focal.x * 100}% ${entry.cover.focal.y * 100}%` : undefined}
+      />
+    )}
+    <h1>{entry.title}</h1>
+    <p><small>{entry.readingMinutes ? `${entry.readingMinutes} min read · ` : ""}{new Date(entry.publishedAt).toLocaleDateString("en", { dateStyle: "long", timeZone: "UTC" })}{entry.author && ` · ${entry.author.name}`}</small></p>
+    <Fragment set:html={renderRichText(entry.body, { linkTo: ref => `/${ref.type}s/${ref.id}` })} />
+  </article>
+  <p><a href="/">← All posts</a></p>
+  <script is:inline define:vars={{ id: entry.id }}>
+    fetch(`/_vibe/plugins/views/hit/${id}`, { method: "POST" });
+  </script>
+</Base>

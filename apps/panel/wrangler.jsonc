@@ -1,0 +1,24 @@
+{
+  // The agency panel. Copy this app, set the variables below, `bun run deploy`.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vibe-panel",
+  "main": "src/server/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "dist/client",
+    "binding": "ASSETS",
+    // The API, sign-in and handoff routes run in the Worker; everything else is the app.
+    "run_worker_first": ["/api/*", "/auth/*", "/go/*"],
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "vibe-panel", "database_id": "00000000-0000-0000-0000-000000000000" }
+  ],
+  "vars": {
+    "OIDC_ISSUER": "https://accounts.google.com",
+    "OIDC_CLIENT_ID": "1234.apps.googleusercontent.com",
+    // Comma-separated email domains or group claim values.
+    "PANEL_ALLOW": "my-agency.com"
+  }
+  // Secret: `wrangler secret put OIDC_CLIENT_SECRET` (locally: .dev.vars).
+}

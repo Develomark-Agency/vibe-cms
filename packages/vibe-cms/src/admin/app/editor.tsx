@@ -1,0 +1,711 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  CalendarClockIcon,
+  CheckIcon,
+  ChevronLeftIcon,
+  CloudUploadIcon,
+  EyeIcon,
+  EyeOffIcon,
+  HistoryIcon,
+  LanguagesIcon,
+  MoreHorizontalIcon,
+  RotateCcwIcon,
+  SaveIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  XIcon
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { emptyValue, validate, type Issue } from "../../schema/validate.ts";
+import type { DocumentSlotProps } from "../index.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "../components/ui/alert-dialog.tsx";
+import { Button } from "../components/ui/button.tsx";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
+import { Input } from "../components/ui/input.tsx";
+import { Kbd } from "../components/ui/kbd.tsx";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../components/ui/sheet.tsx";
+import { Skeleton } from "../components/ui/skeleton.tsx";
+import { Spinner } from "../components/ui/spinner.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
+import { cn } from "../lib/utils.ts";
+import { ApiError } from "./client.ts";
+import { Delayed } from "./delayed.tsx";
+import {
+  collectionLabel,
+  collectionSchema,
+  collectionSettings,
+  displayUser,
+  documentTitle,
+  formatDate,
+  formatRelative,
+  localeName,
+  useAdmin
+} from "./context.tsx";
+import { Field, FormValueContext } from "./fields.tsx";
+import { Link, navigate, setNavigationBlocker } from "./router.tsx";
+import { StatusBadge, StatusDot } from "./status.tsx";
+
+export interface DocumentState {
+  id: string,
+  type: string,
+  locale: string,
+  exists: boolean,
+  locales: Array<{ locale: string, status: "draft" | "published" | "changed", updatedAt: string }>,
+  draft: Record<string, unknown> | null,
+  published: Record<string, unknown> | null,
+  status: "draft" | "published" | "changed" | null,
+  publishedVer: number | null,
+  createdAt: string | null,
+  updatedAt: number | null,
+  updatedBy: string | null,
+  publishedAt: string | null,
+  schedules: Array<{ action: "publish" | "unpublish", runAt: string, ver: number | null, createdBy: string }>,
+  fallback: Record<string, unknown> | null,
+  issues?: Issue[]
+}
+
+function fillPreview(template: string, value: Record<string, unknown>, locale: string): string {
+  return template.replace(/\{(\w+)\}/g, (_, key: string) => (key === "locale" ? locale : encodeURIComponent(String(value[key] ?? ""))));
+}
+
+export function EditorPage({ type, id }: { type: string, id: string | null }) {
+  const admin = useAdmin();
+  const { cms, config, locale, session, plugins } = admin;
+  const queryClient = useQueryClient();
+  const schema = collectionSchema(config, type);
+  const settings = collectionSettings(config, type);
+  const permissions = session.permissions.types[type]!;
+  const canWriteLocale = permissions.write && session.permissions.locales.includes(locale);
+
+  const doc = useQuery({
+    queryKey: ["document", type, id, locale],
+    enabled: id !== null,
+    queryFn: () => cms.api<DocumentState>(`/documents/${type}/${id}?locale=${locale}`),
+    retry: false
+  });
+
+  const baseline = useMemo<Record<string, unknown> | null>(() => {
+    if(id === null) return emptyValue(schema) as Record<string, unknown>;
+    if(!doc.data) return null;
+    return doc.data.draft ?? doc.data.fallback ?? (emptyValue(schema) as Record<string, unknown>);
+  }, [id, doc.data, schema]);
+
+  const [value, setValue] = useState<Record<string, unknown> | null>(baseline);
+  const [serverIssues, setServerIssues] = useState<Issue[]>([]);
+  const [showIssues, setShowIssues] = useState(false);
+  const [busy, setBusy] = useState<null | "save" | "publish" | "unpublish" | "delete">(null);
+  const [conflict, setConflict] = useState<DocumentState | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const loadedKey = useRef<string | null>(null);
+
+  // Reset the form when switching document or locale, not on every refetch.
+  useEffect(() => {
+    const key = `${type}/${id}/${locale}/${baseline ? "ready" : "loading"}`;
+    if(loadedKey.current === key) return;
+    loadedKey.current = key;
+    setValue(baseline);
+    setServerIssues(doc.data?.issues ?? []);
+    setShowIssues(false);
+  }, [type, id, locale, baseline]);
+
+  const isNewTranslation = Boolean(doc.data && !doc.data.exists);
+  const dirty = value !== null && baseline !== null && (isNewTranslation || JSON.stringify(value) !== JSON.stringify(baseline));
+  const clientIssues = useMemo(() => (value ? validate(schema, value).issues : []), [schema, value]);
+  // Server issues (missing references, unsuitable files) are cleared on the next edit.
+  const issues = showIssues ? dedupe([...clientIssues, ...serverIssues]) : [];
+  const title = documentTitle(config, type, value);
+
+  useEffect(() => {
+    document.title = `${title} · ${config.name ?? admin.info.site.name}`;
+  }, [title]);
+
+  // Unsaved-changes guard, for in-app navigation and for leaving the page.
+  useEffect(() => {
+    if(!dirty) return;
+    setNavigationBlocker(() => confirm("You have unsaved changes. Leave anyway?"));
+    function beforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+    }
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => {
+      setNavigationBlocker(undefined);
+      window.removeEventListener("beforeunload", beforeUnload);
+    };
+  }, [dirty]);
+
+  function applyResult(result: DocumentState) {
+    queryClient.setQueryData(["document", type, result.id, locale], result);
+    void queryClient.invalidateQueries({ queryKey: ["documents", type] });
+    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    loadedKey.current = `${type}/${result.id}/${locale}/ready`;
+    setValue(result.draft);
+    setServerIssues(result.issues ?? []);
+  }
+
+  function handleError(error: unknown) {
+    if(error instanceof ApiError) {
+      if(error.status === 409 && error.details?.updatedAt) {
+        void cms.api<DocumentState>(`/documents/${type}/${id}?locale=${locale}`).then(setConflict);
+        return;
+      }
+      if(error.details?.issues) {
+        setServerIssues(error.details.issues);
+        setShowIssues(true);
+        cms.toast(error.message, { type: "error" });
+        requestAnimationFrame(() => document.querySelector("[data-invalid]")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+        return;
+      }
+      if(error.details?.references) {
+        cms.toast(`${error.message}. Remove those references first.`, { type: "error" });
+        return;
+      }
+      cms.toast(error.message, { type: "error" });
+      return;
+    }
+    cms.toast("Something went wrong", { type: "error" });
+    console.error(error);
+  }
+
+  const save = useCallback(async (options: { publish?: boolean, force?: boolean } = {}) => {
+    if(!value || busy) return;
+    if(options.publish) {
+      setShowIssues(true);
+      if(clientIssues.length) {
+        cms.toast("Fix the highlighted fields before publishing", { type: "error" });
+        requestAnimationFrame(() => document.querySelector("[data-invalid]")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+        return;
+      }
+    }
+    setBusy(options.publish ? "publish" : "save");
+    try {
+      if(id === null) {
+        const created = await cms.api<DocumentState>(`/documents/${type}`, { method: "POST", json: { locale, data: value, publish: options.publish } });
+        applyResult(created);
+        setNavigationBlocker(undefined);
+        navigate(`/content/${type}/${created.id}${location.search}`, { replace: true });
+      } else {
+        const result = await cms.api<DocumentState>(`/documents/${type}/${id}`, {
+          method: "PUT",
+          json: {
+            locale,
+            data: value,
+            publish: options.publish,
+            baseUpdatedAt: options.force || isNewTranslation ? undefined : doc.data?.updatedAt ?? undefined
+          }
+        });
+        applyResult(result);
+      }
+      cms.toast(options.publish ? "Published" : "Saved", { type: "success" });
+      if(!options.publish && clientIssues.length) setShowIssues(true);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(null);
+    }
+  }, [value, busy, id, type, locale, doc.data, clientIssues, isNewTranslation]);
+
+  async function action(kind: "unpublish" | "publishOnly") {
+    setBusy(kind === "unpublish" ? "unpublish" : "publish");
+    try {
+      const result = await cms.api<DocumentState>(`/documents/${type}/${id}/${kind === "unpublish" ? "unpublish" : "publish"}`, { method: "POST", json: { locale } });
+      applyResult(result);
+      cms.toast(kind === "unpublish" ? "Unpublished" : "Published", { type: "success" });
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove() {
+    setBusy("delete");
+    try {
+      const translation = isTranslationOnly();
+      await cms.api(`/documents/${type}/${id}${translation ? `?locale=${locale}` : ""}`, { method: "DELETE" });
+      setNavigationBlocker(undefined);
+      void queryClient.invalidateQueries({ queryKey: ["documents", type] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      cms.toast(translation ? `${localeName(locale)} translation deleted` : "Deleted", { type: "success" });
+      if(translation) void doc.refetch();
+      else navigate(`/content/${type}`);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setBusy(null);
+      setConfirmDelete(false);
+    }
+  }
+
+  function isTranslationOnly() {
+    return locale !== config.defaultLocale && (doc.data?.locales.length ?? 0) > 1;
+  }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if((event.metaKey || event.ctrlKey) && event.key === "s") {
+        event.preventDefault();
+        if(canWriteLocale) void save({ publish: event.shiftKey && permissions.publish });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [save, canWriteLocale]);
+
+  if(id !== null && doc.isError) {
+    return (
+      <div className="mx-auto flex max-w-md flex-col items-center gap-3 p-16 text-center">
+        <TriangleAlertIcon className="size-8 text-muted-foreground" />
+        <h1 className="text-lg font-semibold">{(doc.error as ApiError).status === 404 ? "Document not found" : "Couldn't load this document"}</h1>
+        <p className="text-sm text-muted-foreground">{(doc.error as Error).message}</p>
+        <Button variant="outline" nativeButton={false} render={<Link to={`/content/${type}`} />}>Back to {collectionLabel(config, type).toLowerCase()}</Button>
+      </div>
+    );
+  }
+
+  if(!value) {
+    return (
+      <div className="mx-auto w-full max-w-3xl space-y-6 p-8">
+        <Delayed>
+          <Skeleton className="h-8 w-1/2" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </Delayed>
+      </div>
+    );
+  }
+
+  const status = doc.data?.exists ? doc.data.status : null;
+  const slotProps: DocumentSlotProps = { type, id, locale, value, status, cms };
+  const actions = plugins.slots["document.actions"]!.filter(a => !a.types || a.types.includes(type));
+  const panels = plugins.slots["document.sidebar"]!.filter(p => !p.types || p.types.includes(type));
+  const previewUrl = settings.preview && status ? fillPreview(settings.preview, (doc.data?.published ?? value), locale) : null;
+  const readOnly = !canWriteLocale;
+
+  return (
+    <FormValueContext.Provider value={value}>
+      <div className="flex min-h-full flex-col">
+        <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/85 px-4 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/70 md:px-6">
+          {!settings.singleton && (
+            <Button variant="ghost" size="icon-sm" aria-label="Back" nativeButton={false} render={<Link to={`/content/${type}`} />}>
+              <ChevronLeftIcon />
+            </Button>
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-[15px] font-semibold">{id === null ? `New ${collectionLabel(config, type, false).toLowerCase()}` : title}</h1>
+              <StatusBadge status={status} />
+              {dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {previewUrl && (
+              <Tooltip>
+                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" nativeButton={false} render={<a href={previewUrl} target="_blank" rel="noreferrer" />} aria-label="View on site"><EyeIcon /></Button>} />
+                <TooltipContent>View on site</TooltipContent>
+              </Tooltip>
+            )}
+            {id !== null && (
+              <Tooltip>
+                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="History" onClick={() => setHistoryOpen(true)}><HistoryIcon /></Button>} />
+                <TooltipContent>Version history</TooltipContent>
+              </Tooltip>
+            )}
+            {actions.map(item => item.component ? <item.component key={item.id} {...slotProps} /> : (
+              <Button key={item.id} variant="outline" size="sm" onClick={() => item.run?.(slotProps)}>{item.label}</Button>
+            ))}
+            {!readOnly && (
+              <Button variant="outline" size="sm" onClick={() => void save()} disabled={busy !== null || (!dirty && id !== null)}>
+                {busy === "save" ? <Spinner /> : <SaveIcon />} Save
+              </Button>
+            )}
+            {!readOnly && permissions.publish && (
+              <Button
+                size="sm"
+                onClick={() => (dirty || id === null ? void save({ publish: true }) : void action("publishOnly"))}
+                disabled={busy !== null || (status === "published" && !dirty)}
+              >
+                {busy === "publish" ? <Spinner /> : status === "published" && !dirty ? <CheckIcon /> : <CloudUploadIcon />}
+                {status === "published" && !dirty ? "Published" : "Publish"}
+              </Button>
+            )}
+            {id !== null && (
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="More actions"><MoreHorizontalIcon /></Button>} />
+                <DropdownMenuContent align="end" className="w-52">
+                  {permissions.publish && !readOnly && (
+                    <DropdownMenuItem onClick={() => setScheduleOpen(true)}><CalendarClockIcon /> Schedule…</DropdownMenuItem>
+                  )}
+                  {permissions.publish && !readOnly && status && status !== "draft" && (
+                    <DropdownMenuItem onClick={() => void action("unpublish")}><EyeOffIcon /> Unpublish</DropdownMenuItem>
+                  )}
+                  {dirty && (
+                    <DropdownMenuItem onClick={() => setValue(baseline)}><RotateCcwIcon /> Discard changes</DropdownMenuItem>
+                  )}
+                  {permissions.delete && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
+                        <Trash2Icon /> {isTranslationOnly() ? `Delete ${localeName(locale)} translation` : "Delete"}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        </header>
+
+        <div className="mx-auto grid w-full max-w-6xl flex-1 gap-8 px-4 py-6 md:px-8 lg:grid-cols-[minmax(0,1fr)_17rem]">
+          <main className="flex min-w-0 flex-col gap-6">
+            {config.locales!.length > 1 && id !== null && (
+              <LocaleBar type={type} id={id} doc={doc.data} />
+            )}
+            {isNewTranslation && (
+              <div className="flex items-start gap-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-sm">
+                <LanguagesIcon className="mt-0.5 size-4 text-sky-600" />
+                <p>There's no {localeName(locale)} version yet. The form starts from the {localeName(config.defaultLocale!)} copy; saving creates the translation.</p>
+              </div>
+            )}
+            {readOnly && (
+              <div className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">
+                {permissions.write ? `You can't edit the ${localeName(locale)} version.` : "You can view this document but not edit it."}
+              </div>
+            )}
+            {showIssues && issues.length > 0 && (
+              <div className="flex items-start justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                <div className="flex items-start gap-2">
+                  <TriangleAlertIcon className="mt-0.5 size-4" />
+                  <p>{issues.length === 1 ? "1 field needs attention" : `${issues.length} fields need attention`} before this can be published.</p>
+                </div>
+                <Button variant="ghost" size="icon-xs" aria-label="Hide" onClick={() => setShowIssues(false)}><XIcon /></Button>
+              </div>
+            )}
+            <form className="flex flex-col gap-6" onSubmit={e => e.preventDefault()}>
+              {Object.entries(schema.shape).map(([key, field]) => (
+                <Field
+                  key={key}
+                  schema={field}
+                  name={key}
+                  path={[key]}
+                  value={value[key]}
+                  issues={issues}
+                  readOnly={readOnly}
+                  doc={{ type, id }}
+                  onChange={next => {
+                    setServerIssues([]);
+                    setValue(prev => {
+                      const copy = { ...prev };
+                      if(next === undefined) delete copy[key];
+                      else copy[key] = next;
+                      return copy;
+                    });
+                  }}
+                />
+              ))}
+            </form>
+          </main>
+          <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
+            <DocumentInfo doc={doc.data} />
+            {doc.data?.schedules.length ? <Schedules type={type} id={id!} doc={doc.data} onChange={applyResult} /> : null}
+            {panels.map(panel => (
+              <section key={panel.id} className="rounded-xl border p-3">
+                <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">{panel.label}</h3>
+                <panel.component {...slotProps} />
+              </section>
+            ))}
+            {!readOnly && (
+              <p className="hidden text-xs text-muted-foreground lg:block">
+                <Kbd>⌘</Kbd> <Kbd>S</Kbd> to save{permissions.publish ? <>, <Kbd>⌘</Kbd> <Kbd>⇧</Kbd> <Kbd>S</Kbd> to publish</> : null}
+              </p>
+            )}
+          </aside>
+        </div>
+      </div>
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{isTranslationOnly() ? `Delete the ${localeName(locale)} translation?` : `Delete “${title}”?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {isTranslationOnly() ? "Other languages are kept." : "This removes every language version and its history. Files it uses stay in the media library."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void remove()} disabled={busy === "delete"}>
+              {busy === "delete" && <Spinner />} Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={conflict !== null} onOpenChange={open => !open && setConflict(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Someone else changed this document</AlertDialogTitle>
+            <AlertDialogDescription>
+              {displayUser(conflict?.updatedBy, session)} saved a newer version {formatRelative(conflict?.updatedAt)}. Load theirs (losing your edits), or overwrite it with yours.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              if(conflict) applyResult(conflict);
+              setConflict(null);
+            }}>Load theirs</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => {
+              setConflict(null);
+              void save({ force: true });
+            }}>Overwrite</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {id !== null && (
+        <>
+          <ScheduleDialog open={scheduleOpen} onOpenChange={setScheduleOpen} type={type} id={id} status={status} dirty={dirty} onDone={applyResult} onError={handleError} />
+          <HistorySheet open={historyOpen} onOpenChange={setHistoryOpen} type={type} id={id} doc={doc.data} onRestore={applyResult} readOnly={readOnly} />
+        </>
+      )}
+    </FormValueContext.Provider>
+  );
+}
+
+function dedupe(issues: Issue[]): Issue[] {
+  const seen = new Set<string>();
+  return issues.filter(issue => {
+    const key = `${issue.path.join(".")}:${issue.message}`;
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function LocaleBar({ type, id, doc }: { type: string, id: string, doc: DocumentState | undefined }) {
+  const { config, locale, setLocale } = useAdmin();
+  return (
+    <div className="flex flex-wrap items-center gap-1 rounded-xl border bg-muted/30 p-1" role="tablist" aria-label="Language">
+      {config.locales!.map(l => {
+        const version = doc?.locales.find(v => v.locale === l);
+        return (
+          <button
+            key={l}
+            role="tab"
+            aria-selected={l === locale}
+            onClick={() => setLocale(l)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground",
+              l === locale && "bg-background text-foreground shadow-sm ring-1 ring-border"
+            )}
+          >
+            {version ? <StatusDot status={version.status} /> : <span className="size-2 rounded-full border border-dashed border-muted-foreground/60" />}
+            {localeName(l)}
+            {l === config.defaultLocale && <span className="text-[10px] text-muted-foreground">default</span>}
+          </button>
+        );
+      })}
+      <span className="sr-only">{type} {id}</span>
+    </div>
+  );
+}
+
+function DocumentInfo({ doc }: { doc: DocumentState | undefined }) {
+  const { session } = useAdmin();
+  const rows: Array<[string, string]> = doc?.exists ? [
+    ["Created", formatDate(doc.createdAt)],
+    ["Last saved", `${formatRelative(doc.updatedAt)} by ${displayUser(doc.updatedBy, session)}`],
+    ["Published", doc.publishedAt ? formatDate(doc.publishedAt) : "Never"]
+  ] : [["Status", "Not saved yet"]];
+  return (
+    <section className="rounded-xl border p-3">
+      <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">Document</h3>
+      <dl className="grid gap-1.5 text-sm">
+        {rows.map(([label, text]) => (
+          <div key={label} className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="truncate text-right">{text}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function Schedules({ type, id, doc, onChange }: { type: string, id: string, doc: DocumentState, onChange(doc: DocumentState): void }) {
+  const { cms, locale } = useAdmin();
+  return (
+    <section className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
+      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-medium tracking-wide text-violet-700 uppercase dark:text-violet-300">
+        <CalendarClockIcon className="size-3.5" /> Scheduled
+      </h3>
+      <ul className="grid gap-2 text-sm">
+        {doc.schedules.map(s => (
+          <li key={s.action} className="flex items-center justify-between gap-2">
+            <span>{s.action === "publish" ? "Publish" : "Unpublish"} {formatDate(s.runAt)}</span>
+            <Button variant="ghost" size="icon-xs" aria-label="Cancel schedule" onClick={async () => {
+              onChange(await cms.api<DocumentState>(`/documents/${type}/${id}/schedule?locale=${locale}&action=${s.action}`, { method: "DELETE" }));
+            }}><XIcon /></Button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function toLocalInput(date: Date): string {
+  function pad(n: number) {
+    return String(n).padStart(2, "0");
+  }
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function ScheduleDialog({ open, onOpenChange, type, id, status, dirty, onDone, onError }: {
+  open: boolean,
+  onOpenChange(open: boolean): void,
+  type: string,
+  id: string,
+  status: DocumentState["status"],
+  dirty: boolean,
+  onDone(doc: DocumentState): void,
+  onError(error: unknown): void
+}) {
+  const { cms, locale } = useAdmin();
+  const [action, setAction] = useState<"publish" | "unpublish">("publish");
+  const [when, setWhen] = useState(() => toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)));
+  const [busy, setBusy] = useState(false);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Schedule</DialogTitle>
+          <DialogDescription>
+            {action === "publish"
+              ? "The current saved version is captured now and published at the chosen time. Later edits aren't included."
+              : "The document is taken off the site at the chosen time."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="inline-flex w-fit rounded-lg border bg-muted/40 p-0.5">
+            {(["publish", "unpublish"] as const).map(a => (
+              <button key={a} type="button" disabled={a === "unpublish" && !status}
+                className={cn("rounded-md px-3 py-1 text-sm text-muted-foreground disabled:opacity-40", action === a && "bg-background text-foreground shadow-sm ring-1 ring-border")}
+                onClick={() => setAction(a)}>{a === "publish" ? "Publish" : "Unpublish"}</button>
+            ))}
+          </div>
+          <label className="grid gap-1.5 text-sm font-medium">
+            Date and time
+            <Input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} />
+          </label>
+          {dirty && action === "publish" && <p className="text-sm text-amber-600">You have unsaved changes; save first if they should be included.</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={busy || !when} onClick={async () => {
+            setBusy(true);
+            try {
+              onDone(await cms.api<DocumentState>(`/documents/${type}/${id}/schedule`, {
+                method: "POST",
+                json: { locale, action, runAt: new Date(when).toISOString() }
+              }));
+              cms.toast(`Scheduled to ${action} ${formatDate(new Date(when).toISOString())}`, { type: "success" });
+              onOpenChange(false);
+            } catch (error) {
+              onError(error);
+            } finally {
+              setBusy(false);
+            }
+          }}>{busy && <Spinner />} Schedule</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function HistorySheet({ open, onOpenChange, type, id, doc, onRestore, readOnly }: {
+  open: boolean,
+  onOpenChange(open: boolean): void,
+  type: string,
+  id: string,
+  doc: DocumentState | undefined,
+  onRestore(doc: DocumentState): void,
+  readOnly: boolean
+}) {
+  const { cms, locale, session, config } = useAdmin();
+  const [selected, setSelected] = useState<number | null>(null);
+  const versions = useQuery({
+    queryKey: ["versions", type, id, locale, doc?.updatedAt],
+    enabled: open,
+    queryFn: () => cms.api<{ versions: Array<{ ver: number, author: string, createdAt: string }> }>(`/documents/${type}/${id}/versions?locale=${locale}`)
+  });
+  const version = useQuery({
+    queryKey: ["version", type, id, locale, selected],
+    enabled: selected !== null,
+    queryFn: () => cms.api<{ ver: number, data: Record<string, unknown> }>(`/documents/${type}/${id}/versions/${selected}?locale=${locale}`)
+  });
+  const schema = collectionSchema(config, type);
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full gap-0 sm:max-w-xl">
+        <SheetHeader className="border-b">
+          <SheetTitle>Version history</SheetTitle>
+          <SheetDescription>Every publish (and scheduled publish) is kept. Restoring copies a version into the draft.</SheetDescription>
+        </SheetHeader>
+        <div className="grid min-h-0 flex-1 grid-cols-[11rem_1fr] overflow-hidden">
+          <ul className="overflow-y-auto border-r p-2">
+            {versions.data?.versions.length === 0 && <li className="p-2 text-sm text-muted-foreground">Not published yet.</li>}
+            {versions.data?.versions.map(v => (
+              <li key={v.ver}>
+                <button
+                  onClick={() => setSelected(v.ver)}
+                  className={cn("w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted", selected === v.ver && "bg-muted")}
+                >
+                  <span className="flex items-center gap-1.5 font-medium">
+                    Version {v.ver}
+                    {doc?.publishedVer === v.ver && <span className="size-1.5 rounded-full bg-emerald-500" title="Live" />}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">{formatRelative(v.createdAt)} · {displayUser(v.author, session)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex min-h-0 flex-col overflow-y-auto p-4">
+            {selected === null ? <p className="text-sm text-muted-foreground">Pick a version to see it.</p>
+              : !version.data ? <Delayed><Spinner /></Delayed>
+                : (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium">Version {selected}</h4>
+                      {!readOnly && (
+                        <Button size="sm" variant="outline" onClick={async () => {
+                          const result = await cms.api<DocumentState>(`/documents/${type}/${id}/versions/${selected}/restore`, { method: "POST", json: { locale } });
+                          onRestore(result);
+                          cms.toast(`Version ${selected} restored to the draft`, { type: "success" });
+                          onOpenChange(false);
+                        }}><RotateCcwIcon /> Restore</Button>
+                      )}
+                    </div>
+                    <div className="pointer-events-none flex flex-col gap-5 opacity-90">
+                      {Object.entries(schema.shape).map(([key, field]) => (
+                        <Field key={key} schema={field} name={key} path={[key]} value={version.data.data[key]} issues={[]} readOnly doc={{ type, id }} onChange={() => {}} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}

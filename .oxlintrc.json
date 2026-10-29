@@ -4,7 +4,12 @@
     "node_modules/**",
     "coverage/**",
     "dist/**",
-    "out/**"
+    "out/**",
+    "packages/vibe-cms/src/admin/components/ui/**",
+    "packages/vibe-cms/src/admin/hooks/**",
+    "**/.alchemy/**",
+    "**/.astro/**",
+    "**/*.astro"
   ],
   "jsPlugins": [
     {

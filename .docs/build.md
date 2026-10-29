@@ -23,10 +23,10 @@ export default defineConfig({
 ```ts
 // astro.config.ts
 import { defineConfig } from "astro/config";
-import vibe from "vibe-cms/astro"; // wraps the same Vite plugin
+import { vibe } from "vibe-cms/vite"; // no Astro-specific integration needed
 
 export default defineConfig({
-  integrations: [vibe()],
+  vite: { plugins: [vibe()] },
 });
 ```
 

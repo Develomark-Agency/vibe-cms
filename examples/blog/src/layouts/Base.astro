@@ -1,0 +1,41 @@
+---
+import { siteSettings } from "../content.ts";
+
+interface Props {
+  title?: string,
+  description?: string
+}
+
+const site = await siteSettings();
+const { title, description } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title ? `${title} · ${site.title}` : site.title}</title>
+    {description && <meta name="description" content={description} />}
+    <style is:global define:vars={{ accent: site.accent }}>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+      body { margin: 0; line-height: 1.6; background: Canvas; color: CanvasText; }
+      a { color: var(--accent); }
+      .wrap { max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+      header.site { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); padding-bottom: 1rem; margin-bottom: 2rem; }
+      header.site a { text-decoration: none; color: inherit; font-weight: 700; font-size: 1.25rem; }
+      header.site p { margin: 0; opacity: .6; font-size: .9rem; }
+      .tag { display: inline-block; font-size: .75rem; padding: .1rem .5rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); margin-right: .25rem; }
+      img { max-width: 100%; height: auto; border-radius: .75rem; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="site">
+        <a href="/">{site.title}</a>
+        {site.tagline && <p>{site.tagline}</p>}
+      </header>
+      <slot />
+    </div>
+  </body>
+</html>

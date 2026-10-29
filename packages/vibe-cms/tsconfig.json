@@ -1,4 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src"]
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["bun"],
+    "paths": {
+      "vibe-cms": ["./src/index.ts"],
+      "vibe-cms/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "test"]
 }

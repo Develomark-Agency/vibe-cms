@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "example-blog",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "--filter", "@vibe-cms/example-blog", "dev"],
+      "port": 1337
+    },
+    {
+      "name": "local-panel",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["packages/vibe-cms/src/cli/index.ts", "admin"],
+      "port": 5173
+    }
+  ]
+}

@@ -2,11 +2,17 @@
   "name": "vibe-cms-workspace",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "apps/*", "examples/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "examples/*"
+  ],
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
     "lint": "oxlint",
-    "lint:fix": "oxlint --fix"
+    "lint:fix": "oxlint --fix",
+    "dev": "bun run --filter @vibe-cms/example-blog dev"
   },
   "devDependencies": {
     "@stylistic/eslint-plugin": "^5.10.0",

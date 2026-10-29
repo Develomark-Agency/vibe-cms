@@ -1,0 +1,694 @@
+import { ChevronDownIcon, ChevronUpIcon, CopyIcon, GripVerticalIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { IMPL, loadLazy, type WidgetDescriptor } from "../../descriptor.ts";
+import type {
+  AnySchema,
+  ArraySchema,
+  DateSchema,
+  EnumSchema,
+  LiteralSchema,
+  NumberSchema,
+  ObjectSchema,
+  OptionalSchema,
+  TextSchema,
+  UnionSchema
+} from "../../schema/types.ts";
+import { emptyValue, matchesDiscriminators, type Issue, type Path } from "../../schema/validate.ts";
+import { Badge } from "../components/ui/badge.tsx";
+import { Button } from "../components/ui/button.tsx";
+import { Calendar } from "../components/ui/calendar.tsx";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
+import { Input } from "../components/ui/input.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover.tsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select.tsx";
+import { Switch } from "../components/ui/switch.tsx";
+import { Textarea } from "../components/ui/textarea.tsx";
+import { cn } from "../lib/utils.ts";
+import type { FieldDescriptor, WidgetContext, WidgetImpl } from "../index.ts";
+import { humanize, useAdmin } from "./context.tsx";
+import { AssetControl, RefControl } from "./pickers.tsx";
+
+export interface FieldProps {
+  schema: AnySchema,
+  value: unknown,
+  onChange(value: unknown): void,
+  path: Path,
+  name: string,
+  issues: Issue[],
+  readOnly: boolean,
+  doc: { type: string, id: string | null },
+  label?: string,
+  /** Rendered inline (array items, union variants) without the label row. */
+  bare?: boolean
+}
+
+function samePath(a: Path, b: Path) {
+  return a.length === b.length && a.every((s, i) => String(s) === String(b[i]));
+}
+
+function startsWith(path: Path, prefix: Path) {
+  return prefix.every((s, i) => String(s) === String(path[i]));
+}
+
+export function issuesUnder(issues: Issue[], path: Path): Issue[] {
+  return issues.filter(issue => startsWith(issue.path, path));
+}
+
+function unwrap(schema: AnySchema): AnySchema {
+  return schema.type === "optional" ? (schema as OptionalSchema).inner : schema;
+}
+
+/** Renders any field: a custom widget if the schema names one, otherwise the built-in control for its type. */
+export function Field(props: FieldProps) {
+  const { schema, path, issues, name } = props;
+  const { locale, plugins, cms } = useAdmin();
+  const inner = unwrap(schema);
+  if(inner.type === "literal") return null;
+  const errors = issues.filter(issue => samePath(issue.path, path)).map(issue => issue.message);
+  const label = props.label ?? schema.label ?? inner.label ?? humanize(name);
+  const descriptor: FieldDescriptor = {
+    name,
+    path,
+    label,
+    description: schema.description ?? inner.description,
+    schema,
+    errors,
+    issues: issuesUnder(issues, path),
+    required: schema.type !== "optional",
+    readOnly: props.readOnly,
+    locale,
+    document: props.doc
+  };
+  const widget = schema.widget ?? inner.widget;
+  let control: ReactNode = widget
+    ? <WidgetHost descriptor={widget} field={descriptor} value={props.value} onChange={props.onChange} />
+    : <BuiltinControl {...props} schema={inner} optional={schema.type === "optional"} field={descriptor} />;
+
+  for(const decorator of plugins.fieldDecorators) {
+    if(decorator.match && !decorator.match(descriptor)) continue;
+    const Decorator = decorator.component;
+    control = <Decorator field={descriptor} value={props.value} onChange={props.onChange} cms={cms}>{control}</Decorator>;
+  }
+
+  const grouped = inner.type === "object" || (inner.type === "array" && !isTagList(inner)) || inner.type === "union";
+  if(props.bare) {
+    return <div className="flex flex-col gap-2">{control}<Errors errors={errors} /></div>;
+  }
+  return (
+    <div className="group/field flex flex-col gap-2" data-field={path.join(".")} data-invalid={errors.length > 0 || undefined}>
+      <div className="flex items-baseline justify-between gap-2">
+        <label className={cn("text-sm font-medium leading-none", errors.length && "text-destructive")} htmlFor={fieldId(path)}>
+          {label}
+          {schema.type === "optional" ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Optional</span> : null}
+        </label>
+        {grouped && !widget && Array.isArray(props.value) ? <span className="text-xs text-muted-foreground">{props.value.length} items</span> : null}
+      </div>
+      {descriptor.description ? <p className="-mt-1 text-xs text-muted-foreground">{descriptor.description}</p> : null}
+      {control}
+      <Errors errors={errors} />
+    </div>
+  );
+}
+
+function Errors({ errors }: { errors: string[] }) {
+  if(!errors.length) return null;
+  return <p className="text-xs text-destructive" role="alert">{errors.join(". ")}</p>;
+}
+
+export function fieldId(path: Path) {
+  return `field-${path.join("-")}`;
+}
+
+// --- Widgets -----------------------------------------------------------------
+
+const widgetCache = new Map<string, Promise<WidgetImpl>>();
+
+function loadWidget(descriptor: WidgetDescriptor): Promise<WidgetImpl> {
+  let promise = widgetCache.get(descriptor.id);
+  if(!promise) {
+    promise = loadLazy(descriptor[IMPL].admin) as Promise<WidgetImpl>;
+    widgetCache.set(descriptor.id, promise);
+  }
+  return promise;
+}
+
+function WidgetHost({ descriptor, field, value, onChange }: {
+  descriptor: WidgetDescriptor,
+  field: FieldDescriptor,
+  value: unknown,
+  onChange(value: unknown): void
+}) {
+  const { cms } = useAdmin();
+  const [impl, setImpl] = useState<WidgetImpl | Error | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadWidget(descriptor).then(
+      loaded => !cancelled && setImpl(loaded),
+      error => !cancelled && setImpl(error instanceof Error ? error : new Error(String(error)))
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [descriptor]);
+  const ctx: WidgetContext = { value, onChange, options: descriptor.options, field, cms };
+  if(impl instanceof Error) {
+    return <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">Widget “{descriptor.id}” failed to load: {impl.message}</div>;
+  }
+  if(!impl) return <div className="h-9 animate-pulse rounded-lg bg-muted" />;
+  if(impl.react) {
+    const Component = impl.react;
+    return <Component {...ctx} />;
+  }
+  return <MountedWidget impl={impl} ctx={ctx} />;
+}
+
+/** Hosts a framework-neutral widget through its `mount` contract. */
+function MountedWidget({ impl, ctx }: { impl: WidgetImpl, ctx: WidgetContext }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const mounted = useRef<ReturnType<WidgetImpl["mount"]> | null>(null);
+  useEffect(() => {
+    mounted.current = impl.mount(ref.current!, ctx);
+    return () => {
+      mounted.current?.unmount();
+      mounted.current = null;
+    };
+    // Mount once per implementation; updates flow through `update`.
+  }, [impl]);
+  useEffect(() => {
+    mounted.current?.update(ctx);
+  });
+  return <div ref={ref} />;
+}
+
+// --- Built-in controls ---------------------------------------------------------
+
+type ControlProps = FieldProps & { optional: boolean, field: FieldDescriptor };
+
+function BuiltinControl(props: ControlProps) {
+  switch(props.schema.type) {
+    case "text": return <TextControl {...props} />;
+    case "number": return <NumberControl {...props} />;
+    case "boolean": return <BooleanControl {...props} />;
+    case "date": return <DateControl {...props} />;
+    case "enum": return <EnumControl {...props} />;
+    case "object": return <ObjectControl {...props} />;
+    case "array": return isTagList(props.schema) ? <TagControl {...props} /> : <ArrayControl {...props} />;
+    case "union": return <UnionControl {...props} />;
+    case "ref": return <RefControl {...props} />;
+    case "asset": return <AssetControl {...props} options={{ focal: false }} />;
+    default:
+      return <p className="text-sm text-muted-foreground">No editor for “{props.schema.type}” fields.</p>;
+  }
+}
+
+function TextControl({ schema, value, onChange, path, readOnly, optional, field }: ControlProps) {
+  const s = schema as TextSchema;
+  const text = typeof value === "string" ? value : "";
+  const multiline = s.multiline || (s.max ?? 0) > 200;
+  function change(next: string) {
+    onChange(optional && next === "" ? undefined : next);
+  }
+  const counter = s.max ? (
+    <span className={cn("pointer-events-none absolute right-2.5 bottom-2 text-[11px] tabular-nums text-muted-foreground", text.length > s.max && "text-destructive")}>
+      {text.length}/{s.max}
+    </span>
+  ) : null;
+  if(multiline) {
+    return (
+      <div className="relative">
+        <Textarea id={fieldId(path)} value={text} readOnly={readOnly} aria-invalid={field.errors.length > 0} onChange={e => change(e.target.value)} className="min-h-24 pb-6" />
+        {counter}
+      </div>
+    );
+  }
+  return (
+    <div className="relative">
+      <Input
+        id={fieldId(path)}
+        value={text}
+        readOnly={readOnly}
+        aria-invalid={field.errors.length > 0}
+        type={s.format === "email" ? "email" : s.format === "url" ? "url" : "text"}
+        onChange={e => change(e.target.value)}
+        className={cn(s.max && "pr-16", s.format === "slug" && "font-mono text-[13px]")}
+      />
+      {counter && <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] tabular-nums text-muted-foreground">{text.length}/{s.max}</span>}
+      {s.format === "slug" && !readOnly ? <SlugHelper path={path} current={text} onChange={change} /> : null}
+    </div>
+  );
+}
+
+/** Offers to derive a slug from the document's title. */
+function SlugHelper({ path, current, onChange }: { path: Path, current: string, onChange(value: string): void }) {
+  const form = useFormValue();
+  const title = typeof form?.title === "string" ? form.title : typeof form?.name === "string" ? form.name : "";
+  const slug = slugify(title);
+  if(path.length !== 1 || !slug || slug === current) return null;
+  return (
+    <button type="button" className="mt-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onClick={() => onChange(slug)}>
+      Generate from title: <span className="font-mono">{slug}</span>
+    </button>
+  );
+}
+
+export function slugify(input: string): string {
+  return input.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+export const FormValueContext = createContext<Record<string, unknown> | null>(null);
+
+function useFormValue() {
+  return useContext(FormValueContext);
+}
+
+function NumberControl({ schema, value, onChange, path, readOnly, optional, field }: ControlProps) {
+  const s = schema as NumberSchema;
+  const [text, setText] = useState(value === undefined ? "" : String(value));
+  useEffect(() => {
+    if(Number(text) !== value) setText(value === undefined || value === null ? "" : String(value));
+    // Only resync when the value changes from outside.
+  }, [value]);
+  return (
+    <Input
+      id={fieldId(path)}
+      inputMode="decimal"
+      type="number"
+      min={s.min}
+      max={s.max}
+      step={s.step ?? (s.integer ? 1 : "any")}
+      value={text}
+      readOnly={readOnly}
+      aria-invalid={field.errors.length > 0}
+      className="max-w-48 tabular-nums"
+      onChange={e => {
+        setText(e.target.value);
+        if(e.target.value === "") onChange(optional ? undefined : 0);
+        else if(!Number.isNaN(e.target.valueAsNumber)) onChange(e.target.valueAsNumber);
+      }}
+    />
+  );
+}
+
+function BooleanControl({ value, onChange, path, readOnly }: ControlProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <Switch id={fieldId(path)} checked={value === true} disabled={readOnly} onCheckedChange={checked => onChange(checked)} />
+      <span className="text-sm text-muted-foreground">{value === true ? "On" : "Off"}</span>
+    </div>
+  );
+}
+
+function DateControl({ schema, value, onChange, path, readOnly, optional, field }: ControlProps) {
+  const s = schema as DateSchema;
+  const [open, setOpen] = useState(false);
+  const date = typeof value === "string" && value ? new Date(s.time ? value : `${value}T00:00:00`) : undefined;
+  const valid = date && !Number.isNaN(date.getTime()) ? date : undefined;
+  function set(next: Date | undefined, time?: string) {
+    if(!next) return onChange(optional ? undefined : value);
+    if(!s.time) {
+      const y = next.getFullYear();
+      const m = String(next.getMonth() + 1).padStart(2, "0");
+      const d = String(next.getDate()).padStart(2, "0");
+      return onChange(`${y}-${m}-${d}`);
+    }
+    const [hh, mm] = (time ?? (valid ? `${valid.getHours()}:${valid.getMinutes()}` : "09:00")).split(":").map(Number);
+    const out = new Date(next);
+    out.setHours(hh ?? 0, mm ?? 0, 0, 0);
+    onChange(out.toISOString());
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button id={fieldId(path)} variant="outline" disabled={readOnly} aria-invalid={field.errors.length > 0} className={cn("w-56 justify-start font-normal", !valid && "text-muted-foreground")}>
+              <CalendarIcon />
+              {valid ? valid.toLocaleDateString(undefined, { dateStyle: "medium" }) : "Pick a date"}
+            </Button>
+          }
+        />
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={valid}
+            defaultMonth={valid}
+            captionLayout="dropdown"
+            onSelect={next => {
+              set(next);
+              setOpen(false);
+            }}
+          />
+        </PopoverContent>
+      </Popover>
+      {s.time && (
+        <Input
+          type="time"
+          className="w-32"
+          disabled={readOnly || !valid}
+          value={valid ? `${String(valid.getHours()).padStart(2, "0")}:${String(valid.getMinutes()).padStart(2, "0")}` : ""}
+          onChange={e => valid && set(valid, e.target.value)}
+        />
+      )}
+      {valid && optional && !readOnly ? (
+        <Button variant="ghost" size="icon-sm" aria-label="Clear date" onClick={() => onChange(undefined)}><XIcon /></Button>
+      ) : null}
+    </div>
+  );
+}
+
+function EnumControl({ schema, value, onChange, path, readOnly, optional, field }: ControlProps) {
+  const s = schema as EnumSchema;
+  const items = s.values.map(v => ({ value: v, label: s.labels?.[v] ?? humanize(v) }));
+  if(s.values.length <= 4 && !optional) {
+    return (
+      <div role="radiogroup" id={fieldId(path)} className="inline-flex w-fit rounded-lg border bg-muted/40 p-0.5">
+        {items.map(item => (
+          <button
+            key={item.value}
+            type="button"
+            role="radio"
+            aria-checked={value === item.value}
+            disabled={readOnly}
+            onClick={() => onChange(item.value)}
+            className={cn(
+              "rounded-md px-3 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground",
+              value === item.value && "bg-background text-foreground shadow-sm ring-1 ring-border"
+            )}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <Select
+      items={[...(optional ? [{ value: "", label: "None" }] : []), ...items]}
+      value={typeof value === "string" ? value : ""}
+      onValueChange={next => onChange(next === "" ? undefined : next)}
+      disabled={readOnly}
+    >
+      <SelectTrigger id={fieldId(path)} className="w-64" aria-invalid={field.errors.length > 0}>
+        <SelectValue placeholder="Choose…" />
+      </SelectTrigger>
+      <SelectContent>
+        {optional && <SelectItem value="">None</SelectItem>}
+        {items.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** `v.array(v.text())` edits as tags. */
+function isTagList(schema: AnySchema): boolean {
+  if(schema.type !== "array") return false;
+  const item = unwrap((schema as ArraySchema).item);
+  return item.type === "text" && !(item as TextSchema).multiline && !item.widget;
+}
+
+function TagControl({ value, onChange, path, readOnly }: ControlProps) {
+  const tags = Array.isArray(value) ? (value as string[]) : [];
+  const [draft, setDraft] = useState("");
+  function add(text: string) {
+    const parts = text.split(",").map(t => t.trim()).filter(t => t && !tags.includes(t));
+    if(parts.length) onChange([...tags, ...parts]);
+    setDraft("");
+  }
+  return (
+    <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-input bg-transparent px-2 py-1.5 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30">
+      {tags.map(tag => (
+        <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+          {tag}
+          {!readOnly && (
+            <button type="button" aria-label={`Remove ${tag}`} className="rounded-sm opacity-60 hover:opacity-100" onClick={() => onChange(tags.filter(t => t !== tag))}>
+              <XIcon className="size-3" />
+            </button>
+          )}
+        </Badge>
+      ))}
+      {!readOnly && (
+        <input
+          id={fieldId(path)}
+          value={draft}
+          placeholder={tags.length ? "" : "Type and press Enter"}
+          className="min-w-24 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          onChange={e => (e.target.value.includes(",") ? add(e.target.value) : setDraft(e.target.value))}
+          onBlur={() => draft && add(draft)}
+          onKeyDown={e => {
+            if(e.key === "Enter") {
+              e.preventDefault();
+              add(draft);
+            } else if(e.key === "Backspace" && !draft && tags.length) {
+              onChange(tags.slice(0, -1));
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ObjectControl({ schema, value, onChange, path, issues, readOnly, optional, doc, bare }: ControlProps) {
+  const s = schema as ObjectSchema;
+  const obj = (value && typeof value === "object" ? value : undefined) as Record<string, unknown> | undefined;
+  if(!obj) {
+    if(readOnly) return <p className="text-sm text-muted-foreground">Not set</p>;
+    return (
+      <Button variant="outline" size="sm" className="w-fit" onClick={() => onChange(emptyValue(s))}>
+        <PlusIcon /> Add
+      </Button>
+    );
+  }
+  const fields = Object.entries(s.shape).filter(([, f]) => unwrap(f).type !== "literal");
+  return (
+    <div className={cn("flex flex-col gap-5", !bare && "rounded-xl border bg-muted/20 p-4")}>
+      {fields.map(([key, field]) => (
+        <Field
+          key={key}
+          schema={field}
+          name={key}
+          path={[...path, key]}
+          value={obj[key]}
+          issues={issues}
+          readOnly={readOnly}
+          doc={doc}
+          onChange={next => {
+            const copy = { ...obj };
+            if(next === undefined) delete copy[key];
+            else copy[key] = next;
+            onChange(copy);
+          }}
+        />
+      ))}
+      {optional && !readOnly && (
+        <Button variant="ghost" size="sm" className="w-fit text-muted-foreground" onClick={() => onChange(undefined)}>
+          <Trash2Icon /> Remove
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** Union variants are named by their literal discriminator (e.g. `kind: "heading"`). */
+export function variantLabel(option: AnySchema, index: number): string {
+  if(option.label) return option.label;
+  if(option.type === "object") {
+    const literal = Object.values((option as ObjectSchema).shape).find(f => f.type === "literal") as LiteralSchema | undefined;
+    if(literal && typeof literal.value === "string") return humanize(literal.value);
+  }
+  return option.type === "object" ? `Option ${index + 1}` : humanize(option.type);
+}
+
+function variantIndex(schema: UnionSchema, value: unknown): number {
+  const found = schema.options.findIndex(option => matchesDiscriminators(option, value));
+  return found;
+}
+
+function UnionControl({ schema, value, onChange, path, issues, readOnly, doc, name }: ControlProps) {
+  const s = schema as UnionSchema;
+  const index = variantIndex(s, value);
+  const option = index >= 0 ? s.options[index]! : undefined;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground">Type</span>
+        <Select
+          items={s.options.map((o, i) => ({ value: String(i), label: variantLabel(o, i) }))}
+          value={index >= 0 ? String(index) : ""}
+          disabled={readOnly}
+          onValueChange={next => onChange(emptyValue(s.options[Number(next)]!))}
+        >
+          <SelectTrigger size="sm" className="w-48"><SelectValue placeholder="Choose…" /></SelectTrigger>
+          <SelectContent>
+            {s.options.map((o, i) => <SelectItem key={i} value={String(i)}>{variantLabel(o, i)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      {option && (
+        <Field bare schema={option} name={name} path={path} value={value} onChange={onChange} issues={issues} readOnly={readOnly} doc={doc} />
+      )}
+    </div>
+  );
+}
+
+/** Stable React keys for array items across add / remove / move. */
+function useItemKeys(length: number) {
+  const keys = useRef<string[]>([]);
+  const counter = useRef(0);
+  while(keys.current.length < length) keys.current.push(`k${counter.current++}`);
+  if(keys.current.length > length) keys.current.length = length;
+  return {
+    keys: keys.current,
+    insert(at: number) {
+      keys.current.splice(at, 0, `k${counter.current++}`);
+    },
+    remove(at: number) {
+      keys.current.splice(at, 1);
+    },
+    move(from: number, to: number) {
+      const [key] = keys.current.splice(from, 1);
+      keys.current.splice(to, 0, key!);
+    }
+  };
+}
+
+function itemSummary(schema: AnySchema, value: unknown, index: number): string {
+  const inner = unwrap(schema);
+  if(inner.type === "union") {
+    const option = (inner as UnionSchema).options[variantIndex(inner as UnionSchema, value)];
+    return option ? variantLabel(option, index) : `Item ${index + 1}`;
+  }
+  if(inner.type === "object" && value && typeof value === "object") {
+    const text = Object.entries((inner as ObjectSchema).shape)
+      .map(([key, field]) => (unwrap(field).type === "text" ? (value as Record<string, unknown>)[key] : undefined))
+      .find(v => typeof v === "string" && v.trim());
+    if(typeof text === "string") return text;
+  }
+  if(inner.type === "ref" || inner.type === "asset") return `Item ${index + 1}`;
+  if(typeof value === "string" || typeof value === "number") return String(value) || `Item ${index + 1}`;
+  return `Item ${index + 1}`;
+}
+
+function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: ControlProps) {
+  const s = schema as ArraySchema;
+  const items = Array.isArray(value) ? value : [];
+  const { keys, insert, remove, move } = useItemKeys(items.length);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const item = unwrap(s.item);
+  const variants = item.type === "union" ? (item as UnionSchema).options : null;
+  const atMax = s.max !== undefined && items.length >= s.max;
+  const simple = ["ref", "asset", "text", "number", "date", "enum"].includes(item.type);
+
+  function add(next: unknown) {
+    insert(items.length);
+    onChange([...items, next]);
+  }
+
+  const addButton = readOnly || atMax ? null : variants ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="w-fit"><PlusIcon /> Add <ChevronDownIcon /></Button>} />
+      <DropdownMenuContent align="start">
+        {variants.map((variant, i) => (
+          <DropdownMenuItem key={i} onClick={() => add(emptyValue(variant))}>{variantLabel(variant, i)}</DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : (
+    <Button variant="outline" size="sm" className="w-fit" onClick={() => add(emptyValue(item))}>
+      <PlusIcon /> Add {s.item.label?.toLowerCase() ?? "item"}
+    </Button>
+  );
+
+  return (
+    <div className="flex flex-col gap-2">
+      {items.length === 0 && <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">No items yet</p>}
+      {items.map((entry, i) => {
+        const key = keys[i]!;
+        const itemPath = [...path, i];
+        const hasIssues = issuesUnder(issues, itemPath).length > 0;
+        const isCollapsed = collapsed.has(key);
+        const controls = !readOnly && (
+          <div className="flex shrink-0 items-center opacity-60 transition-opacity group-hover/item:opacity-100">
+            <Button variant="ghost" size="icon-xs" aria-label="Move up" disabled={i === 0} onClick={() => {
+              move(i, i - 1);
+              const next = [...items];
+              [next[i - 1], next[i]] = [next[i], next[i - 1]];
+              onChange(next);
+            }}><ChevronUpIcon /></Button>
+            <Button variant="ghost" size="icon-xs" aria-label="Move down" disabled={i === items.length - 1} onClick={() => {
+              move(i, i + 1);
+              const next = [...items];
+              [next[i + 1], next[i]] = [next[i], next[i + 1]];
+              onChange(next);
+            }}><ChevronDownIcon /></Button>
+            {!simple && (
+              <Button variant="ghost" size="icon-xs" aria-label="Duplicate" disabled={atMax} onClick={() => {
+                insert(i + 1);
+                onChange([...items.slice(0, i + 1), structuredClone(entry), ...items.slice(i + 1)]);
+              }}><CopyIcon /></Button>
+            )}
+            <Button variant="ghost" size="icon-xs" aria-label="Remove" onClick={() => {
+              remove(i);
+              onChange(items.filter((_, j) => j !== i));
+            }}><Trash2Icon /></Button>
+          </div>
+        );
+        if(simple) {
+          return (
+            <div key={key} className="group/item flex items-start gap-1">
+              <div className="min-w-0 flex-1">
+                <Field bare schema={s.item} name={String(i)} path={itemPath} value={entry} issues={issues} readOnly={readOnly} doc={doc}
+                  onChange={next => onChange(items.map((v, j) => (j === i ? next : v)))} />
+              </div>
+              {controls}
+            </div>
+          );
+        }
+        return (
+          <div key={key} className={cn("group/item rounded-xl border bg-card", hasIssues && "border-destructive/50")}>
+            <div className="flex items-center gap-1.5 border-b px-2 py-1.5 data-[collapsed=true]:border-b-0" data-collapsed={isCollapsed}>
+              <GripVerticalIcon className="size-3.5 text-muted-foreground/50" />
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm font-medium"
+                onClick={() => setCollapsed(prev => {
+                  const next = new Set(prev);
+                  if(next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                })}
+              >
+                <span className="truncate">{itemSummary(s.item, entry, i)}</span>
+                {variants && <Badge variant="outline" className="font-normal">{variantLabel(variants[variantIndex(item as UnionSchema, entry)] ?? item, i)}</Badge>}
+                {hasIssues && <span className="size-1.5 rounded-full bg-destructive" />}
+              </button>
+              {controls}
+            </div>
+            {!isCollapsed && (
+              <div className="p-4">
+                <Field
+                  bare
+                  schema={variants ? (variants[variantIndex(item as UnionSchema, entry)] ?? s.item) : s.item}
+                  name={String(i)}
+                  path={itemPath}
+                  value={entry}
+                  issues={issues}
+                  readOnly={readOnly}
+                  doc={doc}
+                  onChange={next => onChange(items.map((v, j) => (j === i ? next : v)))}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {addButton}
+    </div>
+  );
+}
+
+export function useStableCallback<T extends (...args: never[]) => unknown>(fn: T): T {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useMemo(() => ((...args: never[]) => ref.current(...args)) as T, []);
+}

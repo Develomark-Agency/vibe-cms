@@ -2,8 +2,25 @@
   "name": "@vibe-cms/panel",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "dev": "vite dev",
+    "build": "vite build",
+    "deploy": "vite build && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
-  "type": "module"
+  "dependencies": {
+    "jose": "^6.2.14",
+    "vibe-cms": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.66.0",
+    "@cloudflare/workers-types": "^5.20261029.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.5",
+    "wrangler": "^4.155.0"
+  }
 }
