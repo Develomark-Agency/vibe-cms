@@ -133,3 +133,26 @@ test("query locales are the site's locales", () => {
   void cms.query(site.schemas.post).findMany({ locale: "de" });
   expect(true).toBe(true);
 });
+
+test("action clients are typed from the action definitions", async () => {
+  const { createActionClient, createThrowingActionClient } = await import("../src/actions/client.ts");
+  type Actions = import("../src/actions/core.ts").CoreActions;
+  const { Result } = await import("better-result");
+  const calls: string[] = [];
+  const actions = createThrowingActionClient<Actions>(async name => {
+    calls.push(name);
+    return Result.ok({ docs: [], total: 0 });
+  });
+  const listed = await actions.documents.list({ type: "post", limit: 5 });
+  assertType<Equal<typeof listed.total, number>>(true);
+  // @ts-expect-error `type` is required
+  void actions.documents.list({ limit: 5 });
+  // @ts-expect-error not an action
+  void actions.documents.nope;
+  void actions.schema.list();
+  expect(calls).toEqual(["documents.list", "documents.list", "schema.list"]);
+
+  const results = createActionClient<Actions>(async () => Result.ok({ folders: [] }));
+  const folders = await results.folders.list();
+  if(folders.isErr()) assertType<Equal<typeof folders.error._tag, import("../src/actions/errors.ts").ActionErrorTag>>(true);
+});

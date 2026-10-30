@@ -148,7 +148,7 @@ function Shell({ config, info, session, prefix, onSignOut }: {
 }) {
   const cms = useMemo(() => createAdminClient(prefix, Object.keys(config.schemas), path => navigate(path)), [prefix]);
   const [plugins, setPlugins] = useState<Required<AdminPlugin> | null>(null);
-  const site = useQuery({ queryKey: ["site"], queryFn: () => cms.api<SiteInfo["settings"]>("/site"), initialData: info.settings, staleTime: Infinity }).data;
+  const site = useQuery({ queryKey: ["site"], queryFn: () => cms.actions.site.get(), initialData: info.settings, staleTime: Infinity }).data;
   const panelAccent = useSyncExternalStore(subscribePanelAccent, getPanelAccent);
 
   useEffect(() => {
@@ -413,7 +413,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
             </div>
           </div>
         )}
-        <div className="min-h-full" style={{ viewTransitionName: "page" }}>
+        <div className="min-h-full" data-page>
           <ErrorBoundary resetKey={path}>{page}</ErrorBoundary>
         </div>
       </SidebarInset>

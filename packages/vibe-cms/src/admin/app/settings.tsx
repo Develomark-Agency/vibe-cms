@@ -47,7 +47,7 @@ export function SiteSettingsPage() {
   useEffect(() => () => setAccent(queryClient.getQueryData<SiteSettings>(["site"])?.accent ?? getPanelAccent()), []);
 
   const save = useMutation({
-    mutationFn: (patch: SiteSettingsPatch) => cms.api<SiteSettings>("/site", { method: "PATCH", json: patch }),
+    mutationFn: (patch: SiteSettingsPatch) => cms.actions.site.update(patch),
     onSuccess(next) {
       queryClient.setQueryData(["site"], next);
       postToPanel({ type: "vibe:site", site: next });

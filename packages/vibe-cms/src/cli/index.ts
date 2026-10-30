@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { styleText } from "node:util";
 import { command, extendType, number, option, optional, run, string, subcommands } from "cmd-ts";
 import pkg from "../../package.json" with { type: "json" };
+import { actionCommands } from "./actions.ts";
 
 const Port = extendType(number, {
   displayName: "port",
@@ -98,6 +99,6 @@ const buildAdminCommand = command({
 await run(subcommands({
   name: "vibe-cms",
   version: pkg.version,
-  description: "Local panel and build tools for vibe-cms",
-  cmds: { admin, "build-admin": buildAdminCommand }
+  description: "Local panel, build tools, and every CMS action against a running site",
+  cmds: { admin, "build-admin": buildAdminCommand, ...actionCommands() }
 }), process.argv.slice(2));

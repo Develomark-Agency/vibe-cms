@@ -40,7 +40,7 @@ export async function pkceChallenge(verifier: string): Promise<string> {
   return base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
 }
 
-export async function authorizationUrl(config: OidcConfig, params: { redirectUri: string, state: string, nonce: string, verifier: string }) {
+export async function authorizationUrl(config: OidcConfig, params: { redirectUri: string, state: string, nonce: string, verifier: string, loginHint?: string }) {
   const { doc } = await discover(config.issuer);
   const url = new URL(doc.authorization_endpoint);
   url.search = new URLSearchParams({
@@ -52,6 +52,7 @@ export async function authorizationUrl(config: OidcConfig, params: { redirectUri
     nonce: params.nonce,
     code_challenge: await pkceChallenge(params.verifier),
     code_challenge_method: "S256",
+    ...(params.loginHint ? { login_hint: params.loginHint } : {}),
     // Google only issues refresh tokens when asked like this.
     ...(new URL(config.issuer).host === "accounts.google.com" ? { access_type: "offline", prompt: "consent" } : {})
   }).toString();

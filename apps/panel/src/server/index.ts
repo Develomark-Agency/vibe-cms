@@ -1,146 +1,40 @@
-import { decodeJwt } from "jose";
 import { fetchDescriptor, normalizeBranding, PanelError, type PanelSite } from "vibe-cms/panel";
-import { authorizationUrl, exchangeCode, isAllowed, randomString, refresh, verifyIdToken, type OidcConfig } from "./oidc.ts";
+import { exchangeCode, isAllowed, randomString, verifyIdToken } from "./oidc.ts";
+import {
+  beginLogin,
+  codeFor,
+  cookie,
+  currentSession,
+  json,
+  LOGIN_COOKIE,
+  migrate,
+  oidcConfig,
+  SESSION_COOKIE,
+  SESSION_TTL,
+  setCookie,
+  siteById,
+  type Env
+} from "./shared.ts";
 
-export interface Env {
-  DB: D1Database,
-  ASSETS?: Fetcher,
-  OIDC_ISSUER: string,
-  OIDC_CLIENT_ID: string,
-  OIDC_CLIENT_SECRET: string,
-  /** Comma-separated email domains or group claim values allowed to use the panel. */
-  PANEL_ALLOW?: string,
-  OIDC_SCOPES?: string,
-  /** White-labelling: the panel's name, accent (`#rrggbb`) and logo URL. */
-  PANEL_NAME?: string,
-  PANEL_ACCENT?: string,
-  PANEL_ICON?: string
-}
+import { handleMcp, unauthorized } from "./mcp.ts";
+import {
+  authorizationServerMetadata,
+  authorize,
+  completeAuthorization,
+  corsPreflight,
+  decide,
+  grantForRequest,
+  listAgents,
+  protectedResourceMetadata,
+  register,
+  resourceUrl,
+  revokeGrant,
+  token,
+  type GrantRow
+} from "./oauth.ts";
+import pkg from "../../package.json" with { type: "json" };
 
-interface SessionRow {
-  id: string,
-  sub: string,
-  email: string | null,
-  name: string | null,
-  id_token: string,
-  refresh_token: string | null,
-  expires_at: number
-}
-
-const SESSION_COOKIE = "panel_session";
-const LOGIN_COOKIE = "panel_login";
-const SESSION_TTL = 30 * 24 * 3600 * 1000;
-
-const schema = [
-  `CREATE TABLE IF NOT EXISTS sites (
-    id TEXT PRIMARY KEY,
-    url TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    admin TEXT NOT NULL,
-    added_by TEXT NOT NULL,
-    added_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS favorites (
-    user TEXT NOT NULL,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-    PRIMARY KEY (user, site_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    sub TEXT NOT NULL,
-    email TEXT,
-    name TEXT,
-    id_token TEXT NOT NULL,
-    refresh_token TEXT,
-    expires_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS logins (
-    state TEXT PRIMARY KEY,
-    verifier TEXT NOT NULL,
-    nonce TEXT NOT NULL,
-    return_to TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`
-];
-
-const migrated = new WeakSet<D1Database>();
-
-async function migrate(db: D1Database) {
-  if(migrated.has(db)) return;
-  await db.batch(schema.map(sql => db.prepare(sql)));
-  migrated.add(db);
-}
-
-function oidcConfig(env: Env): OidcConfig {
-  if(!env.OIDC_ISSUER || !env.OIDC_CLIENT_ID || !env.OIDC_CLIENT_SECRET) {
-    throw new PanelError(500, "The panel needs OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET");
-  }
-  return {
-    issuer: env.OIDC_ISSUER,
-    clientId: env.OIDC_CLIENT_ID,
-    clientSecret: env.OIDC_CLIENT_SECRET,
-    scopes: env.OIDC_SCOPES ?? "openid email profile"
-  };
-}
-
-function json(data: unknown, init: ResponseInit = {}) {
-  return Response.json(data, { ...init, headers: { "cache-control": "no-store", ...init.headers } });
-}
-
-function cookie(request: Request, name: string): string | undefined {
-  for(const part of (request.headers.get("cookie") ?? "").split(/;\s*/)) {
-    const [key, ...rest] = part.split("=");
-    if(key === name) return rest.join("=");
-  }
-  return undefined;
-}
-
-function setCookie(url: URL, name: string, value: string, maxAge: number, sameSite = "Lax") {
-  const secure = url.protocol === "https:" ? "; Secure" : "";
-  return `${name}=${value}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}${secure}`;
-}
-
-async function currentSession(request: Request, env: Env): Promise<SessionRow | null> {
-  const id = cookie(request, SESSION_COOKIE);
-  if(!id) return null;
-  const row = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(id).first<SessionRow>();
-  if(!row || row.expires_at < Date.now()) return null;
-  return row;
-}
-
-/** The provider ID token for the handoff, refreshed when it's about to expire. */
-async function freshIdToken(env: Env, session: SessionRow): Promise<string> {
-  const exp = decodeJwt(session.id_token).exp ?? 0;
-  if(exp * 1000 > Date.now() + 60_000) return session.id_token;
-  if(!session.refresh_token) throw new PanelError(401, "Your sign-in expired. Sign in again.");
-  const config = oidcConfig(env);
-  const tokens = await refresh(config, session.refresh_token).catch(() => {
-    throw new PanelError(401, "Your sign-in expired. Sign in again.");
-  });
-  await verifyIdToken(config, tokens.id_token);
-  await env.DB.prepare("UPDATE sessions SET id_token = ?, refresh_token = COALESCE(?, refresh_token) WHERE id = ?")
-    .bind(tokens.id_token, tokens.refresh_token ?? null, session.id).run();
-  return tokens.id_token;
-}
-
-/** Panel → site, server to server: provider ID token in, one-time code out. */
-async function codeFor(env: Env, session: SessionRow, site: PanelSite): Promise<string> {
-  const endpoint = `${site.admin.replace(/\/admin\/?$/, "")}/api/session/code`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id_token: await freshIdToken(env, session) })
-  });
-  const data = await response.json().catch(() => ({})) as { code?: string, error?: string };
-  if(!response.ok || !data.code) {
-    throw new PanelError(response.status === 403 ? 403 : 502, data.error ?? `The site refused the sign-in (${response.status})`);
-  }
-  return data.code;
-}
-
-async function siteById(env: Env, id: string): Promise<PanelSite | null> {
-  return env.DB.prepare("SELECT id, url, name, admin, 0 AS favorite FROM sites WHERE id = ?").bind(id).first<PanelSite>();
-}
+export type { Env } from "./shared.ts";
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
   if(url.pathname === "/api/branding" && request.method === "GET") {
@@ -202,6 +96,17 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     return new Response(null, { status: 204 });
   }
 
+  if(path === "/agents" && method === "GET") {
+    return json({ mcpUrl: resourceUrl(url), agents: await listAgents(env, session.sub) });
+  }
+
+  if((m = /^\/agents\/([^/]+)$/.exec(path)) && method === "DELETE") {
+    const grant = await env.DB.prepare("SELECT * FROM agent_grants WHERE id = ? AND user = ?").bind(decodeURIComponent(m[1]!), session.sub).first<GrantRow>();
+    if(!grant) return json({ error: "Unknown agent" }, { status: 404 });
+    await revokeGrant(env, grant);
+    return new Response(null, { status: 204 });
+  }
+
   if((m = /^\/sites\/([^/]+)\/code$/.exec(path)) && method === "POST") {
     const site = await siteById(env, decodeURIComponent(m[1]!));
     if(!site) return json({ error: "Unknown site" }, { status: 404 });
@@ -211,21 +116,9 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   return json({ error: "Not found" }, { status: 404 });
 }
 
-async function login(env: Env, url: URL): Promise<Response> {
-  const config = oidcConfig(env);
-  const state = randomString();
-  const nonce = randomString();
-  const verifier = randomString(48);
+function login(env: Env, url: URL): Promise<Response> {
   const returnTo = url.searchParams.get("return") ?? "/";
-  await env.DB.prepare("DELETE FROM logins WHERE expires_at < ?").bind(Date.now()).run();
-  await env.DB.prepare("INSERT INTO logins (state, verifier, nonce, return_to, expires_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(state, verifier, nonce, returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/", Date.now() + 600_000).run();
-  const location = await authorizationUrl(config, { redirectUri: `${url.origin}/auth/callback`, state, nonce, verifier });
-  return new Response(null, {
-    status: 302,
-    // Binds the login to this browser, so a stolen callback URL can't sign someone else in.
-    headers: { location, "set-cookie": setCookie(url, LOGIN_COOKIE, state, 600) }
-  });
+  return beginLogin(env, url, returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/");
 }
 
 async function callback(request: Request, env: Env, url: URL): Promise<Response> {
@@ -249,6 +142,7 @@ async function callback(request: Request, env: Env, url: URL): Promise<Response>
     return fail(`Sign-in failed: ${(error as Error).message}`);
   }
   if(!isAllowed(env.PANEL_ALLOW, claims)) return fail("Your account isn't allowed to use this panel.");
+  if(pending.return_to.startsWith("oauth:")) return completeAuthorization(env, url, pending.return_to.slice(6), claims, tokens);
   const id = randomString();
   await env.DB.prepare("INSERT INTO sessions (id, sub, email, name, id_token, refresh_token, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .bind(
@@ -285,6 +179,20 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   await migrate(env.DB);
   try {
+    const agentRoutes = ["/mcp", "/oauth/token", "/oauth/register"];
+    if(request.method === "OPTIONS" && (agentRoutes.includes(url.pathname) || url.pathname.startsWith("/.well-known/"))) return corsPreflight();
+    if(url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+      return protectedResourceMetadata(env, url);
+    }
+    if(url.pathname === "/.well-known/oauth-authorization-server") return authorizationServerMetadata(url);
+    if(url.pathname === "/oauth/register" && request.method === "POST") return await register(request, env);
+    if(url.pathname === "/oauth/authorize") return await (request.method === "POST" ? decide(request, env, url) : authorize(request, env, url));
+    if(url.pathname === "/oauth/token" && request.method === "POST") return await token(request, env);
+    if(url.pathname === "/mcp") {
+      const grant = await grantForRequest(request, env);
+      if(!grant) return unauthorized(url, request.headers.has("authorization"));
+      return await handleMcp(request, env, grant, pkg.version);
+    }
     if(url.pathname === "/auth/login") return await login(env, url);
     if(url.pathname === "/auth/callback") return await callback(request, env, url);
     if(url.pathname === "/auth/logout" && request.method === "POST") {

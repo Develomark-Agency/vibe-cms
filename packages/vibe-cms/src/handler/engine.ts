@@ -15,13 +15,13 @@ import type {
 } from "../schema/types.ts";
 import { findReferences, isRecord, pickUnionOption, schemaAt, validate, type Issue } from "../schema/validate.ts";
 import type { Session, WriteAction } from "../server/index.ts";
-import { analyzeImage, extensionFor, mimeMatches } from "./analyze.ts";
+import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
 import { can, require } from "./auth.ts";
 import { all, first, getMeta, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "./db.ts";
 import type { D1, ExecutionContext, R2 } from "./platform.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
 import { jsonPath, SqlBuilder } from "./sql.ts";
-import { MAX_TEXT_EDIT_BYTES, textKind, textMime } from "../text-files.ts";
+import { MAX_TEXT_EDIT_BYTES, textKind } from "../text-files.ts";
 
 export interface EngineState {
   config: AnyConfig,
@@ -84,6 +84,45 @@ export interface TrashItem {
   /** When it's purged for good. */
   expiresAt: string
 }
+
+/** One document in one language, as the editor works on it. */
+export interface DocumentState {
+  id: string,
+  type: string,
+  locale: string,
+  exists: boolean,
+  locales: Array<{ locale: string, status: "draft" | "published" | "changed", updatedAt: string }>,
+  draft: DocumentData | null,
+  published: DocumentData | null,
+  status: "draft" | "published" | "changed" | null,
+  publishedVer: number | null,
+  createdAt: string | null,
+  updatedAt: number | null,
+  updatedBy: string | null,
+  publishedAt: string | null,
+  schedules: Array<{ action: "publish" | "unpublish", runAt: string, ver: number | null, createdBy: string }>,
+  fallback: DocumentData | null,
+  issues?: Issue[]
+}
+
+/** A file in the media library, as the API returns it. */
+export interface Asset {
+  id: string,
+  url: string,
+  filename: string,
+  folder: string | null,
+  mime: string,
+  size: number,
+  meta: AssetMeta,
+  createdAt: string,
+  createdBy: string
+}
+
+/** What the Trash page previews: the file, or each deleted language's draft. */
+export type TrashDetail = TrashItem & {
+  asset?: Asset,
+  documents?: Array<{ locale: string, status: DocumentMeta["status"], data: DocumentData, updatedAt: string }>
+};
 
 export interface MediaFolder {
   /** `"posts/covers"`; segments are separated by `/`. */
@@ -367,7 +406,7 @@ export class Engine {
     return `${this.scope.origin}${this.state.prefix}/media/${row.id}.${extensionFor(row.mime, row.filename)}${query}`;
   }
 
-  toAsset(row: AssetRow) {
+  toAsset(row: AssetRow): Asset {
     const meta = JSON.parse(row.meta) as AssetMeta;
     return {
       id: row.id,
@@ -377,7 +416,7 @@ export class Engine {
       mime: row.mime,
       size: row.size,
       meta,
-      createdAt: iso(row.created_at),
+      createdAt: iso(row.created_at)!,
       createdBy: row.created_by
     };
   }
@@ -413,7 +452,7 @@ export class Engine {
   }
 
   /** The full editing state of one document in one locale. */
-  async getDocument(type: string, id: string, localeInput?: string) {
+  async getDocument(type: string, id: string, localeInput?: string): Promise<DocumentState> {
     const locale = this.locale(localeInput);
     require(this.config, this.scope.session, { action: "read", type });
     const rows = await all<DocumentRow>(this.db, "SELECT * FROM vibe_documents WHERE id = ? AND type = ?", [id, type]);
@@ -425,7 +464,7 @@ export class Engine {
       type,
       locale,
       exists: Boolean(row),
-      locales: rows.map(r => ({ locale: r.locale, status: documentStatus(r), updatedAt: iso(r.updated_at) })),
+      locales: rows.map(r => ({ locale: r.locale, status: documentStatus(r), updatedAt: iso(r.updated_at)! })),
       draft: row ? JSON.parse(row.draft) : null,
       published: row?.published ? JSON.parse(row.published) : null,
       status: row ? documentStatus(row) : null,
@@ -434,7 +473,7 @@ export class Engine {
       updatedAt: row?.updated_at ?? null,
       updatedBy: row?.updated_by ?? null,
       publishedAt: iso(row?.published_at ?? null),
-      schedules: schedules.map(s => ({ action: s.action, runAt: iso(s.run_at), ver: s.ver, createdBy: s.created_by })),
+      schedules: schedules.map(s => ({ action: s.action, runAt: iso(s.run_at)!, ver: s.ver, createdBy: s.created_by })),
       // Lets a translator start from the default locale's copy.
       fallback: row ? null : JSON.parse((rows.find(r => r.locale === this.defaultLocale) ?? rows[0]!).draft)
     };
@@ -794,7 +833,7 @@ export class Engine {
     const session = this.writer({ action: "write", scope: "media" });
     // Browsers send unknown types (often .md, .yaml, .csv) as octet-stream in multipart bodies.
     const sent = file.type && file.type !== "application/octet-stream" ? file.type : null;
-    const mime = sent ?? textMime(file.name) ?? "application/octet-stream";
+    const mime = sent ?? mimeFor(file.name) ?? "application/octet-stream";
     let schema: AssetSchema | undefined;
     if(options.type && options.field) {
       const found = schemaAt(getSchema(this.config, options.type), options.field.split("."));
@@ -1045,7 +1084,7 @@ export class Engine {
   }
 
   /** What the Trash page previews: each deleted language's draft, or the file's details. */
-  async trashDetail(id: string) {
+  async trashDetail(id: string): Promise<TrashDetail> {
     const row = await this.trashRow(id);
     const item = this.toTrashItem(row);
     if(row.kind === "asset") {
@@ -1056,7 +1095,7 @@ export class Engine {
     const docs = JSON.parse(row.payload) as DocumentRow[];
     return {
       ...item,
-      documents: docs.map(d => ({ locale: d.locale, status: documentStatus(d), data: JSON.parse(d.draft) as DocumentData, updatedAt: iso(d.updated_at) }))
+      documents: docs.map(d => ({ locale: d.locale, status: documentStatus(d), data: JSON.parse(d.draft) as DocumentData, updatedAt: iso(d.updated_at)! }))
     };
   }
 

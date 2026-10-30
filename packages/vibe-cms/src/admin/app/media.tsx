@@ -219,7 +219,7 @@ function PickBox({ item, className }: { item: Item, className?: string }) {
 function useLibrary() {
   const { cms, session } = useAdmin();
   const queryClient = useQueryClient();
-  const folders = useQuery({ queryKey: ["folders"], queryFn: () => cms.api<{ folders: MediaFolder[] }>("/folders") });
+  const folders = useQuery({ queryKey: ["folders"], queryFn: () => cms.actions.folders.list() });
   const all = folders.data?.folders ?? [];
 
   function childrenOf(parent: string | null): MediaFolder[] {
@@ -259,12 +259,12 @@ function useLibrary() {
     childrenOf,
     itemCount,
     refresh,
-    createFolder: (path: string) => attempt(() => cms.api<MediaFolder>("/folders", { method: "POST", json: { path } })),
-    moveFolder: (from: string, to: string) => attempt(() => cms.api<{ path: string }>("/folders", { method: "PATCH", json: { from, to } })),
-    deleteFolder: (path: string) => attempt(() => cms.api(`/folders?path=${encodeURIComponent(path)}`, { method: "DELETE" }), "Folder deleted"),
-    moveAsset: (id: string, folder: string | null) => attempt(() => cms.api<Asset>(`/assets/${id}`, { method: "PATCH", json: { folder } })),
-    renameAsset: (id: string, filename: string) => attempt(() => cms.api<Asset>(`/assets/${id}`, { method: "PATCH", json: { filename } })),
-    deleteAsset: (id: string) => attempt(() => cms.api<{ trash: string }>(`/assets/${id}`, { method: "DELETE" }))
+    createFolder: (path: string) => attempt(() => cms.actions.folders.create({ path })),
+    moveFolder: (from: string, to: string) => attempt(() => cms.actions.folders.move({ from, to })),
+    deleteFolder: (path: string) => attempt(() => cms.actions.folders.delete({ path }), "Folder deleted"),
+    moveAsset: (id: string, folder: string | null) => attempt(() => cms.actions.assets.update({ id, folder })),
+    renameAsset: (id: string, filename: string) => attempt(() => cms.actions.assets.update({ id, filename })),
+    deleteAsset: (id: string) => attempt(() => cms.actions.assets.delete({ id }))
   };
 }
 
@@ -429,7 +429,7 @@ export function MediaPage() {
     let nextFolder = folder;
     for(const file of files) {
       try {
-        await cms.api(`/assets/${file.id}`, { method: "PATCH", json: { folder: target } });
+        await cms.actions.assets.update({ id: file.id, folder: target });
         movedFiles.push({ id: file.id, from: file.folder, name: file.name });
       } catch (error) {
         errors.push(error instanceof ApiError ? error.message : `Couldn't move ${file.name}`);
@@ -437,7 +437,7 @@ export function MediaPage() {
     }
     for(const path of folders) {
       try {
-        const result = await cms.api<{ path: string }>("/folders", { method: "PATCH", json: { from: path, to: join(target, nameOf(path)) } });
+        const result = await cms.actions.folders.move({ from: path, to: join(target, nameOf(path)) });
         movedFolders.push({ from: path, to: result.path });
         if(isInside(folder, path)) nextFolder = result.path + folder!.slice(path.length);
       } catch (error) {
@@ -456,8 +456,8 @@ export function MediaPage() {
       label: "move",
       async undo() {
         // Folders first (newest first), so files go back into folders that are where they were.
-        for(const f of [...movedFolders].reverse()) await cms.api("/folders", { method: "PATCH", json: { from: f.to, to: f.from } });
-        for(const f of movedFiles) await cms.api(`/assets/${f.id}`, { method: "PATCH", json: { folder: f.from } });
+        for(const f of [...movedFolders].reverse()) await cms.actions.folders.move({ from: f.to, to: f.from });
+        for(const f of movedFiles) await cms.actions.assets.update({ id: f.id, folder: f.from });
       }
     });
     const what = moved === 1 ? quote(movedFiles[0]?.name ?? nameOf(movedFolders[0]!.from)) : `${moved} items`;
@@ -477,21 +477,21 @@ export function MediaPage() {
     let failed = 0;
     for(const file of bulk.files) {
       try {
-        trashed.push((await cms.api<{ trash: string }>(`/assets/${file.id}`, { method: "DELETE" })).trash);
+        trashed.push((await cms.actions.assets.delete({ id: file.id })).trash);
         name = file.name;
         deleted++;
       } catch (error) {
-        if(error instanceof ApiError && error.status === 409) inUse++;
+        if(error instanceof ApiError && error.tag === "Conflict") inUse++;
         else failed++;
       }
     }
     for(const path of [...bulk.folders].sort((a, b) => b.split("/").length - a.split("/").length)) {
       try {
-        await cms.api(`/folders?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+        await cms.actions.folders.delete({ path });
         removedFolders.push(path);
         deleted++;
       } catch (error) {
-        if(error instanceof ApiError && error.status === 409) notEmpty++;
+        if(error instanceof ApiError && error.tag === "Conflict") notEmpty++;
         else failed++;
       }
     }
@@ -511,8 +511,8 @@ export function MediaPage() {
       label: "delete",
       async undo() {
         // Empty folders aren't trashed, just recreated; files come back from the trash into their folders.
-        for(const path of removedFolders) await cms.api("/folders", { method: "POST", json: { path } });
-        for(const id of trashed) await cms.api(`/trash/${id}/restore`, { method: "POST" });
+        for(const path of removedFolders) await cms.actions.folders.create({ path });
+        for(const id of trashed) await cms.actions.trash.restore({ id });
       }
     }) : undefined;
     notify(summary, { type: failed ? "error" : kept.length ? "info" : "success", undo: undoDelete });
@@ -579,8 +579,8 @@ export function MediaPage() {
       async undo() {
         // An undone upload never happened, so it skips the trash.
         for(const asset of uploaded) {
-          const { trash } = await cms.api<{ trash: string }>(`/assets/${asset.id}`, { method: "DELETE" });
-          await cms.api(`/trash/${trash}`, { method: "DELETE" });
+          const { trash } = await cms.actions.assets.delete({ id: asset.id });
+          await cms.actions.trash.purge({ id: trash });
         }
         go({ file: null });
       }
@@ -594,7 +594,7 @@ export function MediaPage() {
     const undoRename = record({
       label: "rename",
       undo: async () => {
-        await cms.api(`/assets/${asset.id}`, { method: "PATCH", json: { filename: asset.filename } });
+        await cms.actions.assets.update({ id: asset.id, filename: asset.filename });
       }
     });
     notify(`Renamed to ${quote(renamed.filename)}`, { type: "success", undo: undoRename });
@@ -736,7 +736,7 @@ export function MediaPage() {
                   const undoDelete = record({
                     label: "delete",
                     async undo() {
-                      await cms.api(`/trash/${trash}/restore`, { method: "POST" });
+                      await cms.actions.trash.restore({ id: trash });
                       go({ file: asset.id });
                     }
                   });
@@ -764,7 +764,7 @@ export function MediaPage() {
               const undoCreate = record({
                 label: "new folder",
                 async undo() {
-                  await cms.api(`/folders?path=${encodeURIComponent(created.path)}`, { method: "DELETE" });
+                  await cms.actions.folders.delete({ path: created.path });
                   go({ folder: parentOf(created.path) });
                 }
               });
@@ -778,7 +778,7 @@ export function MediaPage() {
               const undoRename = record({
                 label: "rename",
                 undo: async () => {
-                  await cms.api("/folders", { method: "PATCH", json: { from: moved.path, to: from } });
+                  await cms.actions.folders.move({ from: moved.path, to: from });
                 }
               });
               notify(`Renamed to ${quote(nameOf(moved.path))}`, { type: "success", undo: undoRename });
@@ -1242,7 +1242,7 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
   const detail = useQuery({
     queryKey: ["asset-detail", id],
     enabled: id !== null,
-    queryFn: () => cms.api<Asset & { usage: Array<{ id: string, type: string, locale: string }> }>(`/assets/${id}`),
+    queryFn: () => cms.actions.assets.get({ id: id! }),
     retry: false
   });
   const [filename, setFilename] = useState("");

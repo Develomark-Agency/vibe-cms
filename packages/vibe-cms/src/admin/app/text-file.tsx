@@ -240,7 +240,7 @@ export function TextEditorDialog({ asset: initial, open, onOpenChange }: { asset
     }
     setSaving(true);
     try {
-      const saved = await cms.api<Asset>(`/assets/${asset.id}/content`, { method: "PUT", body: text, headers: { "content-type": asset.mime } });
+      const saved = await cms.actions.assets.replaceContent({ id: asset.id, content: text });
       queryClient.setQueryData(["asset-text", saved.url], text);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["asset-detail", asset.id] }),

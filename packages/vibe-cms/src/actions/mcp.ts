@@ -1,0 +1,147 @@
+import type { Result } from "better-result";
+import type { AnyAction } from "./define.ts";
+import { describeActions } from "./describe.ts";
+import type { ActionError } from "./errors.ts";
+
+/**
+ * MCP over Streamable HTTP without sessions or streaming: just tools. Shared by a
+ * site's own `/_vibe/api/mcp` and the panel's `/mcp`, which differ only in where
+ * tools come from and how a call runs.
+ */
+
+const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+
+export interface McpTool {
+  name: string,
+  title: string,
+  description: string,
+  inputSchema: Record<string, unknown>,
+  annotations: {
+    title: string,
+    readOnlyHint: boolean,
+    destructiveHint: boolean,
+    idempotentHint: boolean,
+    openWorldHint: boolean
+  }
+}
+
+export interface ToolResult {
+  content: Array<{ type: "text", text: string }>,
+  structuredContent?: unknown,
+  isError?: boolean
+}
+
+export interface McpServer {
+  name: string,
+  version: string,
+  instructions: string,
+  tools(): McpTool[] | Promise<McpTool[]>,
+  /** `null` for an unknown tool. */
+  call(name: string, args: Record<string, unknown>): Promise<ToolResult | null>
+}
+
+/** MCP tool names can't contain dots in every client. */
+export function toolName(action: string): string {
+  return action.replaceAll(".", "_");
+}
+
+/** Action names in descriptions, as tools are named: `schema.get` → `schema_get`. */
+function mentions(text: string): string {
+  return text.replace(/`(\w+)\.(\w+)`/g, (_, group: string, verb: string) => `\`${group}_${verb}\``);
+}
+
+function mentionsIn(schema: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(schema), (key, value) => (key === "description" && typeof value === "string" ? mentions(value) : value));
+}
+
+/** Every action as a tool. `input` can add to each input schema, e.g. the panel's `site`. */
+export function actionTools(actions: Record<string, AnyAction>, options: { input?: (schema: Record<string, unknown>) => Record<string, unknown> } = {}): McpTool[] {
+  return describeActions(actions, { files: "json" }).map(action => ({
+    name: toolName(action.name),
+    title: action.title,
+    description: mentions(action.description),
+    inputSchema: mentionsIn(options.input ? options.input(action.input) : action.input),
+    annotations: {
+      title: action.title,
+      readOnlyHint: action.annotations.readOnly ?? false,
+      destructiveHint: action.annotations.destructive ?? false,
+      idempotentHint: action.annotations.idempotent ?? action.annotations.readOnly ?? false,
+      openWorldHint: false
+    }
+  }));
+}
+
+export function textResult(value: unknown): ToolResult {
+  return {
+    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    ...(typeof value === "object" && value !== null && !Array.isArray(value) ? { structuredContent: value } : {})
+  };
+}
+
+export function errorResult(error: Pick<ActionError, "_tag" | "message" | "details">): ToolResult {
+  const details = error.details === undefined ? "" : `\n${JSON.stringify(error.details, null, 2)}`;
+  return { isError: true, content: [{ type: "text", text: `[${error._tag}] ${error.message}${details}` }] };
+}
+
+export function toolResult(result: Result<unknown, ActionError>): ToolResult {
+  return result.isOk() ? textResult(result.value) : errorResult(result.error);
+}
+
+interface JsonRpcRequest {
+  jsonrpc: "2.0",
+  id?: string | number | null,
+  method: string,
+  params?: Record<string, unknown>
+}
+
+function reply(id: JsonRpcRequest["id"], result: unknown): Response {
+  return Response.json({ jsonrpc: "2.0", id, result });
+}
+
+function fail(id: JsonRpcRequest["id"] | undefined, code: number, message: string, status = 200): Response {
+  return Response.json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } }, { status });
+}
+
+/** Answers one MCP request. Authenticate before calling it. */
+export async function serveMcp(request: Request, server: McpServer): Promise<Response> {
+  if(request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
+  // Browsers on other sites must not drive it through a signed-in user (DNS rebinding included).
+  const origin = request.headers.get("origin");
+  if(origin && origin !== new URL(request.url).origin) return fail(null, -32600, "Cross-origin requests aren't allowed", 403);
+
+  let message: JsonRpcRequest;
+  try {
+    message = await request.json() as JsonRpcRequest;
+  } catch {
+    return fail(null, -32700, "Parse error", 400);
+  }
+  if(typeof message !== "object" || message === null || Array.isArray(message) || message.jsonrpc !== "2.0") {
+    return fail(null, -32600, "Expected one JSON-RPC 2.0 message", 400);
+  }
+  // Notifications and responses need no answer.
+  if(message.id === undefined || typeof message.method !== "string") return new Response(null, { status: 202 });
+
+  const params = message.params ?? {};
+  switch(message.method) {
+    case "initialize": {
+      const asked = String(params.protocolVersion ?? "");
+      return reply(message.id, {
+        protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: server.name, title: server.name, version: server.version },
+        instructions: server.instructions
+      });
+    }
+    case "ping":
+      return reply(message.id, {});
+    case "tools/list":
+      return reply(message.id, { tools: await server.tools() });
+    case "tools/call": {
+      const args = typeof params.arguments === "object" && params.arguments !== null ? params.arguments as Record<string, unknown> : {};
+      const result = await server.call(String(params.name), args);
+      return result ? reply(message.id, result) : fail(message.id, -32602, `Unknown tool "${String(params.name)}"`);
+    }
+    default:
+      return fail(message.id, -32601, `Method not found: ${message.method}`);
+  }
+}

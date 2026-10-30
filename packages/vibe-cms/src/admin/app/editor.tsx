@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { emptyValue, validate, type Issue } from "../../schema/validate.ts";
 import type { DocumentData } from "../../schema/types.ts";
+import type { DocumentState } from "../../handler/engine.ts";
 import type { DocumentSlotProps } from "../index.ts";
 import {
   AlertDialog,
@@ -58,24 +59,7 @@ import { Link, navigate, setNavigationBlocker } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 
-export interface DocumentState {
-  id: string,
-  type: string,
-  locale: string,
-  exists: boolean,
-  locales: Array<{ locale: string, status: "draft" | "published" | "changed", updatedAt: string }>,
-  draft: DocumentData | null,
-  published: DocumentData | null,
-  status: "draft" | "published" | "changed" | null,
-  publishedVer: number | null,
-  createdAt: string | null,
-  updatedAt: number | null,
-  updatedBy: string | null,
-  publishedAt: string | null,
-  schedules: Array<{ action: "publish" | "unpublish", runAt: string, ver: number | null, createdBy: string }>,
-  fallback: DocumentData | null,
-  issues?: Issue[]
-}
+export type { DocumentState };
 
 /** Fills `{field}`, `{id}` and `{locale}` in a collection's preview template. */
 function fillPreview(template: string, doc: DocumentData, id: string, locale: string): string {
@@ -100,7 +84,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const doc = useQuery({
     queryKey: ["document", type, id, locale],
     enabled: id !== null,
-    queryFn: () => cms.api<DocumentState>(`/documents/${type}/${id}?locale=${locale}`),
+    queryFn: () => cms.actions.documents.get({ type, id: id!, locale }),
     retry: false
   });
 
@@ -167,8 +151,8 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
 
   function handleError(error: unknown) {
     if(error instanceof ApiError) {
-      if(error.status === 409 && error.details?.updatedAt) {
-        void cms.api<DocumentState>(`/documents/${type}/${id}?locale=${locale}`).then(setConflict);
+      if(error.tag === "Conflict" && error.details?.updatedAt) {
+        void cms.actions.documents.get({ type, id: id!, locale }).then(setConflict);
         return;
       }
       if(error.details?.issues) {
@@ -202,19 +186,18 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     setBusy(options.publish ? "publish" : "save");
     try {
       if(id === null) {
-        const created = await cms.api<DocumentState>(`/documents/${type}`, { method: "POST", json: { locale, data: value, publish: options.publish } });
+        const created = await cms.actions.documents.create({ type, locale, data: value, publish: options.publish });
         applyResult(created);
         setNavigationBlocker(undefined);
         navigate(`/content/${type}/${created.id}${location.search}`, { replace: true });
       } else {
-        const result = await cms.api<DocumentState>(`/documents/${type}/${id}`, {
-          method: "PUT",
-          json: {
-            locale,
-            data: value,
-            publish: options.publish,
-            baseUpdatedAt: options.force || isNewTranslation ? undefined : doc.data?.updatedAt ?? undefined
-          }
+        const result = await cms.actions.documents.update({
+          type,
+          id,
+          locale,
+          data: value,
+          publish: options.publish,
+          baseUpdatedAt: options.force || isNewTranslation ? undefined : doc.data?.updatedAt ?? undefined
         });
         applyResult(result);
       }
@@ -230,7 +213,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   async function action(kind: "unpublish" | "publishOnly") {
     setBusy(kind === "unpublish" ? "unpublish" : "publish");
     try {
-      const result = await cms.api<DocumentState>(`/documents/${type}/${id}/${kind === "unpublish" ? "unpublish" : "publish"}`, { method: "POST", json: { locale } });
+      const result = await (kind === "unpublish" ? cms.actions.documents.unpublish : cms.actions.documents.publish)({ type, id: id!, locale });
       applyResult(result);
       cms.toast(kind === "unpublish" ? "Unpublished" : "Published", { type: "success" });
     } catch (error) {
@@ -244,7 +227,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     setBusy("delete");
     try {
       const translation = isTranslationOnly();
-      const { trash } = await cms.api<{ trash: string }>(`/documents/${type}/${id}${translation ? `?locale=${locale}` : ""}`, { method: "DELETE" });
+      const { trash } = await cms.actions.documents.delete({ type, id: id!, locale: translation ? locale : undefined });
       setNavigationBlocker(undefined);
       void queryClient.invalidateQueries({ queryKey: ["documents", type] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -255,7 +238,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
           label: "Undo",
           async onClick() {
             try {
-              await cms.api(`/trash/${trash}/restore`, { method: "POST" });
+              await cms.actions.trash.restore({ id: trash });
               void queryClient.invalidateQueries({ queryKey: ["documents", type] });
               void queryClient.invalidateQueries({ queryKey: ["document", type, id] });
               void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -580,7 +563,7 @@ function Schedules({ type, id, doc, onChange }: { type: string, id: string, doc:
           <li key={s.action} className="flex items-center justify-between gap-2">
             <span>{s.action === "publish" ? "Publish" : "Unpublish"} {formatDate(s.runAt)}</span>
             <Button variant="ghost" size="icon-xs" aria-label="Cancel schedule" onClick={async () => {
-              onChange(await cms.api<DocumentState>(`/documents/${type}/${id}/schedule?locale=${locale}&action=${s.action}`, { method: "DELETE" }));
+              onChange(await cms.actions.documents.unschedule({ type, id, locale, action: s.action }));
             }}><XIcon /></Button>
           </li>
         ))}
@@ -639,10 +622,7 @@ function ScheduleDialog({ open, onOpenChange, type, id, status, dirty, onDone, o
           <Button disabled={busy || !when} onClick={async () => {
             setBusy(true);
             try {
-              onDone(await cms.api<DocumentState>(`/documents/${type}/${id}/schedule`, {
-                method: "POST",
-                json: { locale, action, runAt: new Date(when).toISOString() }
-              }));
+              onDone(await cms.actions.documents.schedule({ type, id, locale, action, runAt: new Date(when).toISOString() }));
               cms.toast(`Scheduled to ${action} ${formatDate(new Date(when).toISOString())}`, { type: "success" });
               onOpenChange(false);
             } catch (error) {
@@ -671,12 +651,12 @@ function HistorySheet({ open, onOpenChange, type, id, doc, onRestore, readOnly }
   const versions = useQuery({
     queryKey: ["versions", type, id, locale, doc?.updatedAt],
     enabled: open,
-    queryFn: () => cms.api<{ versions: Array<{ ver: number, author: string, createdAt: string }> }>(`/documents/${type}/${id}/versions?locale=${locale}`)
+    queryFn: () => cms.actions.documents.versions({ type, id, locale })
   });
   const version = useQuery({
     queryKey: ["version", type, id, locale, selected],
     enabled: selected !== null,
-    queryFn: () => cms.api<{ ver: number, data: DocumentData }>(`/documents/${type}/${id}/versions/${selected}?locale=${locale}`)
+    queryFn: () => cms.actions.documents.version({ type, id, locale, ver: selected! })
   });
   const schema = collectionSchema(config, type);
   return (
@@ -713,7 +693,7 @@ function HistorySheet({ open, onOpenChange, type, id, doc, onRestore, readOnly }
                       <h4 className="font-medium">Version {selected}</h4>
                       {!readOnly && (
                         <Button size="sm" variant="outline" onClick={async () => {
-                          const result = await cms.api<DocumentState>(`/documents/${type}/${id}/versions/${selected}/restore`, { method: "POST", json: { locale } });
+                          const result = await cms.actions.documents.restoreVersion({ type, id, locale, ver: selected! });
                           onRestore(result);
                           cms.toast(`Version ${selected} restored to the draft`, { type: "success" });
                           onOpenChange(false);

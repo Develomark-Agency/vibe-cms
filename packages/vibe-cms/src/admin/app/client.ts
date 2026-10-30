@@ -1,9 +1,13 @@
 import { toast } from "sonner";
 import type { SerializedConfig } from "../../config.ts";
+import { Result } from "better-result";
+import { createThrowingActionClient, encodeInput } from "../../actions/client.ts";
+import type { CoreActions } from "../../actions/core.ts";
+import type { ActionErrorTag } from "../../actions/errors.ts";
 import { createQueryClient } from "../../query/index.ts";
 import type { SiteSettings } from "../../handler/engine.ts";
 import type { Session } from "../../server/index.ts";
-import type { AdminClient, Asset } from "../index.ts";
+import type { AdminClient } from "../index.ts";
 
 export interface SiteInfo extends SerializedConfig {
   prefix: string,
@@ -34,7 +38,9 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
-    readonly details?: any
+    readonly details?: any,
+    /** The action error's tag, e.g. `Conflict`, when the server sent one. */
+    readonly tag?: ActionErrorTag
   ) {
     super(message);
   }
@@ -70,7 +76,10 @@ export async function request<T>(prefix: string, path: string, init: RequestInit
   const data = response.headers.get("content-type")?.includes("json") ? await response.json() : await response.text();
   if(!response.ok) {
     if(response.status === 401 && !path.startsWith("/session")) onUnauthorized?.();
-    throw new ApiError(response.status, (data as { error?: string })?.error ?? response.statusText, (data as { details?: unknown })?.details);
+    const failure = data as { error?: string, details?: unknown, tag?: ActionErrorTag } | string;
+    throw typeof failure === "string"
+      ? new ApiError(response.status, response.statusText)
+      : new ApiError(response.status, failure?.error ?? response.statusText, failure?.details, failure?.tag);
   }
   return data as T;
 }
@@ -88,6 +97,11 @@ export function createAdminClient(prefix: string, types: string[], navigate: (pa
   function api<T>(path: string, init?: RequestInit & { json?: unknown }) {
     return request<T>(prefix, path, init);
   }
+  // `request` throws `ApiError` on failure, so the editor catches rather than matching results.
+  const actions = createThrowingActionClient<CoreActions>(async (name, input) => {
+    const { body, contentType } = encodeInput(input);
+    return Result.ok(await api(`/actions/${name}`, { method: "POST", body, headers: contentType ? { "content-type": contentType } : {} }));
+  });
   const plugins = new Proxy({} as AdminClient["plugins"], {
     get: (_, name: string) => new Proxy({}, {
       get: (__, route: string) => (body?: unknown) => request(prefix, `/plugins/${name}/${route}`, { method: "POST", json: body ?? {} })
@@ -95,30 +109,15 @@ export function createAdminClient(prefix: string, types: string[], navigate: (pa
   });
   return {
     api,
+    actions,
     query: createQueryClient(async queries => (await api<{ results: unknown[] }>("/query", { method: "POST", json: { queries } })).results),
-    upload(file, options = {}) {
-      const form = new FormData();
-      form.set("file", file);
-      for(const [key, value] of Object.entries(options)) if(value) form.set(key, value);
-      return api<Asset>("/assets", { method: "POST", body: form });
-    },
+    upload: (file, options = {}) => actions.assets.upload({ file, ...options }),
     assets: {
-      list(options = {}) {
-        const params = new URLSearchParams();
-        for(const [key, value] of Object.entries(options)) {
-          if(Array.isArray(value)) value.forEach(v => params.append(key, v));
-          else if(value !== undefined) params.set(key, String(value));
-        }
-        return api(`/assets?${params}`);
-      },
-      get: id => api(`/assets/${id}`)
+      list: (options = {}) => actions.assets.list(options),
+      get: id => actions.assets.get({ id })
     },
     documents: {
-      list(type, options = {}) {
-        const params = new URLSearchParams();
-        for(const [key, value] of Object.entries(options)) if(value !== undefined) params.set(key, String(value));
-        return api(`/documents/${type}?${params}`);
-      }
+      list: (type, options = {}) => actions.documents.list({ type, ...options })
     },
     plugins,
     mediaUrl: id => `${prefix}/media/${id}`,

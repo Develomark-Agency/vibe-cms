@@ -2,9 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileTextIcon, ImageIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { TrashItem } from "../../handler/engine.ts";
-import type { DocumentMeta } from "../../query/index.ts";
-import type { DocumentData } from "../../schema/types.ts";
+import type { TrashDetail, TrashItem } from "../../handler/engine.ts";
 import type { Asset } from "../index.ts";
 import {
   AlertDialog,
@@ -34,11 +32,6 @@ import { Segmented } from "./segmented.tsx";
 import { StatusDot } from "./status.tsx";
 import { assetTextKind, TextPreview } from "./text-file.tsx";
 
-type TrashDetail = TrashItem & {
-  asset?: Asset,
-  documents?: Array<{ locale: string, status: DocumentMeta["status"], data: DocumentData, updatedAt: string }>
-};
-
 /** Where a restored item lives now. */
 function restoredPath(item: Pick<TrashItem, "kind" | "type" | "itemId" | "locale">): string {
   if(item.kind === "asset") return `/media?file=${item.itemId}`;
@@ -50,7 +43,7 @@ type Pending = { kind: "purge", item: TrashItem } | { kind: "empty" };
 export function TrashPage() {
   const { cms, config, session, site } = useAdmin();
   const queryClient = useQueryClient();
-  const trash = useQuery({ queryKey: ["trash"], queryFn: () => cms.api<{ items: TrashItem[], days: number }>("/trash") });
+  const trash = useQuery({ queryKey: ["trash"], queryFn: () => cms.actions.trash.list() });
   const arrival = useArrival(!trash.isLoading);
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
@@ -84,7 +77,7 @@ export function TrashPage() {
   function restore(item: TrashItem) {
     setPreviewing(null);
     return run(item.id, async () => {
-      await cms.api(`/trash/${item.id}/restore`, { method: "POST" });
+      await cms.actions.trash.restore({ id: item.id });
       toast.success(`Restored ${quote(item.label)}`, { action: { label: "Open", onClick: () => navigate(restoredPath(item)) } });
     });
   }
@@ -95,12 +88,12 @@ export function TrashPage() {
     setPreviewing(null);
     if(target?.kind === "purge") {
       void run(target.item.id, async () => {
-        await cms.api(`/trash/${target.item.id}`, { method: "DELETE" });
+        await cms.actions.trash.purge({ id: target.item.id });
         toast.success(`Deleted ${quote(target.item.label)} for good`);
       });
     } else if(target?.kind === "empty") {
       void run("empty", async () => {
-        const { purged } = await cms.api<{ purged: number }>("/trash", { method: "DELETE" });
+        const { purged } = await cms.actions.trash.empty();
         toast.success(`Deleted ${purged} ${purged === 1 ? "item" : "items"} for good`);
       });
     }
@@ -117,7 +110,7 @@ export function TrashPage() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 md:px-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1.5">
-          <h1 className="text-2xl font-medium tracking-[-0.025em]">Trash</h1>
+          <h1 className="text-2xl font-medium tracking-[-0.025em]" data-shared="title">Trash</h1>
           <p className="text-sm text-muted-foreground">
             {trash.data ? `Deleted items are kept for ${trash.data.days} ${trash.data.days === 1 ? "day" : "days"}, then removed for good.` : " "}
           </p>
@@ -229,7 +222,7 @@ function TrashPreview({ item, busy, onOpenChange, onRestore, onPurge }: {
   const detail = useQuery({
     queryKey: ["trash-item", item?.id],
     enabled: item !== null,
-    queryFn: () => cms.api<TrashDetail>(`/trash/${item!.id}`)
+    queryFn: () => cms.actions.trash.get({ id: item!.id })
   });
   const data = item && detail.data?.id === item.id ? detail.data : undefined;
   return (

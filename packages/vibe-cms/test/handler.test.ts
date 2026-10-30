@@ -477,3 +477,113 @@ describe("unique fields and paths", () => {
     expect(again.body.issues).toEqual([]);
   });
 });
+
+describe("actions", () => {
+  test("every action is listed with its input schema", async () => {
+    const { body } = await t.api("/api/actions");
+    const names = body.actions.map((a: { name: string }) => a.name);
+    expect(names).toContain("documents.create");
+    const upload = body.actions.find((a: { name: string }) => a.name === "assets.upload");
+    expect(upload.input.properties.file).toEqual({ type: "string", format: "binary", contentEncoding: "binary" });
+    expect(upload.input.required).toEqual(["file"]);
+  });
+
+  test("any action runs by name, with the same results as its REST route", async () => {
+    const created = await t.api("/api/actions/documents.create", { method: "POST", json: { type: "author", data: { name: "Ada" } } });
+    expect(created.status).toBe(200);
+    expect(created.body.status).toBe("draft");
+    const fetched = await t.api(`/api/documents/author/${created.body.id}`);
+    expect(fetched.body.draft).toEqual({ name: "Ada" });
+    expect((await t.api("/api/actions/documents.nope", { method: "POST", json: {} })).status).toBe(404);
+  });
+
+  test("input is validated before the action runs, and errors carry a tag", async () => {
+    const missing = await t.api("/api/actions/documents.create", { method: "POST", json: { data: {} } });
+    expect(missing.status).toBe(400);
+    expect(missing.body.tag).toBe("InvalidInput");
+    expect(missing.body.details.issues[0].path).toEqual(["type"]);
+    const unknown = await t.api("/api/documents/nope/x");
+    expect(unknown.body).toEqual({ error: "Document not found", tag: "NotFound" });
+  });
+
+  test("content types are described as JSON Schema", async () => {
+    const list = await t.api("/api/schema");
+    expect(list.body.types.map((x: { type: string }) => x.type)).toEqual(["author", "post"]);
+    const post = await t.api("/api/schema/post");
+    expect(post.body.title).toBe("post");
+    expect(post.body.properties.layout.enum).toEqual(["default", "wide"]);
+  });
+});
+
+describe("mcp", () => {
+  let id = 0;
+  async function mcp(method: string, params: Record<string, unknown> = {}, headers: Record<string, string> = {}) {
+    const response = await t.vibe.handle(
+      new Request("https://site.test/_vibe/api/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params })
+      }),
+      t.env,
+      ctx
+    );
+    return { status: response.status, body: response.status === 202 ? null : await response.json() as any };
+  }
+
+  test("initializes and lists every action as a tool", async () => {
+    const init = await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+    expect(init.body.result.protocolVersion).toBe("2025-06-18");
+    expect(init.body.result.capabilities.tools).toBeDefined();
+    const { body } = await mcp("tools/list");
+    const tools = Object.fromEntries(body.result.tools.map((tool: { name: string }) => [tool.name, tool]));
+    expect(tools.documents_create.inputSchema.type).toBe("object");
+    expect(tools.trash_purge.annotations.destructiveHint).toBe(true);
+    expect(tools.documents_list.annotations.readOnlyHint).toBe(true);
+    expect(tools.assets_upload.inputSchema.properties.file.required).toEqual(["name", "base64"]);
+  });
+
+  test("tools run actions and report failures as tool errors", async () => {
+    const schema = await mcp("tools/call", { name: "schema_get", arguments: { type: "post" } });
+    expect(schema.body.result.structuredContent.properties.title.maxLength).toBe(120);
+
+    const created = await mcp("tools/call", { name: "documents_create", arguments: { type: "post", data: { title: "From an agent", slug: "agent", tags: [], layout: "default" } } });
+    const doc = created.body.result.structuredContent;
+    expect(doc.status).toBe("draft");
+
+    const bad = await mcp("tools/call", { name: "documents_update", arguments: { type: "post", id: doc.id, data: { title: "" }, publish: true } });
+    expect(bad.body.result.isError).toBe(true);
+    expect(bad.body.result.content[0].text).toStartWith("[Rejected]");
+
+    const invalid = await mcp("tools/call", { name: "documents_get", arguments: { id: doc.id } });
+    expect(invalid.body.result.content[0].text).toStartWith("[InvalidInput] type:");
+
+    expect((await mcp("tools/call", { name: "nope" })).body.error.code).toBe(-32602);
+  });
+
+  test("files arrive base64-encoded", async () => {
+    const base64 = btoa(String.fromCharCode(...png(20, 10)));
+    const { body } = await mcp("tools/call", { name: "assets_upload", arguments: { file: { name: "tiny.png", base64 } } });
+    const asset = body.result.structuredContent;
+    expect(asset.mime).toBe("image/png");
+    expect(asset.meta).toEqual({ width: 20, height: 10 });
+  });
+
+  test("notifications get no reply; other origins and anonymous production requests are refused", async () => {
+    const note = await t.vibe.handle(
+      new Request("https://site.test/_vibe/api/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }),
+      t.env,
+      ctx
+    );
+    expect(note.status).toBe(202);
+    expect((await mcp("ping", {}, { origin: "https://evil.test" })).status).toBe(403);
+
+    const production = createHandler(config, { dev: false, bindings: (e: typeof t.env) => ({ db: e.DB, storage: e.MEDIA }) });
+    const anonymous = await production.handle(
+      new Request("https://site.test/_vibe/api/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) }),
+      t.env,
+      ctx
+    );
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.headers.get("www-authenticate")).toBe("Bearer");
+  });
+});

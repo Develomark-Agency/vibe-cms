@@ -1,6 +1,9 @@
 import { QueryClient, QueryClientProvider, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  BotIcon,
+  CheckIcon,
   ChevronsUpDownIcon,
+  CopyIcon,
   ExternalLinkIcon,
   GlobeIcon,
   KeyRoundIcon,
@@ -185,6 +188,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
   const [addOpen, setAddOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   useCloseOnFrameFocus(accountOpen, () => setAccountOpen(false));
   useCloseOnFrameFocus(paletteOpen, () => setPaletteOpen(false));
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => backend.sites() });
@@ -282,6 +286,9 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              {backend.agents && (
+                <DropdownMenuItem onClick={() => setAgentsOpen(true)}><BotIcon /> AI agents</DropdownMenuItem>
+              )}
               {backend.signOut && (
                 <>
                   <DropdownMenuSeparator />
@@ -307,6 +314,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
         )}
       </main>
       <AddSiteDialog backend={backend} open={addOpen} onOpenChange={setAddOpen} />
+      {backend.agents && <AgentsDialog backend={backend} open={agentsOpen} onOpenChange={setAgentsOpen} />}
       <CommandDialog open={paletteOpen} onOpenChange={setPaletteOpen}>
         <Command>
           <CommandInput placeholder="Switch to a site…" />
@@ -505,6 +513,62 @@ function AddSiteDialog({ backend, open, onOpenChange }: { backend: PanelBackend,
             <Button type="submit" disabled={!url.trim() || add.isPending}>{add.isPending && <Spinner />} Add site</Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** How to connect an agent (one address for every site), and the agents already connected. */
+function AgentsDialog({ backend, open, onOpenChange }: { backend: PanelBackend, open: boolean, onOpenChange(open: boolean): void }) {
+  const queryClient = useQueryClient();
+  const agents = useQuery({ queryKey: ["agents"], queryFn: () => backend.agents!(), enabled: open });
+  const [copied, setCopied] = useState(false);
+  const disconnect = useMutation({
+    mutationFn: (id: string) => backend.disconnectAgent!(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
+    onError: (error: Error) => toast.error(error.message)
+  });
+  async function copy(text: string) {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  const mcpUrl = agents.data?.mcpUrl ?? `${location.origin}/mcp`;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>AI agents</DialogTitle>
+          <DialogDescription>
+            Add this address to Claude, ChatGPT or another agent as a custom connector (MCP server). You'll sign in and approve it,
+            then it can work on any site here, with the permissions you have on each.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex gap-2">
+          <Input readOnly value={mcpUrl} aria-label="MCP address" onFocus={e => e.currentTarget.select()} className="font-mono text-xs" />
+          <Button variant="outline" onClick={() => void copy(mcpUrl)}>{copied ? <CheckIcon /> : <CopyIcon />} {copied ? "Copied" : "Copy"}</Button>
+        </div>
+        <div className="grid gap-2">
+          <h3 className="text-sm font-medium">Connected</h3>
+          {agents.isLoading ? <Delayed><div className="flex justify-center p-4"><Spinner /></div></Delayed>
+            : agents.data?.agents.length ? (
+              <ul className="grid gap-1">
+                {agents.data.agents.map(agent => (
+                  <li key={agent.id} className="flex items-center gap-3 rounded-[10px] well px-3 py-2">
+                    <BotIcon className="size-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{agent.name}{agent.readOnly && <span className="ml-2 text-xs font-normal text-muted-foreground">Read only</span>}</div>
+                      <div className="text-xs text-muted-foreground">
+                        Connected {new Date(agent.connectedAt).toLocaleDateString()}
+                        {agent.lastUsedAt && ` · last used ${new Date(agent.lastUsedAt).toLocaleDateString()}`}
+                      </div>
+                    </div>
+                    <Button variant="ghost" size="sm" disabled={disconnect.isPending} onClick={() => disconnect.mutate(agent.id)}>Disconnect</Button>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-sm text-muted-foreground">No agents yet.</p>}
+        </div>
       </DialogContent>
     </Dialog>
   );

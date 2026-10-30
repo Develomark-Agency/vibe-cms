@@ -1,4 +1,5 @@
 import type { AssetMeta } from "../schema/types.ts";
+import { textMime } from "../text-files.ts";
 
 /** Core `media.analyze` for images: reads dimensions from file headers. */
 export function analyzeImage(bytes: Uint8Array, mime: string): AssetMeta {
@@ -74,6 +75,14 @@ const extensions: Record<string, string> = {
   "video/webm": "webm",
   "application/pdf": "pdf"
 };
+
+/** A MIME type from a file name's extension, for files that arrive without one. */
+export function mimeFor(filename: string): string | null {
+  const extension = /\.([a-z0-9]{1,8})$/i.exec(filename)?.[1]?.toLowerCase();
+  if(!extension) return null;
+  if(extension === "jpeg") return "image/jpeg";
+  return Object.entries(extensions).find(([, ext]) => ext === extension)?.[0] ?? textMime(filename);
+}
 
 export function extensionFor(mime: string, filename: string): string {
   const fromName = /\.([a-z0-9]{1,8})$/i.exec(filename)?.[1];

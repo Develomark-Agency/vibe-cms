@@ -29,6 +29,18 @@ To see several sites in a panel, run the local panel next to them:
 bunx vibe-cms admin --site http://localhost:1337
 ```
 
+## Agents and scripts
+
+Everything the editor does is an action, and the same actions are exposed over REST, a generic `POST /_vibe/api/actions/<name>` endpoint, MCP and the CLI:
+
+```sh
+claude mcp add --transport http blog http://localhost:1337/_vibe/api/mcp   # tools like documents_list, documents_publish
+bunx vibe-cms documents list --type post --site http://localhost:1337
+bunx vibe-cms assets upload --file ./cover.jpg --folder posts --site http://localhost:1337
+```
+
+Development sites let local agents and the CLI in as the developer. For deployed sites, connect agents to the panel instead: `https://<panel host>/mcp` covers every site in it, with OAuth sign-in and each user's own permissions (see [`apps/panel`](./apps/panel#ai-agents)).
+
 ## Commands
 
 ```sh

@@ -1,5 +1,6 @@
 import type { IconName } from "../icons.ts";
 import type { WidgetDescriptor } from "../descriptor.ts";
+import type { StandardProps } from "./standard.ts";
 
 /** Phantom carrier for a schema's stored (input) and query result (output) types. */
 export interface Types<I, O = I> {
@@ -29,7 +30,12 @@ export interface BaseSchema<I = unknown, O = I> {
   readOnly?: boolean,
   /** Not shown in the editor at all. */
   hidden?: boolean,
-  readonly "~types"?: Types<I, O>
+  readonly "~types"?: Types<I, O>,
+  /**
+   * Standard Schema and Standard JSON Schema, for the stored shape. Non-enumerable, so
+   * schemas that arrive as JSON (as in the editor) don't carry it.
+   */
+  readonly "~standard": StandardProps<I>
 }
 
 export type AnySchema = BaseSchema<any, any>;

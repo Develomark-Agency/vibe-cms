@@ -13,6 +13,7 @@ import type {
 } from "./schema/types.ts";
 import type { AuthDescriptor } from "./auth/index.ts";
 import type { IconName } from "./icons.ts";
+import type { StandardProps } from "./schema/standard.ts";
 
 export type Action = "read" | "write" | "publish" | "delete";
 
@@ -86,7 +87,9 @@ export interface Column<T = unknown> {
 }
 
 export interface CollectionMarker<N extends string = string, S extends ObjectSchema<any> = ObjectSchema<any>> {
-  readonly "~collection": { name: N, schema: S }
+  readonly "~collection": { name: N, schema: S },
+  /** The content type's stored shape as Standard Schema and Standard JSON Schema. */
+  readonly "~standard": StandardProps<Input<S>>
 }
 
 type Unwrap<S> = S extends OptionalSchema<infer I> ? I : S;
@@ -186,6 +189,17 @@ function createCollection(name: string, schema: ObjectSchema): Collection {
     id: column(["id"], "text")
   } as Record<string, unknown>;
   Object.defineProperty(collection, "~collection", { value: { name, schema }, enumerable: false });
+  const standard = schema["~standard"];
+  Object.defineProperty(collection, "~standard", {
+    value: {
+      ...standard,
+      jsonSchema: {
+        input: options => ({ title: name, ...standard.jsonSchema.input(options) }),
+        output: options => ({ title: name, ...standard.jsonSchema.output(options) })
+      }
+    } satisfies StandardProps,
+    enumerable: false
+  });
   return collection as unknown as Collection;
 }
 

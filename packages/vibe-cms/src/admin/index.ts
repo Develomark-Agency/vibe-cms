@@ -5,6 +5,8 @@ import type { QueryClient } from "../query/index.ts";
 import type { AnySchema, DocumentData, JsonValue } from "../schema/types.ts";
 import type { DocumentMeta } from "../query/index.ts";
 import type { Issue } from "../schema/validate.ts";
+import type { ThrowingActionClient } from "../actions/client.ts";
+import type { CoreActions } from "../actions/core.ts";
 
 export interface FieldDescriptor {
   /** Last path segment. */
@@ -24,17 +26,8 @@ export interface FieldDescriptor {
   document: { type: string, id: string | null }
 }
 
-export interface Asset {
-  id: string,
-  url: string,
-  filename: string,
-  folder: string | null,
-  mime: string,
-  size: number,
-  meta: { width?: number, height?: number, duration?: number, [key: string]: unknown },
-  createdAt: string,
-  createdBy: string
-}
+export type { Asset } from "../handler/engine.ts";
+import type { Asset } from "../handler/engine.ts";
 
 /** A document as listed by the editor API: its draft data plus ID and metadata. */
 export type DocumentSummary = DocumentData & { id: string, $meta: DocumentMeta };
@@ -42,6 +35,8 @@ export type DocumentSummary = DocumentData & { id: string, $meta: DocumentMeta }
 export interface AdminClient {
   /** Authenticated request to the site's API, relative to `/_vibe/api`. */
   api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T>,
+  /** Every CMS action, typed: `cms.actions.documents.publish({ type, id })`. Failures throw an `ApiError` carrying the action error's `tag`. */
+  actions: ThrowingActionClient<CoreActions>,
   /** Queries including drafts. */
   query: QueryClient<AnyConfig>,
   upload(file: File, options?: { folder?: string, type?: string, field?: string }): Promise<Asset>,

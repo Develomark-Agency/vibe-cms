@@ -1,8 +1,14 @@
 import { HttpError, serializeConfig, type AnyConfig } from "../config.ts";
-import type { Order, SerializedQuery } from "../query/index.ts";
+import type { SerializedQuery } from "../query/index.ts";
 import type { Session } from "../server/index.ts";
 import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, sessionFromIdToken, verifySession } from "./auth.ts";
-import { Engine, type EngineState, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
+import { coreActions, type CoreActions } from "../actions/core.ts";
+import { runAction, type AnyAction } from "../actions/define.ts";
+import { errorJson, fromHttpError, httpStatus, type ActionError } from "../actions/errors.ts";
+import { describeActions, filesFromJson } from "../actions/describe.ts";
+import { fromText } from "../actions/inputs.ts";
+import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
+import { handleMcp } from "./mcp.ts";
 import type { ExecutionContext, Fetcher } from "./platform.ts";
 import { matchRoute } from "./plugins.ts";
 
@@ -101,10 +107,29 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
       return cors(json({ results: await engine.execute(queries) }));
     }
 
+    if(route === "/mcp") {
+      // Development sites let local agents in as the developer, like the editor's dev sign-in.
+      const agent = session ?? (api.dev ? DEV_SESSION : null);
+      if(!agent) {
+        return json(
+          { jsonrpc: "2.0", id: null, error: { code: -32001, message: "Send a site session token as `Authorization: Bearer <token>`" } },
+          { status: 401, headers: { "www-authenticate": "Bearer" } }
+        );
+      }
+      const scoped = new Engine(api.state, { origin: url.origin, session: agent, trusted: false, ctx: api.ctx });
+      return await handleMcp(request, { engine: scoped, host: url.hostname });
+    }
+    const named = /^\/actions\/([\w.-]+)$/.exec(route);
+    if(named) {
+      if(method !== "POST") throw new HttpError(405, "Use POST");
+      return await actionRoute(request, engine, url, named[1]!);
+    }
+    if(route === "/actions" && method === "GET") return json({ actions: describeActions(coreActions) });
+
     return await editorRoute(request, api, engine, route, method, url, session);
   } catch (error) {
     if(error instanceof HttpError) {
-      return json({ error: error.message, ...(error.details ? { details: error.details } : {}) }, { status: error.status });
+      return json(errorJson(fromHttpError(error)), { status: error.status });
     }
     console.error("vibe-cms:", error);
     return json({ error: "Internal error" }, { status: 500 });
@@ -134,11 +159,6 @@ async function editorRoute(
       site: descriptor(config, url, api.state.prefix, site),
       settings: site
     });
-  }
-
-  if(route === "/site") {
-    if(method === "GET") return json(await engine.site(url.hostname));
-    if(method === "PATCH") return json(await engine.updateSite(await body<SiteSettingsPatch>(request), url.hostname));
   }
 
   if(route === "/session") {
@@ -186,113 +206,111 @@ async function editorRoute(
     return json({ code: await createCode(db, next), expiresIn: 30 });
   }
 
-  if((m = /^\/documents\/([\w-]+)$/.exec(route))) {
-    const type = m[1]!;
-    if(method === "GET") {
-      const sort = q.get("sort");
-      const orderBy: Order[] | undefined = sort
-        ? [{ path: [sort.replace(/^-/, "")], dir: sort.startsWith("-") ? "desc" : "asc" }]
-        : undefined;
-      return json(await engine.listDocuments(type, {
-        locale: q.get("locale") ?? undefined,
-        search: q.get("search") ?? undefined,
-        limit: Number(q.get("limit") ?? 50),
-        offset: Number(q.get("offset") ?? 0),
-        orderBy
-      }));
-    }
-    if(method === "POST") {
-      const input = await body<{ id?: string, locale?: string, data: unknown, publish?: boolean }>(request);
-      return json(await engine.save({ type, id: input.id, locale: input.locale, data: input.data, publish: input.publish }), { status: 201 });
-    }
-  }
+  if((m = /^\/trash\/([\w-]+)\/file$/.exec(route)) && method === "GET") return engine.trashFile(m[1]!);
 
-  if((m = /^\/documents\/([\w-]+)\/([\w-]+)(\/.*)?$/.exec(route))) {
-    const [, type, id, rest = ""] = m as unknown as [string, string, string, string?];
-    const locale = q.get("locale") ?? undefined;
-    if(rest === "") {
-      if(method === "GET") return json(await engine.getDocument(type, id, locale));
-      if(method === "PUT") {
-        const input = await body<{ locale?: string, data: unknown, baseUpdatedAt?: number, publish?: boolean }>(request);
-        return json(await engine.save({ type, id, locale: input.locale ?? locale, data: input.data, baseUpdatedAt: input.baseUpdatedAt, publish: input.publish }));
-      }
-      if(method === "DELETE") return json(await engine.delete(type, id, { force: q.get("force") === "1", locale }));
+  for(const entry of restRoutes) {
+    const params = matchRoute(entry.route, method, route);
+    if(!params) continue;
+    const action = coreActions[entry.action];
+    const query: Record<string, string | string[]> = {};
+    for(const key of new Set(q.keys())) {
+      const values = q.getAll(key);
+      query[key] = values.length > 1 ? values : values[0]!;
     }
-    if(rest === "/publish" && method === "POST") return json(await engine.publish(type, id, (await body<{ locale?: string }>(request)).locale ?? locale));
-    if(rest === "/unpublish" && method === "POST") return json(await engine.unpublish(type, id, (await body<{ locale?: string }>(request)).locale ?? locale));
-    if(rest === "/references" && method === "GET") return json({ references: await engine.incomingReferences(id) });
-    if(rest === "/versions" && method === "GET") return json({ versions: await engine.versions(type, id, locale) });
-    const ver = /^\/versions\/(\d+)(\/restore)?$/.exec(rest);
-    if(ver && !ver[2] && method === "GET") return json(await engine.version(type, id, locale, Number(ver[1])));
-    if(ver && ver[2] && method === "POST") return json(await engine.restore(type, id, (await body<{ locale?: string }>(request)).locale ?? locale, Number(ver[1])));
-    if(rest === "/schedule") {
-      if(method === "POST") {
-        const input = await body<{ locale?: string, action: "publish" | "unpublish", runAt: string }>(request);
-        if(input.action !== "publish" && input.action !== "unpublish") throw new HttpError(400, "action must be publish or unpublish");
-        return json(await engine.schedule(type, id, input.locale ?? locale, input.action, input.runAt));
-      }
-      if(method === "DELETE") {
-        const action = q.get("action") === "unpublish" ? "unpublish" : "publish";
-        return json(await engine.cancelSchedule(type, id, locale, action));
-      }
-    }
-  }
-
-  if(route === "/assets") {
-    if(method === "GET") {
-      return json(await engine.listAssets({
-        folder: q.has("folder") ? q.get("folder")! : undefined,
-        search: q.get("search") ?? undefined,
-        accept: q.getAll("accept"),
-        limit: Number(q.get("limit") ?? 60),
-        offset: Number(q.get("offset") ?? 0)
-      }));
-    }
-    if(method === "POST") {
-      const form = await request.formData();
-      const file = form.get("file");
-      if(!file || typeof file === "string") throw new HttpError(400, "Expected a file");
-      return json(await engine.upload(file as File, {
-        folder: (form.get("folder") as string | null) || undefined,
-        type: (form.get("type") as string | null) || undefined,
-        field: (form.get("field") as string | null) || undefined
-      }), { status: 201 });
-    }
-  }
-
-  if(route === "/folders") {
-    if(method === "GET") return json({ folders: await engine.listFolders() });
-    if(method === "POST") return json(await engine.createFolder((await body<{ path: string }>(request)).path ?? ""), { status: 201 });
-    if(method === "PATCH") {
-      const input = await body<{ from: string, to: string }>(request);
-      return json(await engine.moveFolder(input.from ?? "", input.to ?? ""));
-    }
-    if(method === "DELETE") return json(await engine.deleteFolder(q.get("path") ?? ""));
-  }
-
-  if(route === "/trash") {
-    if(method === "GET") return json(await engine.listTrash());
-    if(method === "DELETE") return json(await engine.emptyTrash());
-  }
-
-  if((m = /^\/trash\/([\w-]+)(\/restore|\/file)?$/.exec(route))) {
-    if(m[2] === "/restore" && method === "POST") return json(await engine.restoreTrash(m[1]!));
-    if(m[2] === "/file" && method === "GET") return engine.trashFile(m[1]!);
-    if(!m[2] && method === "GET") return json(await engine.trashDetail(m[1]!));
-    if(!m[2] && method === "DELETE") return json(await engine.purgeTrash(m[1]!));
-  }
-
-  if((m = /^\/assets\/([\w-]+)\/content$/.exec(route)) && method === "PUT") {
-    return json(await engine.replaceContent(m[1]!, await request.arrayBuffer()));
-  }
-
-  if((m = /^\/assets\/([\w-]+)$/.exec(route))) {
-    if(method === "GET") return json(await engine.getAsset(m[1]!));
-    if(method === "PATCH") return json(await engine.updateAsset(m[1]!, await body(request)));
-    if(method === "DELETE") return json(await engine.deleteAsset(m[1]!));
+    const input = { ...fromText(action.input, query), ...await restBody(request, entry, action.input), ...fromText(action.input, params) };
+    const result = await runAction(action, { engine, host: url.hostname }, input);
+    return result.isOk() ? json(result.value, { status: entry.status ?? 200 }) : errorResponse(result.error);
   }
 
   throw new HttpError(404, `No route for ${method} ${route}`);
+}
+
+interface RestRoute {
+  /** `METHOD /path/:param`, relative to `/_vibe/api`. */
+  route: string,
+  action: keyof CoreActions,
+  status?: number,
+  /** How the body carries input: JSON (the default), multipart form fields, or raw text as one field. */
+  body?: "form" | { text: string }
+}
+
+/**
+ * The REST API: each route only says where an action's input comes from. Path params,
+ * then the body, then the query string, in that order of precedence.
+ */
+const restRoutes: RestRoute[] = [
+  { route: "GET /schema", action: "schema.list" },
+  { route: "GET /schema/:type", action: "schema.get" },
+  { route: "GET /site", action: "site.get" },
+  { route: "PATCH /site", action: "site.update" },
+  { route: "GET /documents/:type", action: "documents.list" },
+  { route: "POST /documents/:type", action: "documents.create", status: 201 },
+  { route: "GET /documents/:type/:id", action: "documents.get" },
+  { route: "PUT /documents/:type/:id", action: "documents.update" },
+  { route: "DELETE /documents/:type/:id", action: "documents.delete" },
+  { route: "POST /documents/:type/:id/publish", action: "documents.publish" },
+  { route: "POST /documents/:type/:id/unpublish", action: "documents.unpublish" },
+  { route: "GET /documents/:type/:id/references", action: "documents.references" },
+  { route: "GET /documents/:type/:id/versions", action: "documents.versions" },
+  { route: "GET /documents/:type/:id/versions/:ver", action: "documents.version" },
+  { route: "POST /documents/:type/:id/versions/:ver/restore", action: "documents.restoreVersion" },
+  { route: "POST /documents/:type/:id/schedule", action: "documents.schedule" },
+  { route: "DELETE /documents/:type/:id/schedule", action: "documents.unschedule" },
+  { route: "GET /assets", action: "assets.list" },
+  { route: "POST /assets", action: "assets.upload", status: 201, body: "form" },
+  { route: "GET /assets/:id", action: "assets.get" },
+  { route: "PATCH /assets/:id", action: "assets.update" },
+  { route: "DELETE /assets/:id", action: "assets.delete" },
+  { route: "PUT /assets/:id/content", action: "assets.replaceContent", body: { text: "content" } },
+  { route: "GET /folders", action: "folders.list" },
+  { route: "POST /folders", action: "folders.create", status: 201 },
+  { route: "PATCH /folders", action: "folders.move" },
+  { route: "DELETE /folders", action: "folders.delete" },
+  { route: "GET /trash", action: "trash.list" },
+  { route: "DELETE /trash", action: "trash.empty" },
+  { route: "GET /trash/:id", action: "trash.get" },
+  { route: "DELETE /trash/:id", action: "trash.purge" },
+  { route: "POST /trash/:id/restore", action: "trash.restore" }
+];
+
+async function restBody(request: Request, entry: RestRoute, schema: AnyAction["input"]): Promise<Record<string, unknown>> {
+  if(request.method === "GET" || request.method === "DELETE") return {};
+  if(entry.body === "form") return fromText(schema, formValues(await request.formData()));
+  if(entry.body) return { [entry.body.text]: await request.text() };
+  return jsonBody(request);
+}
+
+async function jsonBody(request: Request): Promise<Record<string, unknown>> {
+  const text = await request.text();
+  if(!text.trim()) return {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if(typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {}
+  throw new HttpError(400, "Expected a JSON object body");
+}
+
+function formValues(form: FormData): Record<string, string | string[] | File> {
+  const out: Record<string, string | string[] | File> = {};
+  for(const key of new Set(form.keys())) {
+    const values = form.getAll(key);
+    out[key] = values.length > 1 ? values.filter(v => typeof v === "string") : values[0]!;
+  }
+  return out;
+}
+
+export function errorResponse(error: ActionError): Response {
+  return json(errorJson(error), { status: httpStatus(error) });
+}
+
+/** Any action by name: `POST /_vibe/api/actions/documents.list` with its input as JSON or multipart. */
+async function actionRoute(request: Request, engine: Engine, url: URL, name: string): Promise<Response> {
+  const action = (coreActions as Record<string, AnyAction>)[name];
+  if(!action) throw new HttpError(404, `No action "${name}"`);
+  const type = request.headers.get("content-type") ?? "";
+  const input = type.includes("multipart/form-data") ? fromText(action.input, formValues(await request.formData())) : filesFromJson(action, await jsonBody(request));
+  const result = await runAction(action, { engine, host: url.hostname }, input);
+  return result.isOk() ? json(result.value) : errorResponse(result.error);
 }
 
 async function pluginRoute(request: Request, api: ApiContext, name: string, path: string, session: Session | null) {

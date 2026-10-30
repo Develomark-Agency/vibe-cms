@@ -28,7 +28,7 @@ export interface ValidationResult<T = unknown> {
   issues: Issue[]
 }
 
-const formats: Record<string, [RegExp, string]> = {
+export const formats: Record<string, [RegExp, string]> = {
   email: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Must be an email address"],
   url: [/^(https?:\/\/|\/)\S*$/, "Must be a URL"],
   slug: [/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Must be lowercase letters, numbers and dashes"],

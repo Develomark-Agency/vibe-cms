@@ -1,0 +1,233 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { handle } from "../src/server/index.ts";
+import { pkceChallenge, randomString } from "../src/server/oidc.ts";
+import { env, idp, installMock, ISSUER, panel, removeMock, signIn } from "./mock.ts";
+
+beforeAll(installMock);
+afterAll(removeMock);
+
+const REDIRECT = "https://agent.test/callback";
+
+beforeEach(async () => {
+  idp.email = "jane@agency.test";
+  idp.sub = "u-jane";
+  await signIn();
+  await panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://site-a.test" }) });
+});
+
+async function registerAgent(method = "none") {
+  const response = await panel("/oauth/register", {
+    method: "POST",
+    body: JSON.stringify({ client_name: "Test agent", redirect_uris: [REDIRECT], token_endpoint_auth_method: method })
+  });
+  expect(response.status).toBe(201);
+  return await response.json() as { client_id: string, client_secret?: string };
+}
+
+function form(values: Record<string, string>, headers: Record<string, string> = {}): RequestInit {
+  return { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: new URLSearchParams(values).toString() };
+}
+
+/** The whole dance an MCP client does: authorize, consent, provider sign-in, code for tokens. */
+async function connect(options: { readOnly?: boolean, decision?: string, client?: { client_id: string, client_secret?: string } } = {}) {
+  const client = options.client ?? await registerAgent();
+  const verifier = randomString(48);
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: client.client_id,
+    redirect_uri: REDIRECT,
+    code_challenge: await pkceChallenge(verifier),
+    code_challenge_method: "S256",
+    state: "agent-state",
+    resource: "https://panel.test/mcp"
+  });
+  const consent = await panel(`/oauth/authorize?${params}`);
+  expect(consent.status).toBe(200);
+  const html = await consent.text();
+  expect(html).toContain("Test agent");
+  const request = /name="request" value="([^"]+)"/.exec(html)![1]!;
+
+  const decided = await panel("/oauth/authorize", form(
+    { request, decision: options.decision ?? "allow", ...(options.readOnly ? { readonly: "on" } : {}) },
+    { origin: "https://panel.test" }
+  ));
+  const next = new URL(decided.headers.get("location")!);
+  if(next.origin !== ISSUER) return { client, verifier, redirect: next };
+  expect(next.searchParams.get("login_hint")).toBe(idp.email);
+  idp.nonce = next.searchParams.get("nonce")!;
+  const callback = await panel(`/auth/callback?code=good-code&state=${next.searchParams.get("state")}`);
+  const redirect = new URL(callback.headers.get("location")!);
+  return { client, verifier, redirect };
+}
+
+async function tokens(values: Record<string, string>, headers: Record<string, string> = {}) {
+  const response = await panel("/oauth/token", form(values, headers));
+  return { status: response.status, body: await response.json() as { access_token: string, refresh_token: string, scope: string, error?: string } };
+}
+
+async function connectWithTokens(options: { readOnly?: boolean } = {}) {
+  const { client, verifier, redirect } = await connect(options);
+  expect(redirect.origin + redirect.pathname).toBe(REDIRECT);
+  expect(redirect.searchParams.get("state")).toBe("agent-state");
+  expect(redirect.searchParams.get("iss")).toBe("https://panel.test");
+  const { body } = await tokens({ grant_type: "authorization_code", code: redirect.searchParams.get("code")!, redirect_uri: REDIRECT, client_id: client.client_id, code_verifier: verifier });
+  return { client, ...body };
+}
+
+let id = 0;
+async function mcp(token: string | null, method: string, params: Record<string, unknown> = {}) {
+  const response = await handle(new Request("https://panel.test/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params })
+  }), env);
+  return { status: response.status, headers: response.headers, body: await response.json().catch(() => null) as any };
+}
+
+async function call(token: string, name: string, args: Record<string, unknown> = {}) {
+  return (await mcp(token, "tools/call", { name, arguments: args })).body.result;
+}
+
+describe("discovery", () => {
+  test("an agent without a token is told where to sign in", async () => {
+    const response = await mcp(null, "tools/list");
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe("Bearer resource_metadata=\"https://panel.test/.well-known/oauth-protected-resource\"");
+    const resource = await (await panel("/.well-known/oauth-protected-resource")).json() as Record<string, unknown>;
+    expect(resource).toMatchObject({ resource: "https://panel.test/mcp", authorization_servers: ["https://panel.test"] });
+    const server = await (await panel("/.well-known/oauth-authorization-server")).json() as Record<string, unknown>;
+    expect(server).toMatchObject({
+      issuer: "https://panel.test",
+      authorization_endpoint: "https://panel.test/oauth/authorize",
+      token_endpoint: "https://panel.test/oauth/token",
+      registration_endpoint: "https://panel.test/oauth/register",
+      code_challenge_methods_supported: ["S256"]
+    });
+    expect((await mcp("vpa_nope", "tools/list")).headers.get("www-authenticate")).toContain("error=\"invalid_token\"");
+  });
+});
+
+describe("connecting an agent", () => {
+  test("the agent works on the user's sites with the user's permissions", async () => {
+    const { access_token: token, scope } = await connectWithTokens();
+    expect(scope).toBe("content");
+
+    const init = await mcp(token, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
+    expect(init.body.result.instructions).toContain("sites_list");
+    const { tools } = (await mcp(token, "tools/list")).body.result;
+    const create = tools.find((t: { name: string }) => t.name === "documents_create");
+    expect(create.inputSchema.required).toEqual(["site", "type", "data"]);
+
+    expect((await call(token, "sites_list")).structuredContent.sites).toEqual([{ id: "site-a", name: "Site site-a", url: "https://site-a.test" }]);
+    const created = await call(token, "documents_create", { site: "site-a", type: "post", data: { title: "From an agent" } });
+    expect(created.isError).toBeUndefined();
+    const doc = await call(token, "documents_get", { site: "site-a", type: "post", id: created.structuredContent.id });
+    expect(doc.structuredContent.draft).toEqual({ title: "From an agent" });
+    // Recorded against the user, as if they'd edited it themselves.
+    expect(doc.structuredContent.updatedBy).toBe(`${ISSUER}|u-jane`);
+
+    // The site's own rules still apply: editors here can't touch site settings.
+    const settings = await call(token, "site_update", { site: "site-a", name: "Renamed" });
+    expect(settings.content[0].text).toStartWith("[Forbidden]");
+    expect((await call(token, "documents_list", { site: "nope", type: "post" })).content[0].text).toStartWith("[NotFound]");
+  });
+
+  test("signing out of the panel leaves the agent connected; disconnecting it doesn't sign anyone out", async () => {
+    const { access_token: token } = await connectWithTokens();
+    await panel("/auth/logout", { method: "POST" });
+    expect((await call(token, "documents_list", { site: "site-a", type: "post" })).isError).toBeUndefined();
+
+    await signIn();
+    const { mcpUrl, agents } = await (await panel("/api/agents")).json() as { mcpUrl: string, agents: Array<{ id: string, name: string, readOnly: boolean }> };
+    expect(mcpUrl).toBe("https://panel.test/mcp");
+    const agent = agents.find(a => a.name === "Test agent")!;
+    expect((await panel(`/api/agents/${agent.id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await mcp(token, "tools/list")).status).toBe(401);
+    expect((await panel("/api/me")).status).toBe(200);
+  });
+
+  test("read-only connections only get tools that read", async () => {
+    const { access_token: token, scope } = await connectWithTokens({ readOnly: true });
+    expect(scope).toBe("content:read");
+    const { tools } = (await mcp(token, "tools/list")).body.result;
+    expect(tools.every((t: { annotations: { readOnlyHint: boolean } }) => t.annotations.readOnlyHint)).toBe(true);
+    expect(tools.map((t: { name: string }) => t.name)).toContain("documents_list");
+    const refused = await call(token, "documents_create", { site: "site-a", type: "post", data: { title: "No" } });
+    expect(refused.content[0].text).toStartWith("[Forbidden]");
+  });
+
+  test("a user the site gives no role gets Forbidden from the site", async () => {
+    idp.email = "bob@agency.test";
+    idp.sub = "u-bob";
+    await signIn();
+    const { access_token: token } = await connectWithTokens();
+    const result = await call(token, "documents_list", { site: "site-a", type: "post" });
+    expect(result.content[0].text).toBe("[Forbidden] No access to this site");
+  });
+
+  test("refresh tokens rotate", async () => {
+    const { client, access_token: first, refresh_token: refresh } = await connectWithTokens();
+    const renewed = await tokens({ grant_type: "refresh_token", refresh_token: refresh, client_id: client.client_id });
+    expect(renewed.status).toBe(200);
+    expect(renewed.body.access_token).not.toBe(first);
+    expect((await mcp(first, "tools/list")).status).toBe(401);
+    expect((await mcp(renewed.body.access_token, "tools/list")).status).toBe(200);
+    expect((await tokens({ grant_type: "refresh_token", refresh_token: refresh, client_id: client.client_id })).body.error).toBe("invalid_grant");
+  });
+
+  test("confidential clients authenticate with their secret", async () => {
+    const client = await registerAgent("client_secret_basic");
+    expect(client.client_secret).toStartWith("vps_");
+    const { verifier, redirect } = await connect({ client });
+    const code = redirect.searchParams.get("code")!;
+    function basic(secret: string) {
+      return { authorization: `Basic ${btoa(`${client.client_id}:${secret}`)}` };
+    }
+    const values = { grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: verifier };
+    expect((await tokens(values, basic("wrong"))).status).toBe(401);
+    expect((await tokens(values, basic(client.client_secret!))).body.access_token).toStartWith("vpa_");
+  });
+});
+
+describe("refusals", () => {
+  test("codes need the right PKCE verifier and work once", async () => {
+    const { client, verifier, redirect } = await connect();
+    const code = redirect.searchParams.get("code")!;
+    const wrong = await tokens({ grant_type: "authorization_code", code, redirect_uri: REDIRECT, client_id: client.client_id, code_verifier: "nope" });
+    expect(wrong.body.error).toBe("invalid_grant");
+    // The failed attempt used the code up.
+    const retry = await tokens({ grant_type: "authorization_code", code, redirect_uri: REDIRECT, client_id: client.client_id, code_verifier: verifier });
+    expect(retry.body.error).toBe("invalid_grant");
+  });
+
+  test("unregistered return addresses are never redirected to", async () => {
+    const client = await registerAgent();
+    const response = await panel(`/oauth/authorize?response_type=code&client_id=${client.client_id}&redirect_uri=${encodeURIComponent("https://evil.test/cb")}&code_challenge=x&code_challenge_method=S256`);
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+    const bad = await panel("/oauth/register", { method: "POST", body: JSON.stringify({ redirect_uris: ["javascript:alert(1)"] }) });
+    expect(bad.status).toBe(400);
+  });
+
+  test("cancelling sends the agent access_denied", async () => {
+    const { redirect } = await connect({ decision: "deny" });
+    expect(redirect.searchParams.get("error")).toBe("access_denied");
+    expect(redirect.searchParams.get("state")).toBe("agent-state");
+  });
+
+  test("the consent form only accepts posts from the panel", async () => {
+    const client = await registerAgent();
+    const params = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: REDIRECT, code_challenge: "x", code_challenge_method: "S256" });
+    const request = /name="request" value="([^"]+)"/.exec(await (await panel(`/oauth/authorize?${params}`)).text())![1]!;
+    const forged = await panel("/oauth/authorize", form({ request, decision: "allow" }, { origin: "https://evil.test" }));
+    expect(forged.status).toBe(403);
+  });
+
+  test("signed-out users sign in first and come back to the consent page", async () => {
+    const client = await registerAgent();
+    await panel("/auth/logout", { method: "POST" });
+    const params = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: REDIRECT, code_challenge: "x", code_challenge_method: "S256" });
+    const response = await panel(`/oauth/authorize?${params}`);
+    expect(response.headers.get("location")).toBe(`https://panel.test/auth/login?return=${encodeURIComponent(`/oauth/authorize?${params}`)}`);
+  });
+});

@@ -37,6 +37,15 @@ export interface PanelUser {
   email?: string
 }
 
+/** An agent (MCP client) the user connected to the panel. */
+export interface PanelAgent {
+  id: string,
+  name: string,
+  readOnly: boolean,
+  connectedAt: string,
+  lastUsedAt: string | null
+}
+
 export interface SiteDescriptor {
   protocol: number,
   id: string,
@@ -64,7 +73,10 @@ export interface PanelBackend {
   /** A one-time code for the framed site. `null` when the site signs in by itself (development). */
   codeFor(siteId: string): Promise<string | null>,
   signInUrl?: string,
-  signOut?(): Promise<void>
+  signOut?(): Promise<void>,
+  /** The panel's MCP address and the agents this user connected. Hosted panels only. */
+  agents?(): Promise<{ mcpUrl: string, agents: PanelAgent[] }>,
+  disconnectAgent?(id: string): Promise<void>
 }
 
 export class PanelError extends Error {
@@ -76,10 +88,19 @@ export class PanelError extends Error {
   }
 }
 
+/** The origin of a typed site address. Without a scheme it's HTTPS, except for local dev servers, which only speak HTTP. */
+export function siteOrigin(url: string): string {
+  url = url.trim();
+  if(/^https?:\/\//.test(url)) return new URL(url).origin;
+  const { hostname } = new URL(`http://${url}`);
+  const local = hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+  return new URL(`${local ? "http" : "https"}://${url}`).origin;
+}
+
 export async function fetchDescriptor(url: string): Promise<SiteDescriptor> {
   let origin: string;
   try {
-    origin = new URL(/^https?:\/\//.test(url) ? url : `https://${url}`).origin;
+    origin = siteOrigin(url);
   } catch {
     throw new PanelError(400, "That doesn't look like a URL");
   }
@@ -176,6 +197,10 @@ export function hostedBackend(base = ""): PanelBackend {
       await api(`/sites/${encodeURIComponent(id)}/favorite`, { method: favorite ? "PUT" : "DELETE" });
     },
     codeFor: async id => (await api<{ code: string }>(`/sites/${encodeURIComponent(id)}/code`, { method: "POST" })).code,
+    agents: () => api("/agents"),
+    disconnectAgent: async id => {
+      await api(`/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+    },
     signInUrl: `${base}/auth/login`,
     signOut: async () => {
       await fetch(`${base}/auth/logout`, { method: "POST", credentials: "same-origin" });

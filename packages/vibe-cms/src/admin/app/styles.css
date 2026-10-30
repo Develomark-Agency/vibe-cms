@@ -235,30 +235,71 @@
   --page-out-x: 10px;
 }
 
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
+/*
+ * Only the page animates: the rest of the window isn't snapshotted and stays
+ * live underneath, and the snapshots are clipped to the panel's rounded shape
+ * (`--panel-clip`, set by the router), which would otherwise not contain them.
+ */
+:root {
+  view-transition-name: none;
 }
 
-::view-transition-group(page) {
-  animation-duration: 280ms;
+::view-transition {
+  clip-path: var(--panel-clip, none);
+}
+
+::view-transition-group(*) {
+  animation-duration: 260ms;
   animation-timing-function: var(--ease-out-soft);
 }
 
-::view-transition-old(page) {
-  animation: 120ms ease-in both vibe-page-out;
+/* Pages hand over rather than overlap: the old one is nearly gone before the new one settles in. */
+/*
+ * The page is captured under a different name before and after the change,
+ * so the two don't pair up: pairing would move the arriving page from where
+ * the leaving one was scrolled to, flying it in from far above.
+ */
+:root[data-capture="old"] [data-page] { view-transition-name: page-out; }
+:root[data-capture="new"] [data-page] { view-transition-name: page-in; }
+
+::view-transition-old(page-out) {
+  animation: 100ms ease-out both vibe-page-out;
 }
 
-::view-transition-new(page) {
-  animation: 280ms var(--ease-out-soft) both vibe-page-in;
+::view-transition-new(page-in) {
+  animation: 240ms var(--ease-out-soft) 60ms both vibe-page-in;
 }
 
 @keyframes vibe-page-out {
-  to { opacity: 0; transform: translateX(var(--page-out-x)); filter: blur(2px); }
+  to { opacity: 0; transform: translateX(var(--page-out-x)); }
 }
 
 @keyframes vibe-page-in {
-  from { opacity: 0; transform: translate(var(--page-in-x), var(--page-in-y)); filter: blur(3px); }
+  from { opacity: 0; transform: translate(var(--page-in-x), var(--page-in-y)); }
+}
+
+/*
+ * Between sibling pages scrolled alike (`data-hold-header`, see router.tsx),
+ * header pieces (`data-shared`) are lifted out of the page so they hold still: identical ones show no change at all, and ones
+ * whose text differs (marked `changed` by the router) hand over in place.
+ */
+:root[data-hold-header] {
+  [data-shared="eyebrow"] { view-transition-name: page-eyebrow; }
+  [data-shared="title"] { view-transition-name: page-title; }
+  [data-shared="summary"] { view-transition-name: page-summary; }
+  [data-shared="actions"] { view-transition-name: page-actions; }
+}
+
+::view-transition-old(*.changed) {
+  animation: 100ms ease-out both vibe-fade-out;
+}
+
+::view-transition-new(*.changed) {
+  animation: 200ms var(--ease-out-soft) 60ms both vibe-fade;
+}
+
+@keyframes vibe-fade-out {
+  to { opacity: 0; }
 }
 
 /* Content that replaces a loading state, so it doesn't pop in (see `useArrival`). */
@@ -286,10 +327,10 @@ tbody.stagger > tr {
   ::view-transition-group(*) {
     animation: none !important;
   }
-  ::view-transition-old(page) {
+  ::view-transition-old(page-out) {
     animation: 120ms ease-in both reverse vibe-fade !important;
   }
-  ::view-transition-new(page) {
+  ::view-transition-new(page-in) {
     animation: 160ms ease-out both vibe-fade !important;
   }
   .stagger > *,

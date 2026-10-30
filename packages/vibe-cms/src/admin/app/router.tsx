@@ -63,6 +63,11 @@ function direction(from: string, to: string): "forward" | "back" | "lateral" {
 
 let transitions = 0;
 
+/** Page header pieces (`data-shared`) that sibling pages have in common, by name. */
+function sharedPieces() {
+  return new Map([...document.querySelectorAll<HTMLElement>("[data-shared]")].map(el => [el.dataset.shared!, el]));
+}
+
 /**
  * Moving to another page animates through the View Transitions API (see
  * styles.css), in the direction of travel; changing only the query string
@@ -81,12 +86,42 @@ function emitWithTransition(scrollTop = 0, animate = true) {
   if(!animate || !document.startViewTransition || document.hidden) return update();
   const html = document.documentElement;
   const id = ++transitions;
-  html.dataset.navigation = direction(from, current);
-  const transition = document.startViewTransition(update);
+  const nav = direction(from, current);
+  html.dataset.navigation = nav;
+  // The page leaving and the page arriving are separate snapshots (styles.css), so neither travels from where the other was scrolled.
+  html.dataset.capture = "old";
+  // Snapshots are drawn above the document, outside the panel's rounded clip; styles.css clips them back to it.
+  const panel = scrollRoot();
+  if(panel) {
+    const r = panel.getBoundingClientRect();
+    const s = getComputedStyle(panel);
+    html.style.setProperty("--panel-clip", `inset(${r.top}px ${innerWidth - r.right}px ${innerHeight - r.bottom}px ${r.left}px round ${s.borderTopLeftRadius} ${s.borderTopRightRadius} ${s.borderBottomRightRadius} ${s.borderBottomLeftRadius})`);
+  }
+  // Header pieces stay in place across sibling pages, when both are scrolled alike (otherwise they'd fly between
+  // the two positions); the ones whose text differs hand over rather than cross-fade.
+  if(nav === "lateral" && (panel?.scrollTop ?? 0) === scrollTop) html.dataset.holdHeader = "";
+  const before = new Map([...sharedPieces()].map(([name, el]) => [name, el.textContent]));
+  const changed: HTMLElement[] = [];
+  const transition = document.startViewTransition(() => {
+    update();
+    html.dataset.capture = "new";
+    for(const [name, el] of sharedPieces()) {
+      if(before.has(name) && before.get(name) !== el.textContent) {
+        el.style.setProperty("view-transition-class", "changed");
+        changed.push(el);
+      }
+    }
+  });
   // A transition skipped by the browser (hidden tab, another one starting) still updates the DOM.
   transition.ready.catch(() => {});
   transition.finished.catch(() => {}).finally(() => {
-    if(id === transitions) delete html.dataset.navigation;
+    changed.forEach(el => el.style.removeProperty("view-transition-class"));
+    if(id === transitions) {
+      delete html.dataset.navigation;
+      delete html.dataset.capture;
+      delete html.dataset.holdHeader;
+      html.style.removeProperty("--panel-clip");
+    }
   });
 }
 

@@ -1,8 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowDownIcon, ArrowUpIcon, ArrowUpRightIcon, FileTextIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
-import type { DocumentSummary } from "../index.ts";
-import type { DocumentData } from "../../schema/types.ts";
 import { Button } from "../components/ui/button.tsx";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../components/ui/empty.tsx";
 import { Input } from "../components/ui/input.tsx";
@@ -47,9 +45,7 @@ export function ListPage({ type }: { type: string }) {
 
   const list = useQuery({
     queryKey: ["documents", type, locale, query, page, sort],
-    queryFn: () => cms.api<{ docs: DocumentSummary[], total: number }>(
-      `/documents/${type}?${new URLSearchParams({ locale, search: query, limit: String(PAGE), offset: String(page * PAGE), sort })}`
-    ),
+    queryFn: () => cms.actions.documents.list({ type, locale, search: query || undefined, limit: PAGE, offset: page * PAGE, sort: sort || undefined }),
     placeholderData: keepPreviousData
   });
   const arrival = useArrival(!list.isLoading);
@@ -95,13 +91,13 @@ export function ListPage({ type }: { type: string }) {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 md:px-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1.5">
-          <p className="eyebrow">Content{config.locales!.length > 1 ? ` · ${localeName(locale)}` : ""}</p>
-          <h1 className="text-2xl font-medium tracking-[-0.025em]">{label}</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="eyebrow" data-shared="eyebrow">Content{config.locales!.length > 1 ? ` · ${localeName(locale)}` : ""}</p>
+          <h1 className="text-2xl font-medium tracking-[-0.025em]" data-shared="title">{label}</h1>
+          <p className="text-sm text-muted-foreground" data-shared="summary">
             {list.data ? `${total} ${total === 1 ? "document" : "documents"}` : " "}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" data-shared="actions">
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search" className="w-56 pl-8" aria-label={`Search ${label}`} />
@@ -186,7 +182,7 @@ export function Dashboard() {
   const stats = useQuery({
     queryKey: ["dashboard", locale],
     queryFn: async () => Promise.all(types.map(async type => {
-      const result = await cms.api<{ docs: DocumentSummary[], total: number }>(`/documents/${type}?locale=${locale}&limit=5`);
+      const result = await cms.actions.documents.list({ type, locale, limit: 5 });
       return { type, ...result };
     }))
   });
@@ -277,7 +273,7 @@ export function UsageLink({ type, id, locale }: { type: string, id: string, loca
   const { cms, config } = useAdmin();
   const doc = useQuery({
     queryKey: ["document", type, id, locale],
-    queryFn: () => cms.api<{ draft: DocumentData | null, status: "draft" }>(`/documents/${type}/${id}?locale=${locale}`)
+    queryFn: () => cms.actions.documents.get({ type, id, locale })
   });
   return (
     <Link to={`/content/${type}/${id}?locale=${locale}`} className="flex items-center gap-2 rounded-[8px] px-1.5 py-1 hover:bg-foreground/[0.05]">

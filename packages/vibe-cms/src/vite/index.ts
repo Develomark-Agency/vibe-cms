@@ -175,6 +175,14 @@ async function optimizerEntries(root: string): Promise<string[]> {
   ];
 }
 
+/** Build output and the site's top-level dot-folders (`.alchemy`, `.wrangler`, `.astro`, …). */
+function isToolOutput(root: string, file: string): boolean {
+  const relative = path.relative(root, file);
+  if(!relative || relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  const first = relative.split(path.sep)[0]!;
+  return first === "dist" || (first.startsWith(".") && first.length > 1);
+}
+
 function adminViteConfig(root: string, configFile: string, base: string, cssFile: string, entries: string[] = [path.join(ADMIN_ROOT, "entry.ts")]) {
   return {
     root: ADMIN_ROOT,
@@ -191,7 +199,12 @@ function adminViteConfig(root: string, configFile: string, base: string, cssFile
       // Worker-only modules reached through `.server` files the scanner walks into.
       alias: [{ find: /^cloudflare:.*/, replacement: fileURLToPath(new URL("./cloudflare-stub.ts", import.meta.url)) }]
     },
-    server: { fs: { allow: [searchForWorkspaceRoot(root), root, PACKAGE_ROOT] } },
+    server: {
+      fs: { allow: [searchForWorkspaceRoot(root), root, PACKAGE_ROOT] },
+      // Tailwind sources the whole site, which puts it under watch. Tools keep state in dot-folders
+      // (Alchemy rewrites a pid file several times a second), and every change would rebuild the CSS.
+      watch: { ignored: (file: string) => isToolOutput(root, file) }
+    },
     optimizeDeps: {
       entries,
       include: [

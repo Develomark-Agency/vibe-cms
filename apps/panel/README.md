@@ -16,6 +16,16 @@ Sites that should appear in this panel use the same issuer and client ID in thei
 auth: oidc({ issuer: "https://accounts.google.com", clientId: "<this panel's client ID>" })
 ```
 
+## AI agents
+
+The panel is also an MCP server for every site in it: `https://<panel host>/mcp`. Anyone who can sign in to the panel can add that address to Claude, ChatGPT, Cursor or another agent as a custom connector; the account menu's **AI agents** shows it with a copy button.
+
+1. The agent registers itself with the panel's OAuth server and opens the panel in a browser.
+2. The user approves it (optionally read only) and signs in with the identity provider once more, so the agent gets a provider session of its own: signing out of the panel doesn't disconnect it, and disconnecting it doesn't sign anyone out.
+3. The agent calls `sites_list`, then any action with a `site` argument. The panel gets a site session for the user through the same one-time-code handoff the editor uses, so each site still decides what that user may do.
+
+Connected agents are listed under **AI agents**, where users can disconnect them. Nothing to configure: the OAuth endpoints are discovered from `/.well-known/oauth-protected-resource`.
+
 ## Develop
 
 ```sh

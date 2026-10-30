@@ -1,0 +1,136 @@
+import { actionTools, coreActions, errorResult, serveMcp, textResult, toolName, type AnyAction, type McpTool } from "vibe-cms/actions";
+import { PanelError, type PanelSite } from "vibe-cms/panel";
+import { resourceUrl, SCOPE_READ, type GrantRow } from "./oauth.ts";
+import { codeFor, siteById, type Env, type SessionRow } from "./shared.ts";
+
+/**
+ * The panel's MCP server: the same tools as a site's own, plus `sites_list`, with
+ * a `site` argument. Each call goes to that site's actions endpoint with a site
+ * session the panel gets for the agent's user, so the site decides what's allowed.
+ */
+
+const INSTRUCTIONS = `Content management for the sites in this panel.
+Call sites_list first; every other tool takes the site's id as \`site\`.
+On a site, call schema_list for its content types, then schema_get for a type's fields before creating or updating its documents.
+Documents are drafts until published. Pass a document's updatedAt as baseUpdatedAt when updating, so you don't overwrite someone else's edit.
+Deleting moves things to the trash; trash_purge and trash_empty can't be undone.
+Each site decides what this user may do there; a Forbidden error means the user can't.`;
+
+const actions = new Map<string, AnyAction>(Object.values(coreActions).map(action => [toolName(action.name), action as AnyAction]));
+
+const sitesList: McpTool = {
+  name: "sites_list",
+  title: "List sites",
+  description: "The sites in this panel. Pass a site's `id` as `site` to every other tool. Being listed doesn't mean the user may edit it.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  annotations: { title: "List sites", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+};
+
+let siteTools: McpTool[] | undefined;
+
+function allTools(): McpTool[] {
+  siteTools ??= actionTools(coreActions, {
+    input: schema => ({
+      ...schema,
+      properties: { site: { type: "string", description: "The site's id, from sites_list" }, ...(schema.properties as object) },
+      required: ["site", ...((schema.required as string[] | undefined) ?? [])]
+    })
+  });
+  return [sitesList, ...siteTools];
+}
+
+/** `https://site.com/_vibe/admin` → `https://site.com/_vibe`. */
+function apiBase(site: PanelSite): string {
+  return site.admin.replace(/\/admin\/?$/, "");
+}
+
+/** A site session for the agent's user: cached, or from the same handoff the editor uses. */
+async function siteToken(env: Env, grant: GrantRow, session: SessionRow, site: PanelSite, fresh = false): Promise<string> {
+  if(!fresh) {
+    const cached = await env.DB.prepare("SELECT token, expires_at FROM agent_site_tokens WHERE grant_id = ? AND site_id = ?")
+      .bind(grant.id, site.id).first<{ token: string, expires_at: number }>();
+    if(cached && cached.expires_at > Date.now() + 60_000) return cached.token;
+  }
+  const code = await codeFor(env, session, site);
+  const response = await fetch(`${apiBase(site)}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code })
+  });
+  const data = await response.json().catch(() => ({})) as { token?: string, expiresAt?: number, error?: string };
+  if(!response.ok || !data.token) throw new PanelError(502, data.error ?? `The site refused the sign-in (${response.status})`);
+  await env.DB.prepare(
+    `INSERT INTO agent_site_tokens (grant_id, site_id, token, expires_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (grant_id, site_id) DO UPDATE SET token = excluded.token, expires_at = excluded.expires_at`
+  ).bind(grant.id, site.id, data.token, (data.expiresAt ?? 0) * 1000).run();
+  return data.token;
+}
+
+async function forward(env: Env, grant: GrantRow, session: SessionRow, site: PanelSite, action: string, input: Record<string, unknown>) {
+  for(const fresh of [false, true]) {
+    const token = await siteToken(env, grant, session, site, fresh);
+    const response = await fetch(`${apiBase(site)}/api/actions/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(input)
+    });
+    // The site may have dropped the session (expired, keys rotated): get a new one, once.
+    if(response.status === 401 && !fresh) continue;
+    const body = await response.json().catch(() => ({ error: `The site answered ${response.status}` })) as Record<string, unknown>;
+    if(response.ok) return textResult(body);
+    return errorResult({ _tag: (body.tag as never) ?? "Unavailable", message: String(body.error ?? response.statusText), details: body.details });
+  }
+  return errorResult({ _tag: "Unauthorized", message: "The site keeps refusing this user's session" });
+}
+
+export async function handleMcp(request: Request, env: Env, grant: GrantRow, version: string): Promise<Response> {
+  const readOnly = grant.scope === SCOPE_READ;
+  await env.DB.prepare("UPDATE agent_grants SET last_used_at = ? WHERE id = ?").bind(Date.now(), grant.id).run();
+  return serveMcp(request, {
+    name: "vibe-cms panel",
+    version,
+    instructions: INSTRUCTIONS,
+    tools: () => allTools().filter(tool => !readOnly || tool.annotations.readOnlyHint),
+    async call(name, args) {
+      if(name === sitesList.name) {
+        const { results } = await env.DB.prepare("SELECT id, name, url FROM sites ORDER BY name").all<{ id: string, name: string, url: string }>();
+        return textResult({ sites: results });
+      }
+      const action = actions.get(name);
+      if(!action) return null;
+      if(readOnly && !action.annotations.readOnly) {
+        return errorResult({ _tag: "Forbidden", message: "This agent was connected read-only. Reconnect it to make changes." });
+      }
+      const { site: siteId, ...input } = args;
+      if(typeof siteId !== "string" || !siteId) return errorResult({ _tag: "InvalidInput", message: "site: pass a site's id from sites_list" });
+      const site = await siteById(env, siteId);
+      if(!site) return errorResult({ _tag: "NotFound", message: `No site "${siteId}" in this panel. sites_list lists them.` });
+      const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.session_id).first<SessionRow>();
+      if(!session) return errorResult({ _tag: "Unauthorized", message: "This connection's sign-in is gone. Reconnect the agent." });
+      try {
+        return await forward(env, grant, session, site, action.name, input);
+      } catch (error) {
+        if(!(error instanceof PanelError)) throw error;
+        const tag = error.status === 401 ? "Unauthorized" : error.status === 403 ? "Forbidden" : "Unavailable";
+        const message = error.status === 401 ? "Your sign-in with the identity provider expired. Reconnect the agent to the panel." : error.message;
+        return errorResult({ _tag: tag, message });
+      }
+    }
+  });
+}
+
+/** What an agent without a valid token gets: where to find out how to sign in. */
+export function unauthorized(url: URL, invalid: boolean): Response {
+  const metadata = `${url.origin}/.well-known/oauth-protected-resource`;
+  return Response.json(
+    { jsonrpc: "2.0", id: null, error: { code: -32001, message: `Sign in to use ${resourceUrl(url)}` } },
+    {
+      status: 401,
+      headers: {
+        "www-authenticate": `Bearer resource_metadata="${metadata}"${invalid ? ", error=\"invalid_token\"" : ""}`,
+        "access-control-allow-origin": "*",
+        "access-control-expose-headers": "www-authenticate"
+      }
+    }
+  );
+}

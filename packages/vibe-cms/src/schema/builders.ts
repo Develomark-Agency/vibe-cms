@@ -27,6 +27,7 @@ import type {
   UnionSchema
 } from "./types.ts";
 import type { CollectionMarker } from "../config.ts";
+import { withStandard } from "./standard.ts";
 
 export type * from "./types.ts";
 
@@ -36,65 +37,65 @@ export type Infer<S> = S extends CollectionMarker<any, infer O> ? Input<O> : Inp
 export type InferOutput<S> = S extends CollectionMarker<any, infer O> ? Output<O> : Output<S>;
 
 export function text(options: TextOptions = {}): TextSchema {
-  return { kind: "field", type: "text", ...options };
+  return withStandard({ kind: "field", type: "text", ...options });
 }
 
 export function number(options: NumberOptions = {}): NumberSchema {
-  return { kind: "field", type: "number", ...options };
+  return withStandard({ kind: "field", type: "number", ...options });
 }
 
 export function boolean(options: BooleanOptions = {}): BooleanSchema {
-  return { kind: "field", type: "boolean", ...options };
+  return withStandard({ kind: "field", type: "boolean", ...options });
 }
 
 export function date(options: DateOptions = {}): DateSchema {
-  return { kind: "field", type: "date", ...options };
+  return withStandard({ kind: "field", type: "date", ...options });
 }
 
 export function literal<const V extends Primitive>(value: V, options: FieldOptions<V> = {}): LiteralSchema<V> {
-  return { kind: "field", type: "literal", value, ...options };
+  return withStandard({ kind: "field", type: "literal", value, ...options });
 }
 
 // `enum` is reserved, so the builder is exported under that name below.
 function enumeration<const V extends string>(values: readonly V[], options: EnumOptions<V> = {}): EnumSchema<V> {
-  return { kind: "field", type: "enum", values, ...options };
+  return withStandard({ kind: "field", type: "enum", values, ...options });
 }
 
 export { enumeration as enum };
 
 export function optional<S extends AnySchema>(inner: S): OptionalSchema<S> {
-  return { kind: "field", type: "optional", inner };
+  return withStandard({ kind: "field", type: "optional", inner });
 }
 
 export function array<S extends AnySchema>(item: S, options: ArrayOptions<Input<S>> = {}): ArraySchema<S> {
-  return { kind: "field", type: "array", item, ...options };
+  return withStandard({ kind: "field", type: "array", item, ...options });
 }
 
 export function object<S extends Shape>(shape: S, options: FieldOptions<Input<ObjectSchema<S>>> = {}): ObjectSchema<S> {
-  return { kind: "field", type: "object", shape, ...options };
+  return withStandard({ kind: "field", type: "object", shape, ...options });
 }
 
 export function union<const S extends readonly AnySchema[]>(
   options: S,
   fieldOptions: FieldOptions<Input<S[number]>> = {}
 ): UnionSchema<S> {
-  return { kind: "field", type: "union", options, ...fieldOptions };
+  return withStandard({ kind: "field", type: "union", options, ...fieldOptions });
 }
 
 /** A reference to a document of type `to`, or to any document when omitted. */
 export function ref<const To extends string | undefined = undefined>(to?: To, options: RefOptions = {}): RefSchema<To> {
-  return { kind: "field", type: "ref", ...(to === undefined ? {} : { to }), ...options } as RefSchema<To>;
+  return withStandard<RefSchema<To>>({ kind: "field", type: "ref", ...(to === undefined ? {} : { to }), ...options } as Omit<RefSchema<To>, "~standard">);
 }
 
 export function asset<F extends Shape = {}>(options: AssetOptions<F> = {}): AssetSchema<F> {
   const { maxSize, fields, ...rest } = options;
-  return {
+  return withStandard<AssetSchema<F>>({
     kind: "field",
     type: "asset",
     ...rest,
     ...(maxSize === undefined ? {} : { maxSize: parseSize(maxSize) }),
     fields: (fields ?? {}) as F
-  };
+  });
 }
 
 const units: Record<string, number> = { b: 1, kb: 1e3, mb: 1e6, gb: 1e9, kib: 1024, mib: 1024 ** 2, gib: 1024 ** 3 };

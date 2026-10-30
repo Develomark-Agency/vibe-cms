@@ -34,13 +34,6 @@ interface PickerProps {
   field: FieldDescriptor
 }
 
-interface DocumentState {
-  id: string,
-  draft: DocumentData | null,
-  fallback: DocumentData | null,
-  status: "draft" | "published" | "changed" | null
-}
-
 // --- References ----------------------------------------------------------------
 
 export function RefControl({ schema, value, onChange, path, readOnly, field }: PickerProps) {
@@ -91,7 +84,7 @@ function useDocumentTitle(type: string | undefined, id: string | undefined) {
   return useQuery({
     queryKey: ["document", type, id, locale],
     enabled: Boolean(type && id),
-    queryFn: () => cms.api<DocumentState>(`/documents/${type}/${id}?locale=${locale}`),
+    queryFn: () => cms.actions.documents.get({ type: type!, id: id!, locale }),
     select: doc => ({ title: documentTitle(config, type!, doc.draft ?? doc.fallback), status: doc.status }),
     retry: false
   });
