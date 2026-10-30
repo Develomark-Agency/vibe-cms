@@ -386,7 +386,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
         </SidebarFooter>
       </Sidebar>
       {/* Flush with the window's right edge (no margin, square corners there) so the scrollbar runs along it instead of over a rounded corner. */}
-      <SidebarInset className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:mr-0 md:peer-data-[variant=inset]:rounded-l-[20px] md:peer-data-[variant=inset]:rounded-r-none md:peer-data-[variant=inset]:shadow-(--shadow-card)">
+      <SidebarInset data-scroll-root className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:mr-0 md:peer-data-[variant=inset]:rounded-l-[20px] md:peer-data-[variant=inset]:rounded-r-none md:peer-data-[variant=inset]:shadow-(--shadow-card)">
         <div className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
           <SidebarTrigger />
         </div>

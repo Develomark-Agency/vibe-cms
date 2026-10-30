@@ -201,56 +201,105 @@
   }
 }
 
-/* --- Motion ------------------------------------------------------------------ */
+/* --- Motion ------------------------------------------------------------------
+ * Short and ease-out: pages and content arrive in under 300ms, leave faster
+ * than they arrive, and move a few pixels at most. Only opacity, transform
+ * and (on snapshots) a touch of blur animate.
+ */
 
 @theme {
-  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out-soft: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-/* Page changes: the frame stays still and only the page content cross-fades. */
+/*
+ * Page changes (router.tsx): the frame stays still and only the page content
+ * moves. `data-navigation` on <html> gives the direction: drilling into a
+ * document enters from the right, going back up from the left, and moving
+ * between sections rises in place.
+ */
+:root {
+  --page-in-x: 0px;
+  --page-in-y: 8px;
+  --page-out-x: 0px;
+}
+
+:root[data-navigation="forward"] {
+  --page-in-x: 20px;
+  --page-in-y: 0px;
+  --page-out-x: -10px;
+}
+
+:root[data-navigation="back"] {
+  --page-in-x: -20px;
+  --page-in-y: 0px;
+  --page-out-x: 10px;
+}
+
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
 }
 
+::view-transition-group(page) {
+  animation-duration: 280ms;
+  animation-timing-function: var(--ease-out-soft);
+}
+
 ::view-transition-old(page) {
-  animation: 90ms ease-out both vibe-fade-out;
+  animation: 120ms ease-in both vibe-page-out;
 }
 
 ::view-transition-new(page) {
-  animation: 220ms var(--ease-out-soft) both vibe-rise-in;
+  animation: 280ms var(--ease-out-soft) both vibe-page-in;
 }
 
-@keyframes vibe-fade-out {
-  to { opacity: 0; }
+@keyframes vibe-page-out {
+  to { opacity: 0; transform: translateX(var(--page-out-x)); filter: blur(2px); }
 }
 
-@keyframes vibe-rise-in {
-  from { opacity: 0; transform: translateY(6px); }
+@keyframes vibe-page-in {
+  from { opacity: 0; transform: translate(var(--page-in-x), var(--page-in-y)); filter: blur(3px); }
+}
+
+/* Content that replaces a loading state, so it doesn't pop in (see `useArrival`). */
+@utility rise-in {
+  @apply animate-in fade-in slide-in-from-bottom-[6px] fill-mode-both animation-duration-300;
+  /* Set directly: tw-animate reads --tw-ease, which an element's own transition classes (`ease-out`) would override. */
+  animation-timing-function: var(--ease-out-soft);
 }
 
 /* Lists and grids enter in a short cascade. Children set `--i` (their index). */
-.stagger > * {
-  animation: 260ms var(--ease-out-soft) both vibe-rise-in;
-  animation-delay: calc(min(var(--i, 0), 12) * 22ms);
+@utility stagger {
+  & > * {
+    @apply rise-in;
+    --tw-animation-delay: calc(min(var(--i, 0), 12) * 24ms);
+  }
 }
 
 /* Table rows only fade: moving them would overflow the table's scroll container. */
 tbody.stagger > tr {
-  animation-name: vibe-fade-in;
+  --tw-enter-translate-y: 0;
 }
 
-@keyframes vibe-fade-in {
-  from { opacity: 0; }
-}
-
+/* Reduced motion: pages cross-fade without moving, and content simply appears. */
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*),
-  .stagger > * {
+  ::view-transition-group(*) {
     animation: none !important;
   }
+  ::view-transition-old(page) {
+    animation: 120ms ease-in both reverse vibe-fade !important;
+  }
+  ::view-transition-new(page) {
+    animation: 160ms ease-out both vibe-fade !important;
+  }
+  .stagger > *,
+  .rise-in {
+    animation: none !important;
+  }
+}
+
+@keyframes vibe-fade {
+  from { opacity: 0; }
 }
 
 /* --- Texture ------------------------------------------------------------------ */

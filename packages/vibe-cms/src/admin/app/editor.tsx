@@ -40,7 +40,7 @@ import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
 import { ApiError } from "./client.ts";
-import { Delayed } from "./delayed.tsx";
+import { Delayed, useArrival } from "./delayed.tsx";
 import {
   collectionLabel,
   collectionSchema,
@@ -110,6 +110,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   }, [id, doc.data, schema]);
 
   const [value, setValue] = useState<DocumentData | null>(baseline);
+  const arrival = useArrival(value !== null);
   const [serverIssues, setServerIssues] = useState<Issue[]>([]);
   const [showIssues, setShowIssues] = useState(false);
   const [busy, setBusy] = useState<null | "save" | "publish" | "unpublish" | "delete">(null);
@@ -305,7 +306,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
 
   return (
     <FormValueContext.Provider value={value}>
-      <div className="flex min-h-full flex-col">
+      <div className={cn("flex min-h-full flex-col", arrival)}>
         <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
           {!settings.singleton && (
             <Button variant="ghost" size="icon-sm" aria-label="Back" nativeButton={false} render={<Link to={`/content/${type}`} />}>

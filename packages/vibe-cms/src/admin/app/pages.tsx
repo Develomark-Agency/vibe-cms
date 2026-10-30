@@ -10,7 +10,7 @@ import { Skeleton } from "../components/ui/skeleton.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table.tsx";
 import { cn } from "../lib/utils.ts";
-import { Delayed } from "./delayed.tsx";
+import { Delayed, useArrival } from "./delayed.tsx";
 import { collectionLabel, collectionSettings, documentTitle, formatDate, formatRelative, localeName, titleField, useAdmin } from "./context.tsx";
 import { EditorPage } from "./editor.tsx";
 import { Link, navigate, useLocation } from "./router.tsx";
@@ -52,6 +52,7 @@ export function ListPage({ type }: { type: string }) {
     ),
     placeholderData: keepPreviousData
   });
+  const arrival = useArrival(!list.isLoading);
 
   useEffect(() => {
     document.title = `${label} · ${config.name ?? "Editor"}`;
@@ -131,7 +132,7 @@ export function ListPage({ type }: { type: string }) {
           )}
         </Empty>
       ) : (
-        <div className={cn("overflow-hidden rounded-[16px] elevated transition-opacity", list.isPlaceholderData && "opacity-60")}>
+        <div className={cn("overflow-hidden rounded-[16px] elevated transition-opacity", arrival, list.isPlaceholderData && "opacity-60")}>
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent [&_th]:eyebrow [&_th]:h-9">

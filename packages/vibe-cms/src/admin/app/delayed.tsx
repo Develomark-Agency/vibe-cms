@@ -12,3 +12,13 @@ export function Delayed({ children, ms = 300 }: { children: ReactNode, ms?: numb
   }, [ms]);
   return show ? children : null;
 }
+
+/**
+ * `rise-in` for content that replaces a loading state, so it doesn't pop in.
+ * Content that was ready on the first render gets nothing: the page
+ * transition is already animating it.
+ */
+export function useArrival(ready: boolean): string {
+  const [waited] = useState(!ready);
+  return waited && ready ? "rise-in" : "";
+}

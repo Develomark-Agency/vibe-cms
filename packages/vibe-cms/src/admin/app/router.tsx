@@ -4,9 +4,12 @@ import { onPanelNavigate, postToPanel } from "./session.ts";
 
 const listeners = new Set<() => void>();
 let base = "/_vibe/admin";
+/** The page on screen, to tell which way a navigation goes. */
+let current = location.pathname;
 
 export function setBase(next: string) {
   base = next.replace(/\/$/, "");
+  current = pagePath();
 }
 
 function emit() {
@@ -15,17 +18,19 @@ function emit() {
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
-  window.addEventListener("popstate", listener);
   return () => {
     listeners.delete(listener);
-    window.removeEventListener("popstate", listener);
   };
+}
+
+/** The editor-relative path, e.g. `/content/post/doc_123`. */
+function pagePath(): string {
+  return (location.pathname.startsWith(base) ? location.pathname.slice(base.length) : location.pathname) || "/";
 }
 
 /** The editor-relative location, e.g. `/content/post/doc_123?locale=fr`. */
 function snapshot(): string {
-  const path = location.pathname.startsWith(base) ? location.pathname.slice(base.length) : location.pathname;
-  return (path || "/") + location.search;
+  return pagePath() + location.search;
 }
 
 export function useLocation(): { path: string, search: URLSearchParams, href: string } {
@@ -41,26 +46,65 @@ export function setNavigationBlocker(fn: (() => boolean) | undefined) {
   blocker = fn;
 }
 
+/** The page's scrolling panel (main.tsx), which keeps its position across pages unless reset. */
+function scrollRoot() {
+  return document.querySelector<HTMLElement>("[data-scroll-root]");
+}
+
+/** Drilling into a page below this one, going back up to one above it, or moving across. */
+function direction(from: string, to: string): "forward" | "back" | "lateral" {
+  const a = from.split("/").filter(Boolean);
+  const b = to.split("/").filter(Boolean);
+  function within(outer: string[], inner: string[]) {
+    return outer.length > 0 && outer.length < inner.length && outer.every((s, i) => s === inner[i]);
+  }
+  return within(a, b) ? "forward" : within(b, a) ? "back" : "lateral";
+}
+
+let transitions = 0;
+
 /**
  * Moving to another page animates through the View Transitions API (see
- * styles.css); changing only the query string (sorting, paging, locale) doesn't.
+ * styles.css), in the direction of travel; changing only the query string
+ * (sorting, paging, locale) doesn't. A new page starts at the top, and
+ * back/forward returns to where that page was left.
  */
-function emitWithTransition(pageChanged: boolean) {
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if(!pageChanged || reduced || !document.startViewTransition || document.hidden) return emit();
-  const transition = document.startViewTransition(() => flushSync(emit));
+function emitWithTransition(scrollTop = 0, animate = true) {
+  const from = current;
+  current = pagePath();
+  if(from === current) return emit();
+  function update() {
+    flushSync(emit);
+    const root = scrollRoot();
+    if(root) root.scrollTop = scrollTop;
+  }
+  if(!animate || !document.startViewTransition || document.hidden) return update();
+  const html = document.documentElement;
+  const id = ++transitions;
+  html.dataset.navigation = direction(from, current);
+  const transition = document.startViewTransition(update);
   // A transition skipped by the browser (hidden tab, another one starting) still updates the DOM.
   transition.ready.catch(() => {});
-  transition.finished.catch(() => {});
+  transition.finished.catch(() => {}).finally(() => {
+    if(id === transitions) delete html.dataset.navigation;
+  });
 }
+
+history.scrollRestoration = "manual";
+
+window.addEventListener("popstate", (event: PopStateEvent & { hasUAVisualTransition?: boolean }) => {
+  // Safari's swipe-back already animated the page; a second animation would repeat it.
+  emitWithTransition((history.state as { scroll?: number } | null)?.scroll ?? 0, !event.hasUAVisualTransition);
+});
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {
   if(blocker && !blocker()) return;
   const url = base + (to.startsWith("/") ? to : `/${to}`);
-  const pageChanged = new URL(url, location.href).pathname !== location.pathname;
+  // Remember where this page was scrolled to, for back/forward.
+  if(!options.replace) history.replaceState({ ...history.state, scroll: scrollRoot()?.scrollTop ?? 0 }, "");
   if(options.replace) history.replaceState(null, "", url);
   else history.pushState(null, "", url);
-  emitWithTransition(pageChanged);
+  emitWithTransition();
 }
 
 export function useNavigationSync() {
