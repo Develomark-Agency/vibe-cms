@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDownIcon, ArrowUpIcon, CopyIcon, FileTextIcon, FolderIcon, ImageIcon, PlusIcon, SearchIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, ArrowUpRightIcon, CopyIcon, FileTextIcon, FolderIcon, ImageIcon, PlusIcon, SearchIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import type { Asset, DocumentSummary } from "../index.ts";
 import type { DocumentData } from "../../schema/types.ts";
@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { cn } from "../lib/utils.ts";
 import { ApiError } from "./client.ts";
 import { Delayed } from "./delayed.tsx";
+import { ShaderBackdrop } from "./texture.tsx";
 import { collectionLabel, collectionSettings, documentTitle, formatDate, formatRelative, localeName, titleField, useAdmin } from "./context.tsx";
 import { EditorPage } from "./editor.tsx";
 import { AssetPreview, AssetThumb, describeAsset, FolderSelect, useUpload } from "./pickers.tsx";
@@ -96,11 +97,11 @@ export function ListPage({ type }: { type: string }) {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 md:px-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">{label}</h1>
+        <div className="space-y-1.5">
+          <p className="eyebrow">Content{config.locales!.length > 1 ? ` · ${localeName(locale)}` : ""}</p>
+          <h1 className="text-2xl font-medium tracking-[-0.025em]">{label}</h1>
           <p className="text-sm text-muted-foreground">
             {list.data ? `${total} ${total === 1 ? "document" : "documents"}` : " "}
-            {config.locales!.length > 1 && ` · ${localeName(locale)}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -134,10 +135,10 @@ export function ListPage({ type }: { type: string }) {
           )}
         </Empty>
       ) : (
-        <div className={cn("overflow-hidden rounded-xl border transition-opacity", list.isPlaceholderData && "opacity-60")}>
+        <div className={cn("overflow-hidden rounded-xl border bg-card transition-opacity", list.isPlaceholderData && "opacity-60")}>
           <Table>
             <TableHeader>
-              <TableRow className="bg-muted/40 hover:bg-muted/40">
+              <TableRow className="hover:bg-transparent [&_th]:eyebrow [&_th]:h-9">
                 {titleKey ? <SortHead field={titleKey} className="pl-4">Title</SortHead> : <TableHead className="pl-4">Document</TableHead>}
                 <TableHead>Status</TableHead>
                 {columns.map(c => <TableHead key={c.id}>{c.label}</TableHead>)}
@@ -199,34 +200,64 @@ export function Dashboard() {
     .flatMap(s => s.docs.map(doc => ({ type: s.type, doc })))
     .sort((a, b) => b.doc.$meta.updatedAt.localeCompare(a.doc.$meta.updatedAt))
     .slice(0, 8);
+  const writable = types.filter(t => session.permissions.types[t]?.write && !collectionSettings(config, t).singleton);
+  const hour = new Date().getHours();
+  const greeting = hour < 5 ? "Working late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 md:px-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{config.name ?? info.site.name}</h1>
-        <p className="text-sm text-muted-foreground">Welcome back{session.user.name ? `, ${session.user.name.split(" ")[0]}` : ""}.</p>
-      </div>
-      <section className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {types.map((type, i) => {
-          const entry = stats.data?.find(s => s.type === type);
-          const settings = collectionSettings(config, type);
-          return (
-            <Link
-              key={type}
-              to={`/content/${type}`}
-              style={staggerIndex(i)}
-              className="group/card flex flex-col gap-3 rounded-xl border bg-card p-4 transition-[box-shadow,translate,border-color] duration-200 hover:-translate-y-0.5 hover:border-foreground/15 hover:shadow-md"
-            >
-              <span className="text-sm text-muted-foreground">{collectionLabel(config, type)}</span>
-              <span className="text-2xl font-semibold tabular-nums">
-                {entry ? (settings.singleton ? (entry.total ? "✓" : "—") : entry.total) : <Delayed><Skeleton className="h-8 w-10" /></Delayed>}
-              </span>
-            </Link>
-          );
-        })}
-      </section>
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 py-6 md:px-8">
+      <header>
+        <div className="relative overflow-hidden rounded-2xl border">
+          <ShaderBackdrop />
+          <div className="relative z-10 flex flex-wrap items-end justify-between gap-6 px-6 pt-14 pb-6 md:px-8">
+            <div className="space-y-2">
+              <p className="eyebrow">{location.host}</p>
+              <h1 className="text-3xl font-medium tracking-[-0.03em] md:text-4xl">{config.name ?? info.site.name}</h1>
+              <p className="text-sm text-muted-foreground">
+                {greeting}{session.user.name ? `, ${session.user.name.split(" ")[0]}` : ""}.
+              </p>
+            </div>
+            {writable.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {writable.slice(0, 3).map(type => (
+                  <Button key={type} variant="outline" size="sm" className="bg-background/70 backdrop-blur" nativeButton={false} render={<Link to={`/content/${type}/new`} />}>
+                    <PlusIcon /> {collectionLabel(config, type, false)}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-muted-foreground">Recently edited</h2>
-        <div className="stagger overflow-hidden rounded-xl border">
+        <h2 className="eyebrow">Content</h2>
+        <div className="stagger grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] overflow-hidden rounded-xl border [&>*]:-mr-px [&>*]:-mb-px [&>*]:border-r [&>*]:border-b">
+          {types.map((type, i) => {
+            const entry = stats.data?.find(s => s.type === type);
+            const settings = collectionSettings(config, type);
+            return (
+              <Link
+                key={type}
+                to={`/content/${type}`}
+                style={staggerIndex(i)}
+                className="group/card relative flex flex-col gap-6 bg-card p-5 transition-colors duration-200 hover:bg-accent"
+              >
+                <span className="flex items-center justify-between text-sm text-muted-foreground">
+                  {collectionLabel(config, type)}
+                  <ArrowUpRightIcon className="size-4 opacity-0 transition-[opacity,translate] duration-200 group-hover/card:translate-x-0.5 group-hover/card:-translate-y-0.5 group-hover/card:opacity-100" />
+                </span>
+                <span className="text-3xl font-medium tracking-[-0.03em]">
+                  {entry ? (settings.singleton ? (entry.total ? "Set" : "Not set") : entry.total) : <Delayed><Skeleton className="h-9 w-12" /></Delayed>}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="eyebrow">Recently edited</h2>
+        <div className="stagger overflow-hidden rounded-xl border bg-card">
           {stats.isLoading ? <Delayed><div className="p-6"><Spinner /></div></Delayed>
             : recent.length === 0 ? <p className="p-6 text-sm text-muted-foreground">Nothing yet. Pick a content type to start writing.</p>
               : recent.map(({ type, doc }, i) => (
@@ -234,7 +265,7 @@ export function Dashboard() {
                   key={doc.id}
                   to={`/content/${type}/${doc.id}`}
                   style={staggerIndex(i)}
-                  className="flex items-center gap-3 border-b px-4 py-2.5 text-sm transition-colors last:border-b-0 hover:bg-muted/50"
+                  className="group/row flex items-center gap-3 border-b px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-accent"
                 >
                   <StatusDot status={doc.$meta.status} />
                   <span className="min-w-0 flex-1 truncate font-medium">{documentTitle(config, type, doc)}</span>
@@ -288,8 +319,9 @@ export function MediaPage() {
       onDrop={onDrop}
     >
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Media</h1>
+        <div className="space-y-1.5">
+          <p className="eyebrow">Library</p>
+          <h1 className="text-2xl font-medium tracking-[-0.025em]">Media</h1>
           <p className="text-sm text-muted-foreground">{list.data ? `${list.data.total} files` : " "} · drop files anywhere to upload</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

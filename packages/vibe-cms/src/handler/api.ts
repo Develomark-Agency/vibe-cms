@@ -133,7 +133,12 @@ async function editorRoute(
 
   if(route === "/session") {
     if(method === "GET") {
-      if(!session) throw new HttpError(401, "Not signed in");
+      if(!session) {
+        // No credentials at all is a normal "not signed in", not an error; a bad token is.
+        const sent = request.headers.has("authorization") || readCookie(request, COOKIE) !== undefined;
+        if(sent) throw new HttpError(401, "Session expired");
+        return json({ user: null });
+      }
       return json({ user: session, permissions: permissionSummary(config, session) });
     }
     if(method === "POST") {

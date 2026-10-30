@@ -28,7 +28,9 @@ import { Spinner } from "../admin/components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../admin/components/ui/tooltip.tsx";
 import { cn } from "../admin/lib/utils.ts";
 import { ErrorBoundary } from "../admin/app/error-boundary.tsx";
+import { setDark } from "../admin/app/theme.ts";
 import { Delayed } from "../admin/app/delayed.tsx";
+import { ShaderBackdrop } from "../admin/app/texture.tsx";
 import { PanelError, type PanelBackend, type PanelSite } from "./backend.ts";
 
 type EditorMessage =
@@ -115,13 +117,15 @@ function Panel({ backend }: { backend: PanelBackend }) {
 function SignIn({ backend }: { backend: PanelBackend }) {
   const error = new URLSearchParams(location.search).get("error");
   return (
-    <div className="flex h-full items-center justify-center p-6">
-      <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
-        <div className="flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+    <div className="relative flex h-full items-center justify-center overflow-hidden p-6">
+      <ShaderBackdrop variant="aurora" />
+      <div className="relative z-10 flex w-full max-w-sm flex-col items-center gap-5 rounded-2xl border bg-background/80 px-8 py-10 text-center shadow-[0_24px_60px_-30px_rgb(0_0_0/0.45)] backdrop-blur-md">
+        <div className="flex size-12 items-center justify-center rounded-2xl bg-brand text-brand-foreground shadow-sm">
           <KeyRoundIcon className="size-5" />
         </div>
-        <div className="space-y-1.5">
-          <h1 className="text-xl font-semibold tracking-tight">Sign in to your sites</h1>
+        <div className="space-y-2">
+          <p className="eyebrow">Panel</p>
+          <h1 className="text-xl font-medium tracking-tight">Sign in to your sites</h1>
           <p className="text-sm text-muted-foreground">One sign-in for every site your agency manages.</p>
         </div>
         {error && <p className="w-full rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
@@ -342,19 +346,23 @@ function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
   const list = sortSites(sites ?? []).filter(s => `${s.name} ${s.url}`.toLowerCase().includes(filter.toLowerCase()));
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 md:px-8">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Sites</h1>
+      <section className="relative overflow-hidden border-b">
+        <ShaderBackdrop />
+        <div className="relative z-10 mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-3 px-4 pt-16 pb-8 md:px-8">
+          <div className="space-y-2">
+            <p className="eyebrow">{backend.mode === "hosted" ? "Agency" : "Local"} · {sites?.length ?? 0} {sites?.length === 1 ? "site" : "sites"}</p>
+            <h1 className="text-3xl font-medium tracking-[-0.03em]">Sites</h1>
             <p className="text-sm text-muted-foreground">
               {backend.mode === "hosted" ? "Shared with everyone using this panel. Access to each site is decided by the site." : "Development sites on this machine."}
             </p>
           </div>
           <div className="flex gap-2">
-            {(sites?.length ?? 0) > 6 && <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter" className="w-48" />}
+            {(sites?.length ?? 0) > 6 && <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter" className="w-48 bg-background/70 backdrop-blur" />}
             <Button onClick={onAdd}><PlusIcon /> Add site</Button>
           </div>
         </div>
+      </section>
+      <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 md:px-8">
         {sites?.length === 0 ? (
           <Empty className="border border-dashed">
             <EmptyHeader>
@@ -523,7 +531,7 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWind
 function applyTheme() {
   const media = matchMedia("(prefers-color-scheme: dark)");
   function apply() {
-    document.documentElement.classList.toggle("dark", media.matches);
+    setDark(media.matches);
   }
   apply();
   media.addEventListener("change", apply);

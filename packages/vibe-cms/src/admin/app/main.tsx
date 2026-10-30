@@ -27,11 +27,14 @@ import {
   SidebarTrigger
 } from "../components/ui/sidebar.tsx";
 import { Toaster } from "../components/ui/sonner.tsx";
+import { cn } from "../lib/utils.ts";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { TooltipProvider } from "../components/ui/tooltip.tsx";
 import { createAdminClient, request, setUnauthorizedHandler, type SessionState, type SiteInfo } from "./client.ts";
 import { AdminContext, collectionLabel, collectionSettings, documentTitle, localeName, useAdmin, type AdminContextValue } from "./context.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
+import { setDark } from "./theme.ts";
+import { ShaderBackdrop } from "./texture.tsx";
 import { Delayed } from "./delayed.tsx";
 import { Dashboard, DocumentRoute, ListPage, MediaPage } from "./pages.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
@@ -58,7 +61,7 @@ function useTheme(): [Theme, (theme: Theme) => void] {
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     function apply() {
-      document.documentElement.classList.toggle("dark", theme === "dark" || (theme === "system" && media.matches));
+      setDark(theme === "dark" || (theme === "system" && media.matches));
     }
     apply();
     media.addEventListener("change", apply);
@@ -131,23 +134,25 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 function SignIn({ info, error }: { info: SiteInfo, error: string | null }) {
   return (
-    <Centered>
-      <div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
-        <div className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-background p-8">
+      <ShaderBackdrop variant="aurora" />
+      <div className="relative z-10 flex w-full max-w-sm flex-col items-center gap-5 rounded-2xl border bg-background/80 px-8 py-10 text-center shadow-[0_24px_60px_-30px_rgb(0_0_0/0.45)] backdrop-blur-md">
+        <div className="flex size-11 items-center justify-center rounded-xl bg-brand text-brand-foreground shadow-sm">
           <KeyRoundIcon className="size-5" />
         </div>
-        <div className="space-y-1.5">
-          <h1 className="text-lg font-semibold">{info.site.name}</h1>
-          <p className="text-sm text-muted-foreground">
+        <div className="space-y-2">
+          <p className="eyebrow">Editor</p>
+          <h1 className="text-xl font-medium tracking-tight">{info.site.name}</h1>
+          <p className="text-sm text-balance text-muted-foreground">
             {embedded
               ? "Waiting for your agency panel to sign you in…"
               : "Open this editor from your agency's panel to sign in. Sessions are handed over from the panel; this page has no password form."}
           </p>
-          {info.auth && <p className="text-xs text-muted-foreground">Identity provider: {new URL(info.auth.issuer).host}</p>}
+          {info.auth && <p className="text-xs text-muted-foreground">{new URL(info.auth.issuer).host}</p>}
         </div>
         {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       </div>
-    </Centered>
+    </div>
   );
 }
 
@@ -244,13 +249,13 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   }
 
   return (
-    <SidebarProvider className="h-full min-h-0">
-      <Sidebar collapsible="icon" variant="inset">
+    <SidebarProvider className="texture-grain h-full min-h-0 bg-sidebar">
+      <Sidebar collapsible="icon" variant="inset" className="[&_[data-slot=sidebar-inner]]:bg-transparent">
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip={config.name ?? info.site.name}>
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-brand text-sm font-semibold text-brand-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.25)]">
                   {(config.name ?? info.site.name).charAt(0).toUpperCase()}
                 </div>
                 <div className="grid flex-1 text-left leading-tight">
@@ -283,7 +288,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
             </SidebarGroupContent>
           </SidebarGroup>
           <SidebarGroup>
-            <SidebarGroupLabel>Content</SidebarGroupLabel>
+            <SidebarGroupLabel className="eyebrow">Content</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 {collections.map(type => (
@@ -304,7 +309,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           </SidebarGroup>
           {singletons.length > 0 && (
             <SidebarGroup>
-              <SidebarGroupLabel>Settings</SidebarGroupLabel>
+              <SidebarGroupLabel className="eyebrow">Settings</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {singletons.map(type => (
@@ -321,7 +326,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           )}
           {plugins.slots.nav!.length > 0 && (
             <SidebarGroup>
-              <SidebarGroupLabel>Tools</SidebarGroupLabel>
+              <SidebarGroupLabel className="eyebrow">Tools</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {plugins.slots.nav!.map(item => (
@@ -381,7 +386,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset className="min-h-0 overflow-y-auto">
+      <SidebarInset className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:shadow-[0_0_0_1px_var(--border),0_12px_40px_-20px_rgb(0_0_0/0.35)]">
         <div className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
           <SidebarTrigger />
         </div>
@@ -424,14 +429,22 @@ function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: s
   );
 }
 
-/**
- * A sidebar link. The active highlight is one shared element (a named view
- * transition), so it slides from item to item when you navigate.
- */
+/** A sidebar link: the active item's background fades in place, marked by a small ember bar. */
 function NavButton({ to, active, tooltip, children }: { to: string, active: boolean, tooltip: string, children: React.ReactNode }) {
   return (
-    <SidebarMenuButton isActive={active} tooltip={tooltip} className="isolate data-active:bg-transparent" render={<Link to={to} />}>
-      {active && <span aria-hidden className="absolute inset-0 -z-10 rounded-md bg-sidebar-accent" style={{ viewTransitionName: "nav-active" }} />}
+    <SidebarMenuButton
+      isActive={active}
+      tooltip={tooltip}
+      className="relative transition-[background-color,color] duration-200 ease-out data-active:font-medium"
+      render={<Link to={to} />}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "absolute top-1/2 left-0.5 h-4 w-[3px] -translate-y-1/2 rounded-full bg-brand transition-[opacity,scale] duration-200 ease-out group-data-[collapsible=icon]:hidden",
+          active ? "scale-y-100 opacity-100" : "scale-y-50 opacity-0"
+        )}
+      />
       {children}
     </SidebarMenuButton>
   );

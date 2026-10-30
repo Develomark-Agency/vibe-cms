@@ -47,8 +47,11 @@ export function setNavigationBlocker(fn: (() => boolean) | undefined) {
  */
 function emitWithTransition(pageChanged: boolean) {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if(!pageChanged || reduced || !document.startViewTransition) return emit();
-  document.startViewTransition(() => flushSync(emit));
+  if(!pageChanged || reduced || !document.startViewTransition || document.hidden) return emit();
+  const transition = document.startViewTransition(() => flushSync(emit));
+  // A transition skipped by the browser (hidden tab, another one starting) still updates the DOM.
+  transition.ready.catch(() => {});
+  transition.finished.catch(() => {});
 }
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {

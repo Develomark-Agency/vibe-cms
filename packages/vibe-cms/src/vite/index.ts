@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import path from "node:path";
@@ -160,7 +160,22 @@ async function widgetPackages(root: string): Promise<string[]> {
   }
 }
 
-function adminViteConfig(root: string, configFile: string, base: string, cssFile: string) {
+/**
+ * Where the dependency optimizer should look at startup. Widgets and admin
+ * plugins are loaded lazily, so without this their dependencies (an editor
+ * library, say) are discovered mid-session, the optimizer re-bundles, and
+ * already-loaded modules point at stale bundles ("Outdated Optimize Dep").
+ */
+async function optimizerEntries(root: string): Promise<string[]> {
+  const packages = (await widgetPackages(root)).map(dir => realpathSync(dir));
+  return [
+    path.join(ADMIN_ROOT, "entry.ts"),
+    path.join(root, "**/*.admin.{ts,tsx,js,jsx}"),
+    ...packages.map(dir => path.join(dir, "**/*.admin.{ts,tsx,js,jsx}"))
+  ];
+}
+
+function adminViteConfig(root: string, configFile: string, base: string, cssFile: string, entries: string[] = [path.join(ADMIN_ROOT, "entry.ts")]) {
   return {
     root: ADMIN_ROOT,
     base,
@@ -168,9 +183,16 @@ function adminViteConfig(root: string, configFile: string, base: string, cssFile
     envDir: root,
     logLevel: "warn" as const,
     appType: "custom" as const,
-    resolve: { dedupe: ["react", "react-dom", "@tanstack/react-query", "@base-ui/react"] },
+    resolve: {
+      dedupe: ["react", "react-dom", "@tanstack/react-query", "@base-ui/react"],
+      // Worker-only modules reached through `.server` files the scanner walks into.
+      alias: [{ find: /^cloudflare:.*/, replacement: fileURLToPath(new URL("./cloudflare-stub.ts", import.meta.url)) }]
+    },
     server: { fs: { allow: [searchForWorkspaceRoot(root), root, PACKAGE_ROOT] } },
-    optimizeDeps: { entries: [path.join(ADMIN_ROOT, "entry.ts")], include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"] },
+    optimizeDeps: {
+      entries,
+      include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "shaders/react"]
+    },
     plugins: [
       react(),
       tailwindcss(),
@@ -191,10 +213,11 @@ function serveAdmin(parent: ViteDevServer, root: string, configFile: string, bas
   let child: Promise<ViteDevServer> | undefined;
   async function start() {
     const cssFile = await writeAdminCss(root);
+    const entries = await optimizerEntries(root);
     const hmr = parent.httpServer ? { server: parent.httpServer } : { port: await freePort() };
     const server = await createServer({
-      ...adminViteConfig(root, configFile, base, cssFile),
-      server: { ...adminViteConfig(root, configFile, base, cssFile).server, middlewareMode: true, hmr }
+      ...adminViteConfig(root, configFile, base, cssFile, entries),
+      server: { ...adminViteConfig(root, configFile, base, cssFile, entries).server, middlewareMode: true, hmr }
     });
     parent.httpServer?.once("close", () => void server.close());
     return server;

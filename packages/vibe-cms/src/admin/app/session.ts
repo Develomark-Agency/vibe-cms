@@ -89,8 +89,8 @@ export async function startSession(info: SiteInfo): Promise<SessionState | null>
     return exchange(prefix, { code }, true);
   }
   try {
-    const existing = await request<SessionResponse>(prefix, "/session");
-    return existing;
+    const existing = await request<SessionResponse | { user: null }>(prefix, "/session");
+    if(existing.user) return existing as SessionResponse;
   } catch {
     // No cookie session.
   }

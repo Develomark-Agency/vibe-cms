@@ -304,7 +304,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   return (
     <FormValueContext.Provider value={value}>
       <div className="flex min-h-full flex-col">
-        <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/85 px-4 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/70 md:px-6">
+        <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
           {!settings.singleton && (
             <Button variant="ghost" size="icon-sm" aria-label="Back" nativeButton={false} render={<Link to={`/content/${type}`} />}>
               <ChevronLeftIcon />
@@ -429,7 +429,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             {doc.data?.schedules.length ? <Schedules type={type} id={id!} doc={doc.data} onChange={applyResult} /> : null}
             {panels.map(panel => (
               <section key={panel.id} className="rounded-xl border p-3">
-                <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">{panel.label}</h3>
+                <h3 className="mb-2 text-sm font-medium">{panel.label}</h3>
                 <panel.component {...slotProps} />
               </section>
             ))}
@@ -537,7 +537,7 @@ function DocumentInfo({ doc }: { doc: DocumentState | undefined }) {
   ] : [["Status", "Not saved yet"]];
   return (
     <section className="rounded-xl border p-3">
-      <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">Document</h3>
+      <h3 className="mb-2 text-sm font-medium">Document</h3>
       <dl className="grid gap-1.5 text-sm">
         {rows.map(([label, text]) => (
           <div key={label} className="flex justify-between gap-3">
@@ -554,7 +554,7 @@ function Schedules({ type, id, doc, onChange }: { type: string, id: string, doc:
   const { cms, locale } = useAdmin();
   return (
     <section className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
-      <h3 className="mb-2 flex items-center gap-1.5 text-xs font-medium tracking-wide text-violet-700 uppercase dark:text-violet-300">
+      <h3 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-violet-700 dark:text-violet-300">
         <CalendarClockIcon className="size-3.5" /> Scheduled
       </h3>
       <ul className="grid gap-2 text-sm">

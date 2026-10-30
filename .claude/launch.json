@@ -4,14 +4,36 @@
     {
       "name": "example-blog",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "--filter", "@vibe-cms/example-blog", "dev"],
+      "runtimeArgs": [
+        "run",
+        "--filter",
+        "@vibe-cms/example-blog",
+        "dev"
+      ],
       "port": 1337
     },
     {
       "name": "local-panel",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["packages/vibe-cms/src/cli/index.ts", "admin"],
+      "runtimeArgs": [
+        "packages/vibe-cms/src/cli/index.ts",
+        "admin"
+      ],
       "port": 5173
+    },
+    {
+      "name": "hosted-panel",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--filter",
+        "@vibe-cms/panel",
+        "dev",
+        "--",
+        "--port",
+        "5200"
+      ],
+      "port": 5200
     }
   ]
 }

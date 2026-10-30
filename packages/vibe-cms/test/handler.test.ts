@@ -239,3 +239,14 @@ describe("auth", () => {
     });
   });
 });
+
+describe("session probe", () => {
+  test("no credentials is not an error; a bad token is", async () => {
+    t.setToken("");
+    const anonymous = await t.api("/api/session");
+    expect(anonymous.status).toBe(200);
+    expect(anonymous.body).toEqual({ user: null });
+    t.setToken("not-a-token");
+    expect((await t.api("/api/session")).status).toBe(401);
+  });
+});

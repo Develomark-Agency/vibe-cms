@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "../shadcn.css";
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist-mono";
 
 /* The admin core; the build adds the site's own widget sources. */
 @source "../";
@@ -10,6 +11,9 @@
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+    --color-brand: var(--brand);
+    --color-brand-foreground: var(--brand-foreground);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -50,73 +54,83 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Warm neutrals rather than greys, hairline borders drawn from the text
+ * colour, and one ember accent (--brand) used sparingly.
+ */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --background: oklch(0.982 0.004 75);
+    --foreground: oklch(0.21 0.012 50);
+    --card: oklch(0.995 0.003 75);
+    --card-foreground: oklch(0.21 0.012 50);
+    --popover: oklch(0.995 0.003 75);
+    --popover-foreground: oklch(0.21 0.012 50);
+    --primary: oklch(0.23 0.013 50);
+    --primary-foreground: oklch(0.982 0.004 75);
+    --secondary: oklch(0.952 0.006 70);
+    --secondary-foreground: oklch(0.23 0.013 50);
+    --muted: oklch(0.952 0.006 70);
+    --muted-foreground: oklch(0.53 0.016 55);
+    --accent: oklch(0.945 0.008 65);
+    --accent-foreground: oklch(0.23 0.013 50);
+    --destructive: oklch(0.58 0.22 27);
+    --border: oklch(0.21 0.012 50 / 10%);
+    --input: oklch(0.21 0.012 50 / 15%);
+    --ring: oklch(0.68 0.17 45 / 70%);
+    --brand: oklch(0.66 0.19 42);
+    --brand-foreground: oklch(0.99 0.01 60);
+    --chart-1: oklch(0.66 0.19 42);
+    --chart-2: oklch(0.6 0.12 180);
+    --chart-3: oklch(0.45 0.08 250);
+    --chart-4: oklch(0.8 0.15 85);
+    --chart-5: oklch(0.7 0.16 60);
+    --radius: 0.7rem;
+    --sidebar: oklch(0.962 0.006 70);
+    --sidebar-foreground: oklch(0.21 0.012 50);
+    --sidebar-primary: oklch(0.23 0.013 50);
+    --sidebar-primary-foreground: oklch(0.982 0.004 75);
+    --sidebar-accent: oklch(0.21 0.012 50 / 6%);
+    --sidebar-accent-foreground: oklch(0.21 0.012 50);
+    --sidebar-border: oklch(0.21 0.012 50 / 9%);
+    --sidebar-ring: oklch(0.68 0.17 45 / 70%);
+    --grain-opacity: 0.05;
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: oklch(0.175 0.004 35);
+    --foreground: oklch(0.93 0.016 45);
+    --card: oklch(0.198 0.005 35);
+    --card-foreground: oklch(0.93 0.016 45);
+    --popover: oklch(0.215 0.006 35);
+    --popover-foreground: oklch(0.93 0.016 45);
+    --primary: oklch(0.93 0.016 45);
+    --primary-foreground: oklch(0.19 0.005 35);
+    --secondary: oklch(0.25 0.007 35);
+    --secondary-foreground: oklch(0.93 0.016 45);
+    --muted: oklch(0.24 0.006 35);
+    --muted-foreground: oklch(0.69 0.016 45);
+    --accent: oklch(0.93 0.016 45 / 7%);
+    --accent-foreground: oklch(0.93 0.016 45);
+    --destructive: oklch(0.68 0.19 24);
+    --border: oklch(0.93 0.016 45 / 7%);
+    --input: oklch(0.93 0.016 45 / 10%);
+    --ring: oklch(0.72 0.17 45 / 70%);
+    --brand: oklch(0.72 0.18 45);
+    --brand-foreground: oklch(0.18 0.02 40);
+    --chart-1: oklch(0.72 0.18 45);
+    --chart-2: oklch(0.7 0.12 180);
+    --chart-3: oklch(0.65 0.1 250);
+    --chart-4: oklch(0.82 0.15 85);
+    --chart-5: oklch(0.75 0.15 60);
+    --sidebar: oklch(0.155 0.004 35);
+    --sidebar-foreground: oklch(0.93 0.016 45);
+    --sidebar-primary: oklch(0.93 0.016 45);
+    --sidebar-primary-foreground: oklch(0.19 0.005 35);
+    --sidebar-accent: oklch(0.93 0.016 45 / 7%);
+    --sidebar-accent-foreground: oklch(0.93 0.016 45);
+    --sidebar-border: oklch(0.93 0.016 45 / 6%);
+    --sidebar-ring: oklch(0.72 0.17 45 / 70%);
+    --grain-opacity: 0.07;
 }
 
 @layer base {
@@ -136,7 +150,6 @@
   }
   body {
     -webkit-font-smoothing: antialiased;
-    font-feature-settings: "cv11", "ss01";
   }
 }
 
@@ -146,7 +159,7 @@
   --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* Page changes: the frame stays still, the page content swaps, the nav highlight slides. */
+/* Page changes: the frame stays still and only the page content cross-fades. */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
@@ -158,11 +171,6 @@
 
 ::view-transition-new(page) {
   animation: 220ms var(--ease-out-soft) both vibe-rise-in;
-}
-
-::view-transition-group(nav-active) {
-  animation-duration: 240ms;
-  animation-timing-function: var(--ease-out-soft);
 }
 
 @keyframes vibe-fade-out {
@@ -179,6 +187,15 @@
   animation-delay: calc(min(var(--i, 0), 12) * 22ms);
 }
 
+/* Table rows only fade: moving them would overflow the table's scroll container. */
+tbody.stagger > tr {
+  animation-name: vibe-fade-in;
+}
+
+@keyframes vibe-fade-in {
+  from { opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*),
   ::view-transition-old(*),
@@ -186,4 +203,36 @@
   .stagger > * {
     animation: none !important;
   }
+}
+
+/* --- Texture ------------------------------------------------------------------ */
+
+/* Film grain over an element, from an SVG noise filter. Static: no animation cost. */
+.texture-grain {
+  position: relative;
+  isolation: isolate;
+}
+
+.texture-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.dark .texture-grain::after {
+  mix-blend-mode: soft-light;
+}
+
+/* Small label above a heading or group, e.g. "Content". A utility, so variants work. */
+@utility eyebrow {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
 }
