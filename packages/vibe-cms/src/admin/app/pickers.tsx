@@ -337,7 +337,9 @@ export function formatBytes(bytes: number): string {
 }
 
 export function describeAsset(asset: Asset): string {
-  const parts = [asset.mime.split("/")[1]?.toUpperCase() ?? asset.mime, formatBytes(asset.size)];
+  // The extension reads better than the MIME subtype ("TXT", not "PLAIN"; "SVG", not "SVG+XML").
+  const extension = /\.([a-z0-9]{1,6})$/i.exec(asset.filename)?.[1];
+  const parts = [(extension ?? asset.mime.split("/")[1] ?? asset.mime).toUpperCase(), formatBytes(asset.size)];
   if(asset.meta.width && asset.meta.height) parts.push(`${asset.meta.width}×${asset.meta.height}`);
   if(asset.meta.duration) parts.push(`${Math.round(asset.meta.duration)}s`);
   return parts.join(" · ");
@@ -384,7 +386,7 @@ export function AssetPreview({ asset, focal, onFocal, className }: {
   );
 }
 
-export function AssetThumb({ asset, selected, onClick, style }: { asset: Asset, selected?: boolean, onClick?(): void, style?: CSSProperties }) {
+export function AssetThumb({ asset, selected, onClick, style }: { asset: Asset, selected?: boolean, onClick?(event: React.MouseEvent): void, style?: CSSProperties }) {
   return (
     <button
       type="button"

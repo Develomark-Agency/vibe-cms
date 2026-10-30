@@ -1,0 +1,46 @@
+---
+// An Astro block: scoped styles, server-rendered, no JavaScript.
+import type { BlockProps } from "@vibe-cms/blocks";
+import type { Testimonial } from "./definitions.ts";
+
+type Props = BlockProps<typeof Testimonial>;
+const { quote, name, company, photo } = Astro.props;
+---
+<figure class="testimonial">
+  <blockquote>“{quote}”</blockquote>
+  <figcaption>
+    {photo && <img src={photo.url} alt={photo.alt ?? ""} width="48" height="48" loading="lazy" />}
+    <span><strong>{name}</strong>{company && <span class="company">{company}</span>}</span>
+  </figcaption>
+</figure>
+
+<style>
+  .testimonial {
+    max-width: 40rem;
+    margin: 3.5rem auto;
+    padding: 2rem;
+    border-radius: 1.25rem;
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+  blockquote {
+    margin: 0;
+    font-size: 1.3rem;
+    line-height: 1.5;
+    text-wrap: pretty;
+  }
+  figcaption {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+  img {
+    border-radius: 999px;
+    object-fit: cover;
+  }
+  .company {
+    display: block;
+    opacity: 0.65;
+    font-size: 0.9rem;
+  }
+</style>

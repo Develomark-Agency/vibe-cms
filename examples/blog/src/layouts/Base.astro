@@ -3,11 +3,13 @@ import { siteSettings } from "../content.ts";
 
 interface Props {
   title?: string,
-  description?: string
+  description?: string,
+  /** Room for wide blocks (pages); text stays at reading width inside. */
+  wide?: boolean
 }
 
 const site = await siteSettings();
-const { title, description } = Astro.props;
+const { title, description, wide } = Astro.props;
 ---
 
 <!doctype html>
@@ -20,9 +22,11 @@ const { title, description } = Astro.props;
     {site.icon && <link rel="icon" href={site.icon} />}
     <style is:global define:vars={{ accent: site.accent }}>
       :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-      body { margin: 0; line-height: 1.6; background: Canvas; color: CanvasText; }
+      /* On body, so it wins over the blocks stylesheet's :root default whatever order they load in. */
+      body { margin: 0; line-height: 1.6; background: Canvas; color: CanvasText; --vb-accent: var(--accent); }
       a { color: var(--accent); }
       .wrap { max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+      .wrap.wide { max-width: 64rem; }
       header.site { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); padding-bottom: 1rem; margin-bottom: 2rem; }
       header.site a { text-decoration: none; color: inherit; font-weight: 700; font-size: 1.25rem; }
       header.site p { margin: 0; opacity: .6; font-size: .9rem; }
@@ -31,7 +35,7 @@ const { title, description } = Astro.props;
     </style>
   </head>
   <body>
-    <div class="wrap">
+    <div class:list={["wrap", { wide }]}>
       <header class="site">
         <a href="/">{site.title}</a>
         {site.tagline && <p>{site.tagline}</p>}

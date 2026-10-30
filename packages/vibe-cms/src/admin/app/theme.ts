@@ -98,3 +98,14 @@ export function setFavicon(href: string | null) {
   }
   link.href = href;
 }
+
+function subscribeDarkClass(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  return () => observer.disconnect();
+}
+
+/** Whether the page is dark right now, whatever the preference ("system" included) resolved to. */
+export function useIsDark(): boolean {
+  return useSyncExternalStore(subscribeDarkClass, () => document.documentElement.classList.contains("dark"));
+}

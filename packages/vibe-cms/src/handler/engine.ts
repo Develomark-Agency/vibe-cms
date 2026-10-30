@@ -10,6 +10,7 @@ import type {
   ObjectSchema,
   OptionalSchema,
   RefSchema,
+  TextSchema,
   UnionSchema
 } from "../schema/types.ts";
 import { findReferences, isRecord, pickUnionOption, schemaAt, validate, type Issue } from "../schema/validate.ts";
@@ -19,7 +20,7 @@ import { can, require } from "./auth.ts";
 import { all, first, getMeta, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type VersionRow } from "./db.ts";
 import type { D1, ExecutionContext, R2 } from "./platform.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
-import { SqlBuilder } from "./sql.ts";
+import { jsonPath, SqlBuilder } from "./sql.ts";
 import { MAX_TEXT_EDIT_BYTES, textKind, textMime } from "../text-files.ts";
 
 export interface EngineState {
@@ -505,8 +506,27 @@ export class Engine {
     }
     // Plugins may only set fields the schema declares; validate their output too.
     const result = validate<DocumentData>(schema, output.doc);
-    const issues = [...result.issues, ...await this.checkReferences(schema, result.value)];
+    const issues = [...result.issues, ...await this.checkReferences(schema, result.value), ...await this.checkUnique(schema, type, id, locale, result.value)];
     return { doc: result.value, issues };
+  }
+
+  /** `unique: true` text fields: no other document of the type has the value in this locale, as a draft or published. */
+  private async checkUnique(schema: ObjectSchema, type: string, id: string, locale: string, doc: DocumentData): Promise<Issue[]> {
+    const issues: Issue[] = [];
+    for(const [key, field] of Object.entries(schema.shape)) {
+      const inner = unwrap(field);
+      if(inner.type !== "text" || !(inner as TextSchema).unique) continue;
+      const value = doc[key];
+      if(typeof value !== "string" || value === "") continue;
+      const path = jsonPath([key]);
+      const taken = await first<{ id: string }>(
+        this.db,
+        `SELECT id FROM vibe_documents WHERE type = ? AND locale = ? AND id != ? AND (json_extract(draft, ${path}) = ? OR json_extract(published, ${path}) = ?) LIMIT 1`,
+        [type, locale, id, value, value]
+      );
+      if(taken) issues.push({ path: [key], message: `Another document already uses “${value}”` });
+    }
+    return issues;
   }
 
   /** Every ref must point at an existing document of the right type; every asset must exist and fit its field. */

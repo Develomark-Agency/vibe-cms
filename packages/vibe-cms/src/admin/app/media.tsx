@@ -17,17 +17,23 @@ import {
   PencilIcon,
   SearchIcon,
   Trash2Icon,
-  UploadIcon
+  Undo2Icon,
+  UploadIcon,
+  XIcon
 } from "lucide-react";
-import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { toast } from "sonner";
+import { createContext, useContext, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import type { MediaFolder } from "../../handler/engine.ts";
 import type { Asset } from "../index.ts";
 import { Button } from "../components/ui/button.tsx";
+import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../components/ui/empty.tsx";
 import { Input } from "../components/ui/input.tsx";
+import { Kbd } from "../components/ui/kbd.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
+import { Toaster } from "../components/ui/sonner.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
@@ -80,6 +86,135 @@ function store(key: string, value: string) {
   }
 }
 
+// --- Feedback --------------------------------------------------------------------------
+
+/** One step the user can take back. Kept in memory for the session, newest last. */
+interface UndoEntry {
+  /** "move", "rename", …: shown as "Undo move". */
+  label: string,
+  undo(): Promise<void>
+}
+
+const TOASTER = "media";
+
+/** Media toasts sit at the bottom centre, apart from the editor's other notices, and can carry an Undo button. */
+function notify(message: string, options: { type?: "success" | "error" | "info", undo?: () => void } = {}) {
+  const action = options.undo ? { label: "Undo", onClick: options.undo } : undefined;
+  const show = options.type === "error" ? toast.error : options.type === "info" ? toast.info : options.type === "success" ? toast.success : toast;
+  show(message, { toasterId: TOASTER, action, duration: options.undo ? 6000 : 4000 });
+}
+
+function quote(name: string): string {
+  return `“${name.length > 40 ? `${name.slice(0, 39)}…` : name}”`;
+}
+
+const FOLDER_SVG = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"/></svg>";
+const FILE_SVG = "<svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z\"/><path d=\"M14 2v4a2 2 0 0 0 2 2h4\"/></svg>";
+
+/**
+ * A compact chip as the drag image: what's being dragged, by name. Without it
+ * the browser snapshots the dragged row, and inside the page's view-transition
+ * layer that snapshot can pick up a large, offset slice of the screen.
+ */
+function setDragPreview(event: DragEvent, items: Item[]) {
+  const names = items.map(item => (item.kind === "file" ? item.asset.filename : nameOf(item.path)));
+  let label = names.join(", ");
+  if(label.length > 48) label = `${label.slice(0, 47).trimEnd()}…`;
+  const chip = document.createElement("div");
+  chip.className = "fixed top-0 left-[-9999px] z-50 flex max-w-96 items-center gap-2 rounded-[12px] floating px-3 py-2 text-sm font-medium text-popover-foreground";
+  const icon = document.createElement("span");
+  icon.className = "shrink-0 text-muted-foreground";
+  icon.innerHTML = items.every(item => item.kind === "folder") ? FOLDER_SVG : FILE_SVG;
+  const text = document.createElement("span");
+  text.className = "truncate";
+  text.textContent = label;
+  chip.append(icon, text);
+  if(items.length > 1) {
+    const count = document.createElement("span");
+    count.className = "ml-1 shrink-0 rounded-full bg-foreground px-1.5 text-[11px] leading-5 text-background tabular-nums";
+    count.textContent = String(items.length);
+    chip.append(count);
+  }
+  document.body.appendChild(chip);
+  event.dataTransfer.setDragImage(chip, 14, 14);
+  setTimeout(() => chip.remove());
+}
+
+// --- Selection -------------------------------------------------------------------------
+
+/** Something in the browser that can be selected. */
+type Item = { kind: "file", asset: Asset } | { kind: "folder", path: string };
+
+/** What bulk actions act on; also what a multi-item drag carries. */
+interface Bulk {
+  files: Array<{ id: string, folder: string | null, size: number, name: string }>,
+  folders: string[]
+}
+
+const ITEMS_TYPE = "application/x-vibe-items";
+
+function itemKey(item: Item): string {
+  return item.kind === "file" ? `f:${item.asset.id}` : `d:${item.path}`;
+}
+
+function toBulk(items: Iterable<Item>): Bulk {
+  const bulk: Bulk = { files: [], folders: [] };
+  for(const item of items) {
+    if(item.kind === "file") bulk.files.push({ id: item.asset.id, folder: item.asset.folder, size: item.asset.size, name: item.asset.filename });
+    else bulk.folders.push(item.path);
+  }
+  return bulk;
+}
+
+function bulkLabel(bulk: Bulk): string {
+  const count = bulk.files.length + bulk.folders.length;
+  if(count === 1) return bulk.files[0]?.name ?? nameOf(bulk.folders[0]!);
+  return `${count} items`;
+}
+
+/**
+ * Finder-style: a plain click picks one thing (and previews it), ⌘/Ctrl-click
+ * toggles, Shift-click takes the range from the last click in on-screen order.
+ * "Multi" is on once the selection was built with modifiers or checkboxes.
+ */
+interface Selection {
+  picked: Map<string, Item>,
+  multi: boolean,
+  has(item: Item): boolean,
+  click(item: Item, event: MouseEvent, plain: () => void): void,
+  toggle(item: Item): void,
+  register(item: Item): void,
+  drag(item: Item): { draggable?: boolean, onDragStart?(event: DragEvent): void }
+}
+
+const SelectionContext = createContext<Selection | null>(null);
+
+function useSelection(): Selection {
+  return useContext(SelectionContext)!;
+}
+
+/** Registers the item for range selection and returns what its row needs. */
+function usePick(item: Item) {
+  const selection = useSelection();
+  selection.register(item);
+  return { key: itemKey(item), picked: selection.multi && selection.has(item), selection };
+}
+
+/** Shown on hover, and always while selecting. 6px in from a 14px thumbnail corner or inside a row. */
+function PickBox({ item, className }: { item: Item, className?: string }) {
+  const selection = useSelection();
+  const name = item.kind === "file" ? item.asset.filename : nameOf(item.path);
+  return (
+    <Checkbox
+      checked={selection.multi && selection.has(item)}
+      onCheckedChange={() => selection.toggle(item)}
+      onClick={event => event.stopPropagation()}
+      aria-label={`Select ${name}`}
+      className={cn("transition-opacity duration-150", !selection.multi && "opacity-0 group-hover/pick:opacity-100 focus-visible:opacity-100", className)}
+    />
+  );
+}
+
 /** What the media page needs to know about the folder tree, plus the actions that change it. */
 function useLibrary() {
   const { cms, session } = useAdmin();
@@ -105,10 +240,10 @@ function useLibrary() {
   async function attempt<T>(action: () => Promise<T>, success?: string): Promise<T | null> {
     try {
       const result = await action();
-      if(success) cms.toast(success, { type: "success" });
+      if(success) notify(success, { type: "success" });
       return result;
     } catch (error) {
-      cms.toast(error instanceof ApiError ? error.message : "Something went wrong", { type: "error" });
+      notify(error instanceof ApiError ? error.message : "Something went wrong", { type: "error" });
       return null;
     } finally {
       refresh();
@@ -122,6 +257,7 @@ function useLibrary() {
     canDelete: session.permissions.media.delete,
     childrenOf,
     itemCount,
+    refresh,
     createFolder: (path: string) => attempt(() => cms.api<MediaFolder>("/folders", { method: "POST", json: { path } })),
     moveFolder: (from: string, to: string) => attempt(() => cms.api<{ path: string }>("/folders", { method: "PATCH", json: { from, to } })),
     deleteFolder: (path: string) => attempt(() => cms.api(`/folders?path=${encodeURIComponent(path)}`, { method: "DELETE" }), "Folder deleted"),
@@ -146,8 +282,8 @@ function useFolderFiles(folder: string | null, enabled = true) {
 type Dialogs =
   | { kind: "new-folder", parent: string | null }
   | { kind: "rename-folder", path: string }
-  | { kind: "move-folder", path: string }
-  | { kind: "move-asset", asset: Asset };
+  | { kind: "move", bulk: Bulk }
+  | { kind: "delete", bulk: Bulk };
 
 export function MediaPage() {
   const { cms, site } = useAdmin();
@@ -161,6 +297,12 @@ export function MediaPage() {
   const [dialog, setDialog] = useState<Dialogs | null>(null);
   const [editing, setEditing] = useState<Asset | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [picked, setPicked] = useState<Map<string, Item>>(() => new Map());
+  const [multi, setMulti] = useState(false);
+  const anchor = useRef<string | null>(null);
+  const registry = useRef(new Map<string, Item>());
+  const browser = useRef<HTMLDivElement>(null);
+  const [history, setHistory] = useState<UndoEntry[]>([]);
   const { upload, uploading } = useUpload();
   const fileInput = useRef<HTMLInputElement>(null);
   const query = useDebounced(search);
@@ -175,6 +317,219 @@ export function MediaPage() {
     document.title = `Media · ${site.name}`;
   }, [site.name]);
 
+  function record(entry: UndoEntry): () => void {
+    setHistory(prev => [...prev.slice(-19), entry]);
+    return () => void undo(entry);
+  }
+
+  /** Undoes `entry` (the newest step by default) and drops it from the history. */
+  async function undo(entry?: UndoEntry) {
+    const target = entry ?? history.at(-1);
+    if(!target) {
+      notify("Nothing to undo", { type: "info" });
+      return;
+    }
+    setHistory(prev => prev.filter(e => e !== target));
+    try {
+      await target.undo();
+      notify(`Undid ${target.label}`);
+    } catch (error) {
+      notify(error instanceof ApiError ? `Couldn't undo: ${error.message}` : "Couldn't undo", { type: "error" });
+    } finally {
+      library.refresh();
+    }
+  }
+
+  function clearSelection() {
+    setPicked(new Map());
+    setMulti(false);
+  }
+
+  // What's on screen changes wholesale: start over. (The tree keeps its selection as folders open and close.)
+  useEffect(clearSelection, [view, view === "grid" ? folder : null, query]);
+
+  function visibleKeys(): string[] {
+    return [...(browser.current?.querySelectorAll<HTMLElement>("[data-pick]") ?? [])].map(el => el.dataset.pick!);
+  }
+
+  function toggleItem(item: Item) {
+    const key = itemKey(item);
+    const next = new Map(picked);
+    if(next.has(key)) next.delete(key);
+    else next.set(key, item);
+    anchor.current = key;
+    setPicked(next);
+    setMulti(next.size > 0);
+  }
+
+  const selection: Selection = {
+    picked,
+    multi,
+    has: item => picked.has(itemKey(item)),
+    register(item) {
+      registry.current.set(itemKey(item), item);
+    },
+    click(item, event, plain) {
+      const key = itemKey(item);
+      if(event.shiftKey && anchor.current) {
+        const keys = visibleKeys();
+        const from = keys.indexOf(anchor.current);
+        const to = keys.indexOf(key);
+        if(from !== -1 && to !== -1) {
+          event.preventDefault();
+          const next = new Map(event.metaKey || event.ctrlKey ? picked : []);
+          for(const k of keys.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+            const found = registry.current.get(k);
+            if(found) next.set(k, found);
+          }
+          setPicked(next);
+          setMulti(true);
+          return;
+        }
+      }
+      if(event.metaKey || event.ctrlKey) {
+        event.preventDefault();
+        toggleItem(item);
+        return;
+      }
+      anchor.current = key;
+      setPicked(item.kind === "file" ? new Map([[key, item]]) : new Map());
+      setMulti(false);
+      plain();
+    },
+    toggle: toggleItem,
+    drag(item) {
+      if(!library.canWrite) return {};
+      return {
+        draggable: true,
+        onDragStart(event) {
+          event.stopPropagation();
+          const key = itemKey(item);
+          const items = multi && picked.has(key) ? [...picked.values()] : [item];
+          // Always the full description, so a drop knows where things came from (for undo).
+          event.dataTransfer.setData(ITEMS_TYPE, JSON.stringify(toBulk(items)));
+          event.dataTransfer.effectAllowed = "move";
+          setDragPreview(event, items);
+        }
+      };
+    }
+  };
+
+  /** Moves files and folders into `target`. Things already there, or inside a moved folder, ride along or stay put. */
+  async function bulkMove(bulk: Bulk, target: string | null) {
+    const folders = bulk.folders
+      .filter(path => !bulk.folders.some(other => other !== path && isInside(path, other)))
+      .filter(path => !(target !== null && isInside(target, path)) && parentOf(path) !== target);
+    const files = bulk.files.filter(f => f.folder !== target && !bulk.folders.some(path => isInside(f.folder, path)));
+    if(files.length + folders.length === 0) return;
+    const movedFiles: Array<{ id: string, from: string | null, name: string }> = [];
+    const movedFolders: Array<{ from: string, to: string }> = [];
+    const errors: string[] = [];
+    let nextFolder = folder;
+    for(const file of files) {
+      try {
+        await cms.api(`/assets/${file.id}`, { method: "PATCH", json: { folder: target } });
+        movedFiles.push({ id: file.id, from: file.folder, name: file.name });
+      } catch (error) {
+        errors.push(error instanceof ApiError ? error.message : `Couldn't move ${file.name}`);
+      }
+    }
+    for(const path of folders) {
+      try {
+        const result = await cms.api<{ path: string }>("/folders", { method: "PATCH", json: { from: path, to: join(target, nameOf(path)) } });
+        movedFolders.push({ from: path, to: result.path });
+        if(isInside(folder, path)) nextFolder = result.path + folder!.slice(path.length);
+      } catch (error) {
+        errors.push(error instanceof ApiError ? error.message : `Couldn't move ${nameOf(path)}`);
+      }
+    }
+    library.refresh();
+    clearSelection();
+    if(nextFolder !== folder) go({ folder: nextFolder });
+    const moved = movedFiles.length + movedFolders.length;
+    if(moved === 0) {
+      notify(errors[0]!, { type: "error" });
+      return;
+    }
+    const undoMove = record({
+      label: "move",
+      async undo() {
+        // Folders first (newest first), so files go back into folders that are where they were.
+        for(const f of [...movedFolders].reverse()) await cms.api("/folders", { method: "PATCH", json: { from: f.to, to: f.from } });
+        for(const f of movedFiles) await cms.api(`/assets/${f.id}`, { method: "PATCH", json: { folder: f.from } });
+      }
+    });
+    const what = moved === 1 ? quote(movedFiles[0]?.name ?? nameOf(movedFolders[0]!.from)) : `${moved} items`;
+    const where = target ? nameOf(target) : "All files";
+    if(errors.length) notify(`Moved ${what} to ${where}; ${errors.length} couldn't move: ${errors[0]}`, { type: "error", undo: undoMove });
+    else notify(`Moved ${what} to ${where}`, { type: "success", undo: undoMove });
+  }
+
+  /** Files first, then folders deepest first, so a folder emptied by the same action can go too. */
+  async function bulkDelete(bulk: Bulk) {
+    let deleted = 0;
+    let inUse = 0;
+    let notEmpty = 0;
+    let failed = 0;
+    for(const file of bulk.files) {
+      try {
+        await cms.api(`/assets/${file.id}`, { method: "DELETE" });
+        deleted++;
+      } catch (error) {
+        if(error instanceof ApiError && error.status === 409) inUse++;
+        else failed++;
+      }
+    }
+    for(const path of [...bulk.folders].sort((a, b) => b.split("/").length - a.split("/").length)) {
+      try {
+        await cms.api(`/folders?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+        deleted++;
+      } catch (error) {
+        if(error instanceof ApiError && error.status === 409) notEmpty++;
+        else failed++;
+      }
+    }
+    library.refresh();
+    clearSelection();
+    const gone = new Set(bulk.files.map(f => f.id));
+    if(selected && gone.has(selected)) go({ file: null });
+    const removedFolder = bulk.folders.find(path => isInside(folder, path));
+    if(removedFolder && notEmpty === 0) go({ folder: parentOf(removedFolder), file: null });
+    const kept = [
+      inUse && `${inUse} ${inUse === 1 ? "file" : "files"} used by documents`,
+      notEmpty && `${notEmpty} non-empty ${notEmpty === 1 ? "folder" : "folders"}`
+    ].filter(Boolean);
+    const summary = `Deleted ${deleted} ${deleted === 1 ? "item" : "items"}${kept.length ? `, kept ${kept.join(" and ")}` : ""}${failed ? ` (${failed} failed)` : ""}`;
+    notify(summary, { type: failed ? "error" : kept.length ? "info" : "success" });
+  }
+
+  // ⌘A selects what's visible, Escape clears, Delete asks to delete the selection.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if(dialog || editing || target?.closest("input, textarea, [contenteditable], [role=dialog], [role=menu]")) return;
+      if((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void undo();
+      } else if((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        const next = new Map<string, Item>();
+        for(const key of visibleKeys()) {
+          const found = registry.current.get(key);
+          if(found) next.set(key, found);
+        }
+        setPicked(next);
+        setMulti(next.size > 0);
+      } else if(event.key === "Escape" && multi) {
+        clearSelection();
+      } else if((event.key === "Delete" || event.key === "Backspace") && multi && picked.size > 0 && library.canDelete) {
+        event.preventDefault();
+        setDialog({ kind: "delete", bulk: toBulk(picked.values()) });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
   function go(next: { folder?: string | null, file?: string | null }) {
     const url = new URLSearchParams();
     const nextFolder = next.folder === undefined ? folder : next.folder;
@@ -196,9 +551,34 @@ export function MediaPage() {
   }
 
   async function uploadInto(target: string | null, files: FileList | File[]) {
-    let last: Asset | null = null;
-    for(const file of Array.from(files)) last = await upload(file, { folder: target ?? undefined }) ?? last;
-    if(last) go({ folder: target, file: last.id });
+    const uploaded: Asset[] = [];
+    for(const file of Array.from(files)) {
+      const asset = await upload(file, { folder: target ?? undefined });
+      if(asset) uploaded.push(asset);
+    }
+    const last = uploaded.at(-1);
+    if(!last) return;
+    go({ folder: target, file: last.id });
+    const undoUpload = record({
+      label: uploaded.length === 1 ? "upload" : "uploads",
+      async undo() {
+        for(const asset of uploaded) await cms.api(`/assets/${asset.id}`, { method: "DELETE" });
+        go({ file: null });
+      }
+    });
+    notify(`Uploaded ${uploaded.length === 1 ? quote(last.filename) : `${uploaded.length} files`} to ${target ? nameOf(target) : "All files"}`, { type: "success", undo: undoUpload });
+  }
+
+  async function renameFile(asset: Asset, filename: string) {
+    const renamed = await library.renameAsset(asset.id, filename);
+    if(!renamed) return;
+    const undoRename = record({
+      label: "rename",
+      undo: async () => {
+        await cms.api(`/assets/${asset.id}`, { method: "PATCH", json: { filename: asset.filename } });
+      }
+    });
+    notify(`Renamed to ${quote(renamed.filename)}`, { type: "success", undo: undoRename });
   }
 
   /** Drops onto a folder (or the root, null): desktop files upload into it, files and folders move into it. */
@@ -206,15 +586,16 @@ export function MediaPage() {
     event.preventDefault();
     event.stopPropagation();
     setDragging(false);
+    const items = event.dataTransfer.getData(ITEMS_TYPE);
     const assetId = event.dataTransfer.getData(ASSET_TYPE);
     const folderPath = event.dataTransfer.getData(FOLDER_TYPE);
-    if(assetId) {
-      await library.moveAsset(assetId, target);
-    } else if(folderPath) {
-      if(target !== null && isInside(target, folderPath)) return;
-      if(parentOf(folderPath) === target) return;
-      const moved = await library.moveFolder(folderPath, join(target, nameOf(folderPath)));
-      if(moved && isInside(folder, folderPath)) go({ folder: moved.path + (folder!.slice(folderPath.length)) });
+    if(items) {
+      await bulkMove(JSON.parse(items) as Bulk, target);
+    } else if(assetId || folderPath) {
+      // From an older drag source: look up where the file was so the move can be undone.
+      const known = assetId ? registry.current.get(`f:${assetId}`) : undefined;
+      const file = known?.kind === "file" ? known.asset : assetId ? await cms.assets.get(assetId) : null;
+      await bulkMove({ files: file ? [{ id: file.id, folder: file.folder, size: file.size, name: file.filename }] : [], folders: folderPath ? [folderPath] : [] }, target);
     } else if(event.dataTransfer.files.length && library.canWrite) {
       await uploadInto(target, event.dataTransfer.files);
     }
@@ -228,7 +609,7 @@ export function MediaPage() {
     },
     newFolder: parent => setDialog({ kind: "new-folder", parent }),
     rename: path => setDialog({ kind: "rename-folder", path }),
-    move: path => setDialog({ kind: "move-folder", path }),
+    move: path => setDialog({ kind: "move", bulk: { files: [], folders: [path] } }),
     async remove(path) {
       if(await library.deleteFolder(path) && isInside(folder, path)) go({ folder: parentOf(path) });
     },
@@ -271,6 +652,14 @@ export function MediaPage() {
             />
             {library.canWrite && (
               <>
+                <Tooltip>
+                  <TooltipTrigger render={
+                    <Button variant="ghost" size="icon" aria-label={history.length ? `Undo ${history.at(-1)!.label}` : "Nothing to undo"} disabled={history.length === 0} onClick={() => void undo()}>
+                      <Undo2Icon />
+                    </Button>
+                  } />
+                  <TooltipContent>{history.length ? <>Undo {history.at(-1)!.label} <Kbd>⌘Z</Kbd></> : "Nothing to undo"}</TooltipContent>
+                </Tooltip>
                 <Button variant="outline" onClick={() => setDialog({ kind: "new-folder", parent: folder })}><FolderPlusIcon /> New folder</Button>
                 <input ref={fileInput} type="file" multiple hidden onChange={e => {
                   if(e.target.files) void uploadInto(folder, e.target.files);
@@ -292,31 +681,44 @@ export function MediaPage() {
         <Breadcrumb folder={folder} onOpen={path => go({ folder: path, file: null })} onDrop={dropInto} />
       </header>
 
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-        <div className={cn("min-w-0 flex-1 rounded-[20px] transition-shadow", dragging && "shadow-[0_0_0_2px_var(--brand)]")}>
-          {searching ? (
-            <SearchResults loading={results.isLoading} assets={results.data?.assets} selected={selected} onSelect={id => select(id)} query={query} />
-          ) : view === "tree" ? (
-            <TreeView library={library} folder={folder} selected={selected} onSelect={(id, inFolder) => go({ folder: inFolder, file: id })} actions={actions} />
-          ) : (
-            <GridView library={library} folder={folder} selected={selected} onSelect={id => select(id)} actions={actions} />
+      <SelectionContext.Provider value={selection}>
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+          <div ref={browser} className={cn("relative min-w-0 flex-1 rounded-[20px] transition-shadow", dragging && "shadow-[0_0_0_2px_var(--brand)]")}>
+            {searching ? (
+              <SearchResults loading={results.isLoading} assets={results.data?.assets} selected={selected} onSelect={id => select(id)} query={query} />
+            ) : view === "tree" ? (
+              <TreeView library={library} folder={folder} selected={selected} onSelect={(id, inFolder) => go({ folder: inFolder, file: id })} actions={actions} />
+            ) : (
+              <GridView library={library} folder={folder} selected={selected} onSelect={id => select(id)} actions={actions} />
+            )}
+            {library.canWrite && <p className="mt-3 text-xs text-muted-foreground">Drop files anywhere to upload them{folder ? ` into ${nameOf(folder)}` : ""}. Drag files and folders onto a folder to move them. ⌘-click or Shift-click to select several.</p>}
+            {multi && picked.size > 0 && (
+              <SelectionBar
+                bulk={toBulk(picked.values())}
+                canWrite={library.canWrite}
+                canDelete={library.canDelete}
+                onMove={() => setDialog({ kind: "move", bulk: toBulk(picked.values()) })}
+                onDelete={() => setDialog({ kind: "delete", bulk: toBulk(picked.values()) })}
+                onClear={clearSelection}
+              />
+            )}
+          </div>
+          {paneOpen && (
+            <aside className="w-full shrink-0 lg:sticky lg:top-16 lg:w-80">
+              {multi && picked.size > 0 ? <SelectionSummary items={[...picked.values()]} /> : <PreviewPane
+                id={selected}
+                folder={folder}
+                library={library}
+                onMove={asset => setDialog({ kind: "move", bulk: toBulk([{ kind: "file", asset }]) })}
+                onEdit={asset => setEditing(asset)}
+                onRename={(asset, filename) => renameFile(asset, filename)}
+                onDeleted={() => go({ file: null })}
+                onOpenFolder={path => go({ folder: path })}
+              />}
+            </aside>
           )}
-          {library.canWrite && <p className="mt-3 text-xs text-muted-foreground">Drop files anywhere to upload them{folder ? ` into ${nameOf(folder)}` : ""}. Drag files and folders onto a folder to move them.</p>}
         </div>
-        {paneOpen && (
-          <aside className="w-full shrink-0 lg:sticky lg:top-16 lg:w-80">
-            <PreviewPane
-              id={selected}
-              folder={folder}
-              library={library}
-              onMove={asset => setDialog({ kind: "move-asset", asset })}
-              onEdit={asset => setEditing(asset)}
-              onDeleted={() => go({ file: null })}
-              onOpenFolder={path => go({ folder: path })}
-            />
-          </aside>
-        )}
-      </div>
+      </SelectionContext.Provider>
 
       <FolderNameDialog
         open={dialog?.kind === "new-folder" || dialog?.kind === "rename-folder"}
@@ -328,10 +730,30 @@ export function MediaPage() {
         onSubmit={async name => {
           if(dialog?.kind === "new-folder") {
             const created = await library.createFolder(join(dialog.parent, name));
-            if(created) go({ folder: created.path, file: null });
+            if(created) {
+              go({ folder: created.path, file: null });
+              const undoCreate = record({
+                label: "new folder",
+                async undo() {
+                  await cms.api(`/folders?path=${encodeURIComponent(created.path)}`, { method: "DELETE" });
+                  go({ folder: parentOf(created.path) });
+                }
+              });
+              notify(`Created ${quote(nameOf(created.path))}`, { type: "success", undo: undoCreate });
+            }
           } else if(dialog?.kind === "rename-folder") {
-            const moved = await library.moveFolder(dialog.path, join(parentOf(dialog.path), name));
-            if(moved && isInside(folder, dialog.path)) go({ folder: moved.path + folder!.slice(dialog.path.length) });
+            const from = dialog.path;
+            const moved = await library.moveFolder(from, join(parentOf(from), name));
+            if(moved) {
+              if(isInside(folder, from)) go({ folder: moved.path + folder!.slice(from.length) });
+              const undoRename = record({
+                label: "rename",
+                undo: async () => {
+                  await cms.api("/folders", { method: "PATCH", json: { from: moved.path, to: from } });
+                }
+              });
+              notify(`Renamed to ${quote(nameOf(moved.path))}`, { type: "success", undo: undoRename });
+            }
           }
           setDialog(null);
         }}
@@ -339,15 +761,19 @@ export function MediaPage() {
       {editing && <TextEditorDialog asset={editing} open onOpenChange={open => !open && setEditing(null)} />}
       <MoveDialog
         library={library}
-        subject={dialog?.kind === "move-folder" ? { folder: dialog.path } : dialog?.kind === "move-asset" ? { asset: dialog.asset } : null}
+        bulk={dialog?.kind === "move" ? dialog.bulk : null}
         onOpenChange={open => !open && setDialog(null)}
         onMove={async target => {
-          if(dialog?.kind === "move-asset") {
-            await library.moveAsset(dialog.asset.id, target);
-          } else if(dialog?.kind === "move-folder") {
-            const moved = await library.moveFolder(dialog.path, join(target, nameOf(dialog.path)));
-            if(moved && isInside(folder, dialog.path)) go({ folder: moved.path + folder!.slice(dialog.path.length) });
-          }
+          if(dialog?.kind === "move") await bulkMove(dialog.bulk, target);
+          setDialog(null);
+        }}
+      />
+      <Toaster id={TOASTER} position="bottom-center" />
+      <DeleteDialog
+        bulk={dialog?.kind === "delete" ? dialog.bulk : null}
+        onOpenChange={open => !open && setDialog(null)}
+        onDelete={async () => {
+          if(dialog?.kind === "delete") await bulkDelete(dialog.bulk);
           setDialog(null);
         }}
       />
@@ -385,27 +811,6 @@ function useDropTarget(target: string | null, onDrop: FolderActions["dropInto"],
         setOver(false);
         void onDrop(target, event);
       }
-    }
-  };
-}
-
-function dragAsset(asset: Asset) {
-  return {
-    draggable: true,
-    onDragStart(event: DragEvent) {
-      event.dataTransfer.setData(ASSET_TYPE, asset.id);
-      event.dataTransfer.effectAllowed = "move";
-    }
-  };
-}
-
-function dragFolder(path: string) {
-  return {
-    draggable: true,
-    onDragStart(event: DragEvent) {
-      event.stopPropagation();
-      event.dataTransfer.setData(FOLDER_TYPE, path);
-      event.dataTransfer.effectAllowed = "move";
     }
   };
 }
@@ -459,7 +864,15 @@ function Crumb({ crumb, current, onOpen, onDrop, canDrop }: {
 /**
  * A file tree (after shadcn's AI Elements one) on the editor's material: a
  * 16px card with 6px padding around 10px rows, 16px of indent per level.
+ * A 22px gutter on the left holds the selection checkboxes, so they line up
+ * whatever the depth.
  */
+const GUTTER = 22;
+
+function indent(depth: number, file = false): number {
+  // Files sit 20px further in than folders: past the chevron, so their icon lines up under the folder's name.
+  return 6 + GUTTER + depth * 16 + (file ? 20 : 0);
+}
 function TreeView({ library, folder, selected, onSelect, actions }: {
   library: Library,
   folder: string | null,
@@ -507,7 +920,7 @@ function TreeView({ library, folder, selected, onSelect, actions }: {
         <TreeFolder key={f.path} path={f.path} depth={0} library={library} expanded={expanded} toggle={toggle} current={folder} selected={selected} onSelect={onSelect} actions={actions} />
       ))}
       {files.map(asset => (
-        <TreeFile key={asset.id} asset={asset} depth={0} selected={selected === asset.id} onSelect={() => onSelect(asset.id, null)} onOpen={() => actions.openFile(asset)} draggable={library.canWrite} />
+        <TreeFile key={asset.id} asset={asset} depth={0} selected={selected === asset.id} onSelect={() => onSelect(asset.id, null)} onOpen={() => actions.openFile(asset)} />
       ))}
     </div>
   );
@@ -528,26 +941,30 @@ function TreeFolder({ path, depth, library, expanded, toggle, current, selected,
   const files = useFolderFiles(path, open);
   const drop = useDropTarget(path, actions.dropInto, library.canWrite);
   const subfolders = library.childrenOf(path);
+  const item: Item = { kind: "folder", path };
+  const { key, picked, selection } = usePick(item);
   return (
-    <div role="treeitem" aria-expanded={open} aria-selected={current === path}>
+    <div role="treeitem" aria-expanded={open} aria-selected={picked || current === path}>
       <div
+        data-pick={key}
         {...drop.props}
-        {...(library.canWrite ? dragFolder(path) : {})}
+        {...selection.drag(item)}
         className={cn(
-          "group/row flex h-8 items-center gap-1.5 rounded-[10px] pr-1 text-sm transition-colors",
-          current === path ? "bg-foreground/[0.06] font-medium" : "hover:bg-foreground/[0.04]",
+          "group/row group/pick relative flex h-8 items-center gap-1.5 rounded-[10px] pr-1 text-sm transition-[background-color,box-shadow] duration-150",
+          picked ? "raised font-medium" : current === path ? "bg-foreground/[0.06] font-medium" : "hover:bg-foreground/[0.04]",
           drop.over && "bg-foreground/[0.1] shadow-[inset_0_0_0_1px_var(--brand)]"
         )}
-        style={{ paddingLeft: 6 + depth * 16 }}
+        style={{ paddingLeft: indent(depth) }}
       >
+        <PickBox item={item} className="absolute top-1/2 left-2 -translate-y-1/2" />
         <button
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch text-left outline-none focus-visible:underline"
-          onClick={() => {
+          onClick={event => selection.click(item, event, () => {
             toggle(path);
             // Closing a folder steps out of it, so uploads and the preview don't stay in a folder you can't see.
             actions.open(open ? parentOf(path) : path);
-          }}
+          })}
         >
           <ChevronRightIcon className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform duration-150", open && "rotate-90")} />
           {open ? <FolderOpenIcon className="size-4 shrink-0 text-muted-foreground" /> : <FolderIcon className="size-4 shrink-0 text-muted-foreground" />}
@@ -561,12 +978,12 @@ function TreeFolder({ path, depth, library, expanded, toggle, current, selected,
           {subfolders.map(f => (
             <TreeFolder key={f.path} path={f.path} depth={depth + 1} library={library} expanded={expanded} toggle={toggle} current={current} selected={selected} onSelect={onSelect} actions={actions} />
           ))}
-          {files.isLoading && <div className="h-8 px-2 py-1.5" style={{ paddingLeft: 6 + (depth + 1) * 16 + 20 }}><Spinner className="size-3.5" /></div>}
+          {files.isLoading && <div className="h-8 px-2 py-1.5" style={{ paddingLeft: indent(depth + 1, true) }}><Spinner className="size-3.5" /></div>}
           {files.data?.assets.map(asset => (
-            <TreeFile key={asset.id} asset={asset} depth={depth + 1} selected={selected === asset.id} onSelect={() => onSelect(asset.id, path)} onOpen={() => actions.openFile(asset)} draggable={library.canWrite} />
+            <TreeFile key={asset.id} asset={asset} depth={depth + 1} selected={selected === asset.id} onSelect={() => onSelect(asset.id, path)} onOpen={() => actions.openFile(asset)} />
           ))}
           {!files.isLoading && subfolders.length === 0 && files.data?.assets.length === 0 && (
-            <p className="h-8 py-1.5 text-xs text-muted-foreground" style={{ paddingLeft: 6 + (depth + 1) * 16 + 20 }}>Empty</p>
+            <p className="h-8 py-1.5 text-xs text-muted-foreground" style={{ paddingLeft: indent(depth + 1, true) }}>Empty</p>
           )}
         </div>
       )}
@@ -574,26 +991,34 @@ function TreeFolder({ path, depth, library, expanded, toggle, current, selected,
   );
 }
 
-function TreeFile({ asset, depth, selected, onSelect, onOpen, draggable }: { asset: Asset, depth: number, selected: boolean, onSelect(): void, onOpen(): void, draggable: boolean }) {
+function TreeFile({ asset, depth, selected, onSelect, onOpen }: { asset: Asset, depth: number, selected: boolean, onSelect(): void, onOpen(): void }) {
+  const item: Item = { kind: "file", asset };
+  const { key, picked, selection } = usePick(item);
+  const highlighted = picked || (selected && !selection.multi);
   return (
-    <button
-      type="button"
+    <div
       role="treeitem"
-      aria-selected={selected}
-      onClick={onSelect}
-      onDoubleClick={onOpen}
-      {...(draggable ? dragAsset(asset) : {})}
+      aria-selected={highlighted}
+      data-pick={key}
+      {...selection.drag(item)}
       className={cn(
-        "flex h-8 items-center gap-2 rounded-[10px] pr-2 text-left text-sm transition-[background-color,box-shadow] duration-150",
-        selected ? "raised font-medium" : "hover:bg-foreground/[0.04]"
+        "group/pick relative flex h-8 items-center rounded-[10px] text-sm transition-[background-color,box-shadow] duration-150",
+        highlighted ? "raised font-medium" : "hover:bg-foreground/[0.04]"
       )}
-      // 20px more than a folder: past its chevron, so the icon lines up under the folder's name.
-      style={{ paddingLeft: 6 + depth * 16 + 20 }}
     >
-      <FileGlyph asset={asset} className="size-5 rounded-[4px]" />
-      <span className="min-w-0 flex-1 truncate">{asset.filename}</span>
-      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatBytes(asset.size)}</span>
-    </button>
+      <PickBox item={item} className="absolute top-1/2 left-2 -translate-y-1/2" />
+      <button
+        type="button"
+        onClick={event => selection.click(item, event, onSelect)}
+        onDoubleClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-2 self-stretch pr-2 text-left outline-none focus-visible:underline"
+        style={{ paddingLeft: indent(depth, true) }}
+      >
+        <FileGlyph asset={asset} className="size-5 rounded-[4px]" />
+        <span className="min-w-0 flex-1 truncate">{asset.filename}</span>
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{formatBytes(asset.size)}</span>
+      </button>
+    </div>
   );
 }
 
@@ -663,14 +1088,32 @@ function GridView({ library, folder, selected, onSelect, actions }: {
       ) : files.data?.assets.length ? (
         <div className="stagger grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
           {files.data.assets.map((asset, i) => (
-            <div key={asset.id} {...(library.canWrite ? dragAsset(asset) : {})} onDoubleClick={() => actions.openFile(asset)} style={staggerIndex(i)} className="grid">
-              <AssetThumb asset={asset} selected={selected === asset.id} onClick={() => onSelect(asset.id)} />
-            </div>
+            <GridFile key={asset.id} asset={asset} index={i} selected={selected === asset.id} onSelect={() => onSelect(asset.id)} onOpen={() => actions.openFile(asset)} />
           ))}
         </div>
       ) : subfolders.length === 0 ? <EmptyLibrary folder={folder} /> : (
         <p className="px-1 text-sm text-muted-foreground">No files directly in this folder.</p>
       )}
+    </div>
+  );
+}
+
+function GridFile({ asset, index, selected, onSelect, onOpen, caption }: {
+  asset: Asset,
+  index: number,
+  selected: boolean,
+  onSelect(): void,
+  onOpen?(): void,
+  caption?: string
+}) {
+  const item: Item = { kind: "file", asset };
+  const { key, picked, selection } = usePick(item);
+  return (
+    <div data-pick={key} {...selection.drag(item)} onDoubleClick={onOpen} style={staggerIndex(index)} className="group/pick relative grid gap-1">
+      <AssetThumb asset={asset} selected={picked || (selected && !selection.multi)} onClick={event => selection.click(item, event, onSelect)} />
+      {/* 8px into the 14px thumbnail corner: a 6px checkbox corner. */}
+      <PickBox item={item} className="absolute top-2 left-2 z-10 rounded-[6px] shadow-[0_1px_3px_rgb(0_0_0/0.3)]" />
+      {caption && <span className="truncate px-1 text-[11px] text-muted-foreground">{caption}</span>}
     </div>
   );
 }
@@ -700,17 +1143,22 @@ function ParentRow({ folder, library, actions }: { folder: string, library: Libr
 function FolderRow({ path, index, library, actions }: { path: string, index: number, library: Library, actions: FolderActions }) {
   const drop = useDropTarget(path, actions.dropInto, library.canWrite);
   const count = library.itemCount(path);
+  const item: Item = { kind: "folder", path };
+  const { key, picked, selection } = usePick(item);
   return (
     <div
+      data-pick={key}
       {...drop.props}
-      {...(library.canWrite ? dragFolder(path) : {})}
+      {...selection.drag(item)}
       style={staggerIndex(index)}
       className={cn(
-        "group/row flex h-11 items-center gap-1 rounded-[12px] pr-1.5 transition-[background-color,scale] duration-150 hover:bg-foreground/[0.04] active:scale-[0.995]",
+        "group/pick flex h-11 items-center gap-1 rounded-[12px] pr-1.5 pl-2 transition-[background-color,box-shadow,scale] duration-150 active:scale-[0.995]",
+        picked ? "raised" : "hover:bg-foreground/[0.04]",
         drop.over && "bg-foreground/[0.08] shadow-[inset_0_0_0_1px_var(--brand)]"
       )}
     >
-      <button type="button" onClick={() => actions.open(path)} className="flex min-w-0 flex-1 items-center gap-3 self-stretch pl-3 text-left text-sm outline-none focus-visible:underline">
+      <PickBox item={item} />
+      <button type="button" onClick={event => selection.click(item, event, () => actions.open(path))} className="flex min-w-0 flex-1 items-center gap-3 self-stretch pl-2.5 text-left text-sm outline-none focus-visible:underline">
         <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
         <span className="truncate font-medium">{nameOf(path)}</span>
         <span className="ml-auto pr-1 text-xs text-muted-foreground tabular-nums">{count === 1 ? "1 item" : `${count} items`}</span>
@@ -727,10 +1175,7 @@ function SearchResults({ loading, assets, selected, onSelect, query }: { loading
   return (
     <div className="stagger grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3">
       {assets.map((asset, i) => (
-        <div key={asset.id} style={staggerIndex(i)} className="grid gap-1">
-          <AssetThumb asset={asset} selected={selected === asset.id} onClick={() => onSelect(asset.id)} />
-          <span className="truncate px-1 text-[11px] text-muted-foreground">{asset.folder ?? "All files"}</span>
-        </div>
+        <GridFile key={asset.id} asset={asset} index={i} selected={selected === asset.id} onSelect={() => onSelect(asset.id)} caption={asset.folder ?? "All files"} />
       ))}
     </div>
   );
@@ -754,12 +1199,13 @@ function EmptyLibrary({ folder }: { folder?: string | null }) {
  * Sticky beside the browser. Radii nest: an 18px card with 8px of padding
  * around the 10px preview well.
  */
-function PreviewPane({ id, folder, library, onMove, onEdit, onDeleted, onOpenFolder }: {
+function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted, onOpenFolder }: {
   id: string | null,
   folder: string | null,
   library: Library,
   onMove(asset: Asset): void,
   onEdit(asset: Asset): void,
+  onRename(asset: Asset, filename: string): Promise<void>,
   onDeleted(): void,
   onOpenFolder(path: string | null): void
 }) {
@@ -801,7 +1247,7 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onDeleted, onOpenFol
       setFilename(asset!.filename);
       return;
     }
-    await library.renameAsset(asset!.id, next);
+    await onRename(asset!, next);
   }
 
   return (
@@ -930,31 +1376,33 @@ function FolderNameDialog({ open, title, description, initial, submitLabel, onOp
 }
 
 /** Picks a destination folder. A folder can't go into itself or its own subfolders. */
-function MoveDialog({ library, subject, onOpenChange, onMove }: {
+function MoveDialog({ library, bulk, onOpenChange, onMove }: {
   library: Library,
-  subject: { folder: string } | { asset: Asset } | null,
+  bulk: Bulk | null,
   onOpenChange(open: boolean): void,
   onMove(target: string | null): Promise<void>
 }) {
   const [target, setTarget] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const current = subject ? ("folder" in subject ? parentOf(subject.folder) : subject.asset.folder) : null;
+  // Where everything currently is, if that's one place.
+  const places = bulk ? new Set([...bulk.files.map(f => f.folder), ...bulk.folders.map(parentOf)]) : new Set<string | null>();
+  const current = places.size === 1 ? [...places][0]! : undefined;
   useEffect(() => {
-    if(subject) setTarget(current);
-  }, [subject]);
-  const name = subject ? ("folder" in subject ? nameOf(subject.folder) : subject.asset.filename) : "";
+    if(bulk) setTarget(current ?? null);
+  }, [bulk]);
+  const name = bulk ? bulkLabel(bulk) : "";
   const options: Array<{ path: string | null, depth: number }> = [
     { path: null, depth: 0 },
     ...library.folders
-      .filter(f => !(subject && "folder" in subject && isInside(f.path, subject.folder)))
+      .filter(f => !bulk?.folders.some(moving => isInside(f.path, moving)))
       .map(f => ({ path: f.path, depth: f.path.split("/").length }))
   ];
   return (
-    <Dialog open={subject !== null} onOpenChange={onOpenChange}>
+    <Dialog open={bulk !== null} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="truncate pr-6">Move “{name}”</DialogTitle>
-          <DialogDescription>Choose where it should live.</DialogDescription>
+          <DialogDescription>{bulk && bulk.files.length + bulk.folders.length > 1 ? "Choose where they should live." : "Choose where it should live."}</DialogDescription>
         </DialogHeader>
         {/* 4px of well around 10px rows: a 14px well. */}
         <div role="listbox" aria-label="Destination" className="flex max-h-72 flex-col gap-px overflow-y-auto rounded-[14px] well p-1">
@@ -984,6 +1432,104 @@ function MoveDialog({ library, subject, onOpenChange, onMove }: {
             await onMove(target);
             setBusy(false);
           }}>{busy && <Spinner />} Move here</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- Bulk actions --------------------------------------------------------------------------
+
+function describeBulk(bulk: Bulk): string {
+  const parts: string[] = [];
+  if(bulk.files.length) parts.push(`${bulk.files.length} ${bulk.files.length === 1 ? "file" : "files"}`);
+  if(bulk.folders.length) parts.push(`${bulk.folders.length} ${bulk.folders.length === 1 ? "folder" : "folders"}`);
+  return parts.join(" · ");
+}
+
+/**
+ * Floats at the bottom of the browser while several things are selected.
+ * Radii nest: 6px of bar padding around 10px buttons makes a 16px bar.
+ */
+function SelectionBar({ bulk, canWrite, canDelete, onMove, onDelete, onClear }: {
+  bulk: Bulk,
+  canWrite: boolean,
+  canDelete: boolean,
+  onMove(): void,
+  onDelete(): void,
+  onClear(): void
+}) {
+  const count = bulk.files.length + bulk.folders.length;
+  return (
+    <div role="toolbar" aria-label="Selection" className="sticky bottom-4 z-30 mx-auto mt-4 flex w-fit items-center gap-1 rounded-[16px] floating p-1.5 duration-150 animate-in fade-in slide-in-from-bottom-2">
+      <div className="px-2.5 leading-tight">
+        <p className="text-sm font-medium tabular-nums">{count} selected</p>
+        <p className="text-[11px] text-muted-foreground">{describeBulk(bulk)}</p>
+      </div>
+      {canWrite && <Button variant="ghost" onClick={onMove}><FolderInputIcon /> Move…</Button>}
+      {canDelete && <Button variant="ghost" className="text-destructive" onClick={onDelete}><Trash2Icon /> Delete</Button>}
+      <Tooltip>
+        <TooltipTrigger render={<Button variant="ghost" size="icon" aria-label="Clear selection" onClick={onClear}><XIcon /></Button>} />
+        <TooltipContent>Clear selection <Kbd>Esc</Kbd></TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+/** Takes the preview pane's place while several things are selected. */
+function SelectionSummary({ items }: { items: Item[] }) {
+  const bulk = toBulk(items);
+  const size = bulk.files.reduce((sum, f) => sum + f.size, 0);
+  const images = items.filter((i): i is Extract<Item, { kind: "file" }> => i.kind === "file" && i.asset.mime.startsWith("image/")).slice(0, 4);
+  const shown = items.slice(0, 8);
+  return (
+    <div className="flex flex-col gap-4 rounded-[18px] elevated p-2 pb-4">
+      {/* 4px of well around 6px tiles: a 10px well, 8px inside the 18px card. */}
+      <div className="grid aspect-[4/3] grid-cols-2 gap-1 overflow-hidden rounded-[10px] well p-1">
+        {images.length > 0 ? images.map(i => (
+          <img key={i.asset.id} src={i.asset.url} alt="" className={cn("size-full rounded-[6px] object-cover", images.length === 1 && "col-span-2 row-span-2", images.length === 3 && i === images[0] && "row-span-2")} />
+        )) : (
+          <div className="col-span-2 row-span-2 flex items-center justify-center text-muted-foreground"><FolderOpenIcon className="size-8" /></div>
+        )}
+      </div>
+      <div className="flex flex-col gap-3 px-2">
+        <div className="space-y-0.5">
+          <p className="font-medium tabular-nums">{items.length} selected</p>
+          <p className="text-xs text-muted-foreground">{describeBulk(bulk)}{bulk.files.length ? ` · ${formatBytes(size)}` : ""}</p>
+        </div>
+        <ul className="grid gap-0.5 text-sm">
+          {shown.map(item => (
+            <li key={itemKey(item)} className="flex min-w-0 items-center gap-2 px-1 py-0.5">
+              {item.kind === "file" ? <FileGlyph asset={item.asset} className="size-4 rounded-[3px]" /> : <FolderIcon className="size-4 shrink-0 text-muted-foreground" />}
+              <span className="truncate">{item.kind === "file" ? item.asset.filename : nameOf(item.path)}</span>
+            </li>
+          ))}
+          {items.length > shown.length && <li className="px-1 text-xs text-muted-foreground">and {items.length - shown.length} more</li>}
+        </ul>
+        <p className="text-xs text-muted-foreground">Drag any of them to move them all. <Kbd>Esc</Kbd> clears.</p>
+      </div>
+    </div>
+  );
+}
+
+function DeleteDialog({ bulk, onOpenChange, onDelete }: { bulk: Bulk | null, onOpenChange(open: boolean): void, onDelete(): Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Dialog open={bulk !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-6">Delete {bulk ? bulkLabel(bulk) : ""}?</DialogTitle>
+          <DialogDescription>
+            {bulk && describeBulk(bulk)}. This can't be undone. Files used by documents, and folders that still have other files in them, are kept.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button variant="destructive" autoFocus disabled={busy} onClick={async () => {
+            setBusy(true);
+            await onDelete();
+            setBusy(false);
+          }}>{busy && <Spinner />} Delete</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

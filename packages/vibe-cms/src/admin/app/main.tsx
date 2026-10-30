@@ -335,6 +335,12 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           )}
         </SidebarContent>
         <SidebarFooter>
+          {/* In the sidebar rather than floating over the page, where it covered bottom-anchored controls. */}
+          {info.dev && !embedded && (
+            <p className="px-2 text-[11px] leading-snug text-muted-foreground group-data-[collapsible=icon]:hidden" title="Signed in without an identity provider">
+              Development mode: signed in without an identity provider
+            </p>
+          )}
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
@@ -379,29 +385,25 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:rounded-[20px] md:peer-data-[variant=inset]:shadow-(--shadow-card)">
+      {/* Flush with the window's right edge (no margin, square corners there) so the scrollbar runs along it instead of over a rounded corner. */}
+      <SidebarInset className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:mr-0 md:peer-data-[variant=inset]:rounded-l-[20px] md:peer-data-[variant=inset]:rounded-r-none md:peer-data-[variant=inset]:shadow-(--shadow-card)">
         <div className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
           <SidebarTrigger />
         </div>
-        {/* 10px in from the panel's 20px corner (its margin is 8px), so the 10px button corner sits concentric. */}
-        <div className="pointer-events-none fixed top-[18px] right-[18px] z-30 hidden md:block">
-          {config.locales!.length > 1 && (
-            <div className="pointer-events-auto">
+        {/* Sticky inside the scrolling panel rather than fixed to the window, so it stays clear of the scrollbar, whatever its width. */}
+        {config.locales!.length > 1 && (
+          <div className="pointer-events-none sticky top-0 z-30 hidden h-0 justify-end md:flex">
+            <div className="pointer-events-auto mt-2.5 mr-2.5">
               <LocaleMenu locale={locale} setLocale={setLocale} />
             </div>
-          )}
-        </div>
+          </div>
+        )}
         <div className="min-h-full" style={{ viewTransitionName: "page" }}>
           <ErrorBoundary resetKey={path}>{page}</ErrorBoundary>
         </div>
       </SidebarInset>
       <ErrorBoundary resetKey={paletteOpen}><Palette open={paletteOpen} onOpenChange={setPaletteOpen} /></ErrorBoundary>
       <Toaster position="bottom-right" />
-      {info.dev && !embedded && (
-        <div className="pointer-events-none fixed bottom-3 left-1/2 z-40 -translate-x-1/2 rounded-full border bg-background/90 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
-          Development mode: signed in without an identity provider
-        </div>
-      )}
     </SidebarProvider>
   );
 }

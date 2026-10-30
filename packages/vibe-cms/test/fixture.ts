@@ -31,7 +31,7 @@ export const config = defineConfig({
     }),
     post: v.object({
       title: v.text({ min: 1, max: 120 }),
-      slug: v.text({ indexed: true, format: "slug" }),
+      slug: v.text({ indexed: true, format: "slug", unique: true }),
       publishedAt: v.optional(v.date({ indexed: true })),
       tags: v.array(v.text()),
       layout: v.enum(["default", "wide"]),

@@ -3,9 +3,11 @@
 
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
+import { useIsDark } from "../../app/theme"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const theme = "system"
+  // The editor's own light/dark choice, which can differ from the system's.
+  const theme = useIsDark() ? "dark" : "light"
 
   return (
     <Sonner
@@ -33,12 +35,14 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-bg": "var(--popover)",
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
+          "--border-radius": "14px",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
+          // The floating material, like menus and dialogs.
+          toast: "cn-toast !border-0 !shadow-(--shadow-float)",
+          actionButton: "!h-7 !rounded-[8px] !bg-foreground !px-2.5 !font-medium !text-background",
         },
       }}
       {...props}

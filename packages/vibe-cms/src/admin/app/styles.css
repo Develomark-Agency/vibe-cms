@@ -60,6 +60,12 @@
  * or agency picks a colour.
  */
 :root {
+    /*
+     * Native UI (scrollbars, form controls) follows the editor's own theme. The
+     * pages' <meta name="color-scheme" content="light dark"> would otherwise
+     * let it follow the OS, giving dark scrollbars in light mode.
+     */
+    color-scheme: light;
     --background: oklch(0.974 0.005 72);
     --foreground: oklch(0.21 0.012 50);
     --card: oklch(0.992 0.003 75);
@@ -125,6 +131,7 @@
 }
 
 .dark {
+    color-scheme: dark;
     --background: oklch(0.178 0.004 35);
     --foreground: oklch(0.93 0.016 45);
     --card: oklch(0.205 0.005 35);

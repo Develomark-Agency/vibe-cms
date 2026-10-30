@@ -1,3 +1,4 @@
+import type { IconName } from "../icons.ts";
 import type { WidgetDescriptor } from "../descriptor.ts";
 
 /** Phantom carrier for a schema's stored (input) and query result (output) types. */
@@ -22,6 +23,7 @@ export interface BaseSchema<I = unknown, O = I> {
   type: string,
   label?: string,
   description?: string,
+  icon?: IconName,
   widget?: WidgetDescriptor<any, any>,
   /** Shown but not editable, e.g. a value a plugin derives on write. */
   readOnly?: boolean,
@@ -36,6 +38,8 @@ export type AnySchema = BaseSchema<any, any>;
 export interface FieldOptions<T> {
   label?: string,
   description?: string,
+  /** Shown in the editor next to the label, e.g. for a block in a page's "Add block" menu. */
+  icon?: IconName,
   widget?: WidgetDescriptor<T, any>,
   /** Shown but not editable, e.g. a value a plugin derives on write. */
   readOnly?: boolean,
@@ -46,10 +50,13 @@ export interface FieldOptions<T> {
 export interface TextOptions extends FieldOptions<string> {
   min?: number,
   max?: number,
-  format?: "email" | "url" | "slug",
+  /** `path`: a site path like `/about/team` (lowercase, no trailing slash). */
+  format?: "email" | "url" | "slug" | "path",
   pattern?: string,
   multiline?: boolean,
-  indexed?: boolean
+  indexed?: boolean,
+  /** No two documents of this type may share the value in the same locale. Top-level fields only. */
+  unique?: boolean
 }
 
 export interface TextSchema extends BaseSchema<string>, Omit<TextOptions, "widget" | "label" | "description"> {

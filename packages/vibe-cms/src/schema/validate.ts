@@ -31,7 +31,8 @@ export interface ValidationResult<T = unknown> {
 const formats: Record<string, [RegExp, string]> = {
   email: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Must be an email address"],
   url: [/^(https?:\/\/|\/)\S*$/, "Must be a URL"],
-  slug: [/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Must be lowercase letters, numbers and dashes"]
+  slug: [/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Must be lowercase letters, numbers and dashes"],
+  path: [/^\/(?:[a-z0-9]+(?:[-_.][a-z0-9]+)*(?:\/[a-z0-9]+(?:[-_.][a-z0-9]+)*)*)?$/, "Must be a path like /about/team: lowercase, starting with / and without a trailing /"]
 };
 
 /**

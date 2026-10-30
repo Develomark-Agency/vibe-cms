@@ -351,3 +351,24 @@ describe("session probe", () => {
     expect((await t.api("/api/session")).status).toBe(401);
   });
 });
+
+describe("unique fields and paths", () => {
+  test("path format", async () => {
+    const { validate } = await import("../src/schema/validate.ts");
+    const v = (await import("../src/schema/index.ts")).default;
+    expect(validate(v.text({ format: "path" }), "/about/team").issues).toEqual([]);
+    expect(validate(v.text({ format: "path" }), "/").issues).toEqual([]);
+    for(const bad of ["about", "/About", "/about/", "/a b", "//x"]) expect(validate(v.text({ format: "path" }), bad).issues).toHaveLength(1);
+  });
+
+  test("a unique field can't repeat within a type and locale", async () => {
+    await createPost({ title: "One", slug: "hello" });
+    const draft = await createPost({ title: "Two", slug: "hello" }, false);
+    expect(draft.issues).toEqual([{ path: ["slug"], message: "Another document already uses “hello”" }]);
+    const published = await t.api("/api/documents/post", { method: "POST", json: { data: { title: "Three", slug: "hello", tags: [], layout: "default" }, publish: true } });
+    expect(published.status).toBe(422);
+    // Editing the document that holds the value is fine.
+    const again = await t.api(`/api/documents/post/${draft.id}`, { method: "PUT", json: { data: { ...draft.draft, slug: "hello-two" } } });
+    expect(again.body.issues).toEqual([]);
+  });
+});

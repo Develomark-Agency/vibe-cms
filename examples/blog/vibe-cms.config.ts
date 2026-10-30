@@ -1,3 +1,4 @@
+import { pageSchema } from "@vibe-cms/blocks";
 import { richText } from "@vibe-cms/rich-text";
 import { defineConfig } from "vibe-cms";
 import { oidc } from "vibe-cms/auth";
@@ -5,6 +6,7 @@ import { image } from "vibe-cms/media";
 import v from "vibe-cms/schema";
 import { ViewsPlugin } from "./src/plugins/views/index.ts";
 import { ColorPicker } from "./src/widgets/color-picker.ts";
+import { Features, Pricing, Testimonial } from "./src/blocks/definitions.ts";
 
 export default defineConfig({
   id: "example-blog",
@@ -19,7 +21,7 @@ export default defineConfig({
   permissions: {
     roles: {
       "agency-staff": { all: true },
-      "client-editor": { post: ["read", "write"], author: ["read"], homepage: ["read", "write"], publish: false, siteSettings: true }
+      "client-editor": { post: ["read", "write"], author: ["read"], homepage: ["read", "write"], page: ["read", "write"], publish: false, siteSettings: true }
     },
     users: {
       "jane@my-agency.com": ["agency-staff"]
@@ -28,7 +30,8 @@ export default defineConfig({
   collections: {
     post: { icon: "newspaper", preview: "/posts/{slug}" },
     author: { icon: "user-round" },
-    homepage: { singleton: true, icon: "home" }
+    homepage: { singleton: true, icon: "home" },
+    page: { icon: "layout", title: "title", preview: "{path}" }
   },
   schemas: {
     post: v.object({
@@ -58,6 +61,8 @@ export default defineConfig({
     // The site's name, accent and icon are built in (the editor's Site settings); this is the site's own content.
     homepage: v.object({
       tagline: v.optional(v.text())
-    })
+    }),
+    // The built-in blocks plus the site's own; see src/pages/[...path].astro for rendering.
+    page: pageSchema({ blocks: [Testimonial, Features, Pricing] })
   }
 });

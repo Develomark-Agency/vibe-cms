@@ -1,0 +1,303 @@
+/*
+ * A neutral default look for the built-in blocks. Optional: import it, set
+ * the custom properties below to match your site, or style the `vb-` classes
+ * yourself. Selectors are single classes, so your own class rules win (when
+ * loaded after this file) while bare element rules like `a { color }` don't
+ * restyle the buttons. (A cascade layer would let those win too.)
+ */
+:root {
+  --vb-accent: #2563eb;
+  --vb-accent-text: #fff;
+  --vb-text: inherit;
+  --vb-muted: color-mix(in srgb, currentColor 62%, transparent);
+  --vb-surface: color-mix(in srgb, currentColor 5%, transparent);
+  --vb-border: color-mix(in srgb, currentColor 14%, transparent);
+  --vb-radius: 14px;
+  --vb-gap: clamp(2.5rem, 6vw, 4.5rem);
+  --vb-content: 44rem;
+  --vb-wide: 64rem;
+}
+
+.vb-block {
+  margin-block: var(--vb-gap);
+  margin-inline: auto;
+  max-width: var(--vb-content);
+  color: var(--vb-text);
+}
+
+.vb-block :where(img, video, iframe) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.vb-block figcaption {
+  margin-top: 0.6rem;
+  color: var(--vb-muted);
+  font-size: 0.875rem;
+}
+
+/* Hero */
+.vb-hero {
+  max-width: var(--vb-wide);
+  display: grid;
+  gap: 2.5rem;
+  align-items: center;
+}
+
+.vb-hero:has(.vb-hero__media) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+
+.vb-hero--center {
+  text-align: center;
+  justify-items: center;
+}
+
+.vb-hero--center .vb-buttons {
+  justify-content: center;
+}
+
+.vb-hero h1 {
+  margin: 0;
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.vb-eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--vb-accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.vb-lead {
+  margin: 1rem 0 0;
+  color: var(--vb-muted);
+  font-size: 1.15rem;
+  text-wrap: pretty;
+}
+
+.vb-hero__media img {
+  width: 100%;
+  border-radius: var(--vb-radius);
+  object-fit: cover;
+}
+
+/* Buttons */
+.vb-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+
+.vb-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0 1.15rem;
+  border-radius: 999px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 150ms ease, filter 150ms ease;
+}
+
+.vb-button:active {
+  transform: scale(0.97);
+}
+
+.vb-button--primary {
+  background: var(--vb-accent);
+  color: var(--vb-accent-text);
+}
+
+.vb-button--primary:hover {
+  filter: brightness(1.08);
+}
+
+.vb-button--secondary {
+  box-shadow: inset 0 0 0 1px var(--vb-border);
+  color: inherit;
+}
+
+.vb-button--secondary:hover {
+  background: var(--vb-surface);
+}
+
+/* Text */
+.vb-text :where(h2, h3) {
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.vb-text :where(img) {
+  border-radius: var(--vb-radius);
+}
+
+/* Image and gallery */
+.vb-image img {
+  width: 100%;
+  border-radius: var(--vb-radius);
+}
+
+.vb-image--wide {
+  max-width: var(--vb-wide);
+}
+
+.vb-image--full {
+  max-width: none;
+}
+
+.vb-image--full img {
+  border-radius: 0;
+}
+
+.vb-gallery {
+  max-width: var(--vb-wide);
+  display: grid;
+  grid-template-columns: repeat(var(--vb-columns, 3), minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.vb-gallery--2 { --vb-columns: 2; }
+.vb-gallery--4 { --vb-columns: 4; }
+
+@media (max-width: 40rem) {
+  .vb-gallery { --vb-columns: 2; }
+}
+
+.vb-gallery figure {
+  margin: 0;
+}
+
+.vb-gallery img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: calc(var(--vb-radius) * 0.7);
+}
+
+/* Call to action: the radii nest, 2rem of padding around 999px buttons inside a 1.5rem panel */
+.vb-cta {
+  padding: 2rem;
+  border-radius: calc(var(--vb-radius) + 0.5rem);
+  background: var(--vb-surface);
+  text-align: center;
+}
+
+.vb-cta h2 {
+  margin: 0;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.vb-cta p {
+  margin: 0.75rem auto 0;
+  max-width: 34rem;
+  color: var(--vb-muted);
+}
+
+.vb-cta .vb-buttons {
+  justify-content: center;
+}
+
+/* Quote */
+.vb-quote {
+  padding-left: 1.25rem;
+  border-left: 3px solid var(--vb-accent);
+}
+
+.vb-quote blockquote {
+  margin: 0;
+}
+
+.vb-quote blockquote p {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.vb-quote figcaption span {
+  opacity: 0.8;
+}
+
+/* Video */
+.vb-video {
+  max-width: var(--vb-wide);
+}
+
+.vb-video__frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--vb-radius);
+  background: var(--vb-surface);
+}
+
+.vb-video__frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.vb-video video {
+  width: 100%;
+  border-radius: var(--vb-radius);
+}
+
+/* FAQ */
+.vb-faq h2 {
+  margin: 0 0 1rem;
+  letter-spacing: -0.02em;
+}
+
+.vb-faq details {
+  border-bottom: 1px solid var(--vb-border);
+}
+
+.vb-faq summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 0;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.vb-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.vb-faq summary::after {
+  content: "+";
+  color: var(--vb-muted);
+  transition: transform 150ms ease;
+}
+
+.vb-faq details[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.vb-faq details p {
+  margin: 0 0 1rem;
+  color: var(--vb-muted);
+  white-space: pre-line;
+}
+
+/* Divider */
+.vb-divider {
+  border: 0;
+  border-top: 1px solid var(--vb-border);
+}
+
+.vb-spacer {
+  height: var(--vb-gap);
+  margin-block: 0;
+}

@@ -1,0 +1,24 @@
+---
+/*
+ * A page's blocks, in order. `components` maps block types to Astro
+ * components, or React, Vue and Svelte ones (rendered on the server). For a
+ * hydrated island, map the type to a small Astro wrapper that renders your
+ * framework component with a `client:` directive; Astro needs directives
+ * written in a file, not on components picked at runtime.
+ */
+import type { AnyBlock } from "./define.ts";
+import type { AstroComponents } from "./astro.ts";
+import { renderBlock, type RenderContext } from "./html.ts";
+
+interface Props<B extends AnyBlock = AnyBlock> extends RenderContext {
+  blocks: readonly B[] | null | undefined,
+  components: AstroComponents<B>
+}
+
+const { blocks, components, linkTo } = Astro.props;
+const map = components as Record<string, any>;
+---
+{(blocks ?? []).map(block => {
+  const Component = map[block.type];
+  return Component ? <Component {...block} /> : <Fragment set:html={renderBlock(block, { linkTo })} />;
+})}

@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronUpIcon, CopyIcon, GripVerticalIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, ChevronsDownUpIcon, ChevronsUpDownIcon, CopyIcon, GripVerticalIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IMPL, loadLazy, type WidgetDescriptor } from "../../descriptor.ts";
 import type {
@@ -19,7 +19,7 @@ import { emptyValue, matchesDiscriminators, type Issue, type Path } from "../../
 import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Calendar } from "../components/ui/calendar.tsx";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "../components/ui/command.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select.tsx";
@@ -28,6 +28,8 @@ import { Textarea } from "../components/ui/textarea.tsx";
 import { cn } from "../lib/utils.ts";
 import type { FieldDescriptor, WidgetContext, WidgetImpl } from "../index.ts";
 import { humanize, useAdmin } from "./context.tsx";
+import { setDragChip } from "./drag-chip.ts";
+import { navIcons } from "./icons.ts";
 import { AssetControl, RefControl } from "./pickers.tsx";
 import { Segmented } from "./segmented.tsx";
 
@@ -588,24 +590,55 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
     onChange([...items, next ?? null]);
   }
 
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
+
+  function insertAt(at: number, next: JsonValue | undefined) {
+    insert(at);
+    onChange([...items.slice(0, at), next ?? null, ...items.slice(at)]);
+  }
+
+  /** Where a drop lands, as an insertion index; null when it wouldn't move anything. */
+  function dropTarget(): number | null {
+    if(dragFrom === null || dropAt === null || dropAt === dragFrom || dropAt === dragFrom + 1) return null;
+    return dropAt;
+  }
+
+  function drop() {
+    const target = dropTarget();
+    if(dragFrom !== null && target !== null) {
+      const to = target > dragFrom ? target - 1 : target;
+      move(dragFrom, to);
+      onChange(moveItem(items, dragFrom, to));
+    }
+    setDragFrom(null);
+    setDropAt(null);
+  }
+
+  const addLabel = variants ? (s.item.label ?? "block").toLowerCase() : s.item.label?.toLowerCase() ?? "item";
   const addButton = readOnly || atMax ? null : variants ? (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="w-fit"><PlusIcon /> Add <ChevronDownIcon /></Button>} />
-      <DropdownMenuContent align="start">
-        {variants.map((variant, i) => (
-          <DropdownMenuItem key={i} onClick={() => add(emptyValue(variant))}>{variantLabel(variant, i)}</DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <VariantPicker
+      variants={variants}
+      onPick={index => add(emptyValue(variants[index]!))}
+      trigger={<Button variant="outline" size="sm" className="w-fit"><PlusIcon /> Add {addLabel === "item" ? "block" : addLabel}</Button>}
+    />
   ) : (
     <Button variant="outline" size="sm" className="w-fit" onClick={() => add(emptyValue(item))}>
       <PlusIcon /> Add {s.item.label?.toLowerCase() ?? "item"}
     </Button>
   );
 
+  const cards = !simple;
   return (
     <div className="flex flex-col gap-2">
-      {items.length === 0 && <p className="rounded-[14px] well px-3 py-4 text-center text-sm text-muted-foreground">No items yet</p>}
+      {variants && items.length > 1 && (
+        <div className="-mt-1 flex justify-end">
+          <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => setCollapsed(collapsed.size === items.length ? new Set() : new Set(keys))}>
+            {collapsed.size === items.length ? <><ChevronsUpDownIcon /> Expand all</> : <><ChevronsDownUpIcon /> Collapse all</>}
+          </Button>
+        </div>
+      )}
+      {items.length === 0 && <p className="rounded-[14px] well px-3 py-4 text-center text-sm text-muted-foreground">{variants ? "No blocks yet" : "No items yet"}</p>}
       {items.map((entry, i) => {
         const key = keys[i]!;
         const itemPath = [...path, i];
@@ -644,45 +677,212 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
             </div>
           );
         }
+        const variant = variants ? variants[variantIndex(item as UnionSchema, entry)] : undefined;
+        const VariantIcon = variant?.icon ? navIcons[variant.icon] : null;
+        const title = variant ? variantLabel(variant, i) : itemSummary(s.item, entry, i);
+        const detail = variant ? summarize(variant, entry) : undefined;
+        const target = dropTarget();
         return (
-          <div key={key} className={cn("group/item overflow-hidden rounded-[14px] elevated", hasIssues && "shadow-[0_0_0_1px_var(--destructive),var(--shadow-card)]")}>
-            <div className="flex items-center gap-1.5 border-b px-2 py-1.5 data-[collapsed=true]:border-b-0" data-collapsed={isCollapsed}>
-              <GripVerticalIcon className="size-3.5 text-muted-foreground/50" />
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm font-medium"
-                onClick={() => setCollapsed(prev => {
-                  const next = new Set(prev);
-                  if(next.has(key)) next.delete(key);
-                  else next.add(key);
-                  return next;
-                })}
-              >
-                <span className="truncate">{itemSummary(s.item, entry, i)}</span>
-                {variants && <Badge variant="outline" className="font-normal">{variantLabel(variants[variantIndex(item as UnionSchema, entry)] ?? item, i)}</Badge>}
-                {hasIssues && <span className="size-1.5 rounded-full bg-destructive" />}
-              </button>
-              {controls}
-            </div>
-            {!isCollapsed && (
-              <div className="p-4">
-                <Field
-                  bare
-                  schema={variants ? (variants[variantIndex(item as UnionSchema, entry)] ?? s.item) : s.item}
-                  name={String(i)}
-                  path={itemPath}
-                  value={entry}
-                  issues={issues}
-                  readOnly={readOnly}
-                  doc={doc}
-                  onChange={next => onChange(items.map((v, j) => (j === i ? next ?? null : v)))}
-                />
-              </div>
+          <div key={key} className="relative flex flex-col">
+            {!readOnly && cards && i > 0 && (
+              <InsertPoint
+                variants={variants}
+                disabled={atMax}
+                onInsert={next => insertAt(i, next)}
+                fallback={() => emptyValue(item)}
+              />
             )}
+            {target === i && <DropLine />}
+            <div
+              className={cn(
+                "group/item overflow-hidden rounded-[14px] elevated transition-opacity",
+                hasIssues && "shadow-[0_0_0_1px_var(--destructive),var(--shadow-card)]",
+                dragFrom === i && "opacity-40"
+              )}
+              onDragOver={event => {
+                if(dragFrom === null) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const rect = event.currentTarget.getBoundingClientRect();
+                setDropAt(event.clientY < rect.top + rect.height / 2 ? i : i + 1);
+              }}
+              onDrop={event => {
+                if(dragFrom === null) return;
+                event.preventDefault();
+                event.stopPropagation();
+                drop();
+              }}
+            >
+              <div className="flex items-center gap-1.5 border-b py-1.5 pr-2 pl-1 data-[collapsed=true]:border-b-0" data-collapsed={isCollapsed}>
+                <button
+                  type="button"
+                  aria-label={`Drag to reorder ${title}`}
+                  disabled={readOnly}
+                  draggable={!readOnly}
+                  onDragStart={event => {
+                    setDragFrom(i);
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("application/x-vibe-item", String(i));
+                    setDragChip(event, detail ? `${title}: ${detail}` : title);
+                  }}
+                  onDragEnd={() => {
+                    setDragFrom(null);
+                    setDropAt(null);
+                  }}
+                  className="flex size-6 shrink-0 cursor-grab items-center justify-center rounded-[6px] text-muted-foreground/50 hover:bg-foreground/[0.05] hover:text-muted-foreground active:cursor-grabbing disabled:cursor-default"
+                >
+                  <GripVerticalIcon className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+                  onClick={() => setCollapsed(prev => {
+                    const next = new Set(prev);
+                    if(next.has(key)) next.delete(key);
+                    else next.add(key);
+                    return next;
+                  })}
+                >
+                  {VariantIcon && <VariantIcon className="size-4 shrink-0 text-muted-foreground" />}
+                  <span className="shrink-0 font-medium">{title}</span>
+                  {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
+                  {hasIssues && <span className="size-1.5 shrink-0 rounded-full bg-destructive" />}
+                </button>
+                {controls}
+              </div>
+              {!isCollapsed && (
+                <div className="p-4">
+                  <Field
+                    bare
+                    schema={variant ?? s.item}
+                    name={String(i)}
+                    path={itemPath}
+                    value={entry}
+                    issues={issues}
+                    readOnly={readOnly}
+                    doc={doc}
+                    onChange={next => onChange(items.map((v, j) => (j === i ? next ?? null : v)))}
+                  />
+                </div>
+              )}
+            </div>
+            {i === items.length - 1 && target === items.length && <DropLine />}
           </div>
         );
       })}
       {addButton}
+    </div>
+  );
+}
+
+/**
+ * A block's collapsed summary: the first text it has (a heading, a quote, the
+ * start of rich text), found through its schema so settings like a column
+ * count don't show up; else how many items its first list holds ("6 images").
+ */
+function summarize(schema: AnySchema, value: unknown, depth = 0): string | undefined {
+  const inner = unwrap(schema);
+  // Rich text nests ~8 deep (block → body → node → children → text).
+  if(depth > 10 || value === null || value === undefined) return undefined;
+  if(inner.type === "text") return typeof value === "string" && value.trim() && !/^(https?:|\/|#)/.test(value) ? value.trim().slice(0, 120) : undefined;
+  if(inner.type === "union") {
+    const option = (inner as UnionSchema).options.find(o => matchesDiscriminators(o, value));
+    return option ? summarize(option, value, depth + 1) : undefined;
+  }
+  if(inner.type === "array" && Array.isArray(value)) {
+    for(const entry of value) {
+      const found = summarize((inner as ArraySchema).item, entry, depth + 1);
+      if(found) return found;
+    }
+    return undefined;
+  }
+  if(inner.type === "object" && typeof value === "object") {
+    const shape = (inner as ObjectSchema).shape;
+    for(const [key, field] of Object.entries(shape)) {
+      const found = summarize(field, (value as DocumentData)[key], depth + 1);
+      if(found) return found;
+    }
+    if(depth === 0) {
+      for(const [key, field] of Object.entries(shape)) {
+        const list = (value as DocumentData)[key];
+        if(unwrap(field).type === "array" && Array.isArray(list) && list.length > 0) {
+          return `${list.length} ${(field.label ?? humanize(key)).toLowerCase()}`;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function DropLine() {
+  return <div aria-hidden className="pointer-events-none absolute inset-x-2 -top-[5px] z-10 h-0.5 rounded-full bg-foreground/60 last:top-auto last:-bottom-[5px]" />;
+}
+
+/**
+ * A searchable menu of a union's variants with their icons and descriptions:
+ * how editors pick a block. Radii nest: 4px of menu padding around 10px rows,
+ * 4px of row padding around 6px icon tiles.
+ */
+function VariantPicker({ variants, onPick, trigger }: { variants: readonly AnySchema[], onPick(index: number): void, trigger: React.ReactElement }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={trigger} />
+      <PopoverContent align="start" className="w-[22rem] p-0">
+        <Command>
+          {variants.length > 6 && <CommandInput placeholder="Find a block…" />}
+          <CommandList className="max-h-80">
+            <CommandEmpty>Nothing matches.</CommandEmpty>
+            {variants.map((variant, i) => {
+              const Icon = variant.icon ? navIcons[variant.icon] : PlusIcon;
+              return (
+                <CommandItem
+                  key={i}
+                  value={`${variantLabel(variant, i)} ${variant.description ?? ""}`}
+                  onSelect={() => {
+                    setOpen(false);
+                    onPick(i);
+                  }}
+                  className="gap-3 p-1 pr-2"
+                >
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-[6px] raised"><Icon className="size-4" /></span>
+                  <span className="min-w-0">
+                    <span className="block font-medium">{variantLabel(variant, i)}</span>
+                    {variant.description && <span className="line-clamp-2 block text-xs text-muted-foreground">{variant.description}</span>}
+                  </span>
+                </CommandItem>
+              );
+            })}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** A "+" that appears between items on hover, to insert right there. */
+function InsertPoint({ variants, disabled, onInsert, fallback }: {
+  variants: readonly AnySchema[] | null,
+  disabled: boolean,
+  onInsert(value: JsonValue | undefined): void,
+  fallback(): JsonValue | undefined
+}) {
+  if(disabled) return null;
+  const button = (
+    <button
+      type="button"
+      aria-label="Insert here"
+      onClick={variants ? undefined : () => onInsert(fallback())}
+      className="flex size-5 items-center justify-center rounded-full raised text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/insert:opacity-100 focus-visible:opacity-100 data-popup-open:opacity-100"
+    >
+      <PlusIcon className="size-3" />
+    </button>
+  );
+  return (
+    // Sits in the 8px gap between cards, overlapping it so it doesn't push them apart.
+    <div className="group/insert absolute inset-x-0 -top-[13px] z-10 flex h-[18px] items-center justify-center">
+      <div aria-hidden className="absolute inset-x-6 h-px bg-foreground/15 opacity-0 transition-opacity group-hover/insert:opacity-100" />
+      <span className="relative">{variants ? <VariantPicker variants={variants} onPick={index => onInsert(emptyValue(variants[index]!))} trigger={button} /> : button}</span>
     </div>
   );
 }

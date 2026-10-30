@@ -3,7 +3,7 @@ import config from "../vibe-cms.config.ts";
 import { vibe } from "./cms.ts";
 
 export const cms = vibe.client(env);
-export const { post, author, homepage } = config.schemas;
+export const { post, author, homepage, page } = config.schemas;
 
 export type Locale = typeof config.locales[number];
 

@@ -82,7 +82,8 @@ function fillPreview(template: string, doc: DocumentData, id: string, locale: st
     if(key === "locale") return locale;
     if(key === "id") return id;
     const value = doc[key];
-    return typeof value === "string" || typeof value === "number" ? encodeURIComponent(value) : "";
+    // Slashes stay as they are, so a `{path}` placeholder can hold a whole path.
+    return typeof value === "string" || typeof value === "number" ? encodeURIComponent(value).replaceAll("%2F", "/") : "";
   });
 }
 
