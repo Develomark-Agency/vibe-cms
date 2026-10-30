@@ -70,7 +70,9 @@ export interface ConfigInput {
   auth?: AuthDescriptor,
   permissions?: Permissions,
   /** URL prefix for everything the CMS serves. Defaults to `/_vibe`. */
-  prefix?: string
+  prefix?: string,
+  /** Deleted documents and files stay restorable this long, then the cron trigger purges them. Defaults to 30 days. */
+  trash?: { days?: number }
 }
 
 export interface ColumnInfo {

@@ -143,7 +143,7 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   async function scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void> {
     const s = await state(env);
     const engine = new Engine(s, { origin: "", session: null, trusted: true, ctx });
-    const jobs: Array<Promise<unknown>> = [engine.runSchedules(event.scheduledTime)];
+    const jobs: Array<Promise<unknown>> = [engine.runSchedules(event.scheduledTime), engine.purgeExpiredTrash(event.scheduledTime)];
     for(const plugin of s.plugins.plugins) {
       const job = plugin.hooks.cron?.[event.cron];
       if(job) jobs.push(Promise.resolve(job()));

@@ -75,6 +75,15 @@ export async function request<T>(prefix: string, path: string, init: RequestInit
   return data as T;
 }
 
+/** Raw bytes from the editor API, with the same credentials as `request`, for previews `<img src>` can't authenticate. */
+export async function requestBlob(prefix: string, path: string): Promise<Blob> {
+  const headers = new Headers();
+  if(token) headers.set("authorization", `Bearer ${token}`);
+  const response = await fetch(`${prefix}/api${path}`, { headers, credentials: "same-origin" });
+  if(!response.ok) throw new ApiError(response.status, `Couldn't load the file (${response.status})`);
+  return response.blob();
+}
+
 export function createAdminClient(prefix: string, types: string[], navigate: (path: string) => void): AdminClient {
   function api<T>(path: string, init?: RequestInit & { json?: unknown }) {
     return request<T>(prefix, path, init);

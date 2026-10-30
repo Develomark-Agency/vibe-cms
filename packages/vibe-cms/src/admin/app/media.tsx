@@ -235,6 +235,7 @@ function useLibrary() {
     void queryClient.invalidateQueries({ queryKey: ["assets"] });
     void queryClient.invalidateQueries({ queryKey: ["asset-detail"] });
     void queryClient.invalidateQueries({ queryKey: ["asset"] });
+    void queryClient.invalidateQueries({ queryKey: ["trash"] });
   }
 
   async function attempt<T>(action: () => Promise<T>, success?: string): Promise<T | null> {
@@ -263,7 +264,7 @@ function useLibrary() {
     deleteFolder: (path: string) => attempt(() => cms.api(`/folders?path=${encodeURIComponent(path)}`, { method: "DELETE" }), "Folder deleted"),
     moveAsset: (id: string, folder: string | null) => attempt(() => cms.api<Asset>(`/assets/${id}`, { method: "PATCH", json: { folder } })),
     renameAsset: (id: string, filename: string) => attempt(() => cms.api<Asset>(`/assets/${id}`, { method: "PATCH", json: { filename } })),
-    deleteAsset: (id: string) => attempt(() => cms.api(`/assets/${id}`, { method: "DELETE" }), "File deleted")
+    deleteAsset: (id: string) => attempt(() => cms.api<{ trash: string }>(`/assets/${id}`, { method: "DELETE" }))
   };
 }
 
@@ -467,13 +468,17 @@ export function MediaPage() {
 
   /** Files first, then folders deepest first, so a folder emptied by the same action can go too. */
   async function bulkDelete(bulk: Bulk) {
+    const trashed: string[] = [];
+    const removedFolders: string[] = [];
+    let name = "";
     let deleted = 0;
     let inUse = 0;
     let notEmpty = 0;
     let failed = 0;
     for(const file of bulk.files) {
       try {
-        await cms.api(`/assets/${file.id}`, { method: "DELETE" });
+        trashed.push((await cms.api<{ trash: string }>(`/assets/${file.id}`, { method: "DELETE" })).trash);
+        name = file.name;
         deleted++;
       } catch (error) {
         if(error instanceof ApiError && error.status === 409) inUse++;
@@ -483,6 +488,7 @@ export function MediaPage() {
     for(const path of [...bulk.folders].sort((a, b) => b.split("/").length - a.split("/").length)) {
       try {
         await cms.api(`/folders?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+        removedFolders.push(path);
         deleted++;
       } catch (error) {
         if(error instanceof ApiError && error.status === 409) notEmpty++;
@@ -499,8 +505,17 @@ export function MediaPage() {
       inUse && `${inUse} ${inUse === 1 ? "file" : "files"} used by documents`,
       notEmpty && `${notEmpty} non-empty ${notEmpty === 1 ? "folder" : "folders"}`
     ].filter(Boolean);
-    const summary = `Deleted ${deleted} ${deleted === 1 ? "item" : "items"}${kept.length ? `, kept ${kept.join(" and ")}` : ""}${failed ? ` (${failed} failed)` : ""}`;
-    notify(summary, { type: failed ? "error" : kept.length ? "info" : "success" });
+    const what = deleted === 1 && trashed.length === 1 ? quote(name) : `${deleted} ${deleted === 1 ? "item" : "items"}`;
+    const summary = `Moved ${what} to the trash${kept.length ? `, kept ${kept.join(" and ")}` : ""}${failed ? ` (${failed} failed)` : ""}`;
+    const undoDelete = deleted > 0 ? record({
+      label: "delete",
+      async undo() {
+        // Empty folders aren't trashed, just recreated; files come back from the trash into their folders.
+        for(const path of removedFolders) await cms.api("/folders", { method: "POST", json: { path } });
+        for(const id of trashed) await cms.api(`/trash/${id}/restore`, { method: "POST" });
+      }
+    }) : undefined;
+    notify(summary, { type: failed ? "error" : kept.length ? "info" : "success", undo: undoDelete });
   }
 
   // ⌘A selects what's visible, Escape clears, Delete asks to delete the selection.
@@ -562,7 +577,11 @@ export function MediaPage() {
     const undoUpload = record({
       label: uploaded.length === 1 ? "upload" : "uploads",
       async undo() {
-        for(const asset of uploaded) await cms.api(`/assets/${asset.id}`, { method: "DELETE" });
+        // An undone upload never happened, so it skips the trash.
+        for(const asset of uploaded) {
+          const { trash } = await cms.api<{ trash: string }>(`/assets/${asset.id}`, { method: "DELETE" });
+          await cms.api(`/trash/${trash}`, { method: "DELETE" });
+        }
         go({ file: null });
       }
     });
@@ -712,7 +731,17 @@ export function MediaPage() {
                 onMove={asset => setDialog({ kind: "move", bulk: toBulk([{ kind: "file", asset }]) })}
                 onEdit={asset => setEditing(asset)}
                 onRename={(asset, filename) => renameFile(asset, filename)}
-                onDeleted={() => go({ file: null })}
+                onDeleted={(asset, trash) => {
+                  go({ file: null });
+                  const undoDelete = record({
+                    label: "delete",
+                    async undo() {
+                      await cms.api(`/trash/${trash}/restore`, { method: "POST" });
+                      go({ file: asset.id });
+                    }
+                  });
+                  notify(`Moved ${quote(asset.filename)} to the trash`, { type: "success", undo: undoDelete });
+                }}
                 onOpenFolder={path => go({ folder: path })}
               />}
             </aside>
@@ -1206,7 +1235,7 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
   onMove(asset: Asset): void,
   onEdit(asset: Asset): void,
   onRename(asset: Asset, filename: string): Promise<void>,
-  onDeleted(): void,
+  onDeleted(asset: Asset, trash: string): void,
   onOpenFolder(path: string | null): void
 }) {
   const { cms } = useAdmin();
@@ -1312,7 +1341,8 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
             disabled={asset.usage.length > 0}
             title={asset.usage.length > 0 ? "Remove it from those documents first" : undefined}
             onClick={async () => {
-              if(await library.deleteAsset(asset.id)) onDeleted();
+              const deleted = await library.deleteAsset(asset.id);
+              if(deleted) onDeleted(asset, deleted.trash);
             }}
           >
             <Trash2Icon /> Delete file
@@ -1520,7 +1550,7 @@ function DeleteDialog({ bulk, onOpenChange, onDelete }: { bulk: Bulk | null, onO
         <DialogHeader>
           <DialogTitle className="truncate pr-6">Delete {bulk ? bulkLabel(bulk) : ""}?</DialogTitle>
           <DialogDescription>
-            {bulk && describeBulk(bulk)}. This can't be undone. Files used by documents, and folders that still have other files in them, are kept.
+            {bulk && describeBulk(bulk)}. Files go to the trash, where they can be restored. Files used by documents, and folders that still have other files in them, are kept.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

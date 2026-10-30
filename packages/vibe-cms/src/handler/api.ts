@@ -270,6 +270,18 @@ async function editorRoute(
     if(method === "DELETE") return json(await engine.deleteFolder(q.get("path") ?? ""));
   }
 
+  if(route === "/trash") {
+    if(method === "GET") return json(await engine.listTrash());
+    if(method === "DELETE") return json(await engine.emptyTrash());
+  }
+
+  if((m = /^\/trash\/([\w-]+)(\/restore|\/file)?$/.exec(route))) {
+    if(m[2] === "/restore" && method === "POST") return json(await engine.restoreTrash(m[1]!));
+    if(m[2] === "/file" && method === "GET") return engine.trashFile(m[1]!);
+    if(!m[2] && method === "GET") return json(await engine.trashDetail(m[1]!));
+    if(!m[2] && method === "DELETE") return json(await engine.purgeTrash(m[1]!));
+  }
+
   if((m = /^\/assets\/([\w-]+)\/content$/.exec(route)) && method === "PUT") {
     return json(await engine.replaceContent(m[1]!, await request.arrayBuffer()));
   }

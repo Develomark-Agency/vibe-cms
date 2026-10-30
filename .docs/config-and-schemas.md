@@ -147,7 +147,7 @@ v.asset({
 - **`folder`** is where uploads land by default and what the picker shows first. R2 keys are always derived from the asset ID, so reorganizing folders never breaks stored files.
 - **`validate`** runs in the Worker at upload time (the upload request names its target field) and again on document write (in case a write points at an asset uploaded for another field). Metadata comes from the `media.analyze` hook, see [plugins.md](./plugins.md).
 - **`fields`** holds data about *this use* of the asset, like alt text or a focal point, since the same file can need different alt text in different places.
-- Assets live in one shared media library. The default widget offers upload or picking an existing asset. Deleting a document never deletes assets; unreferenced assets are cleaned up separately.
+- Assets live in one shared media library. The default widget offers upload or picking an existing asset. Deleting a document never deletes assets; unreferenced assets are cleaned up separately. Deleted documents and files go to the trash first (see storage.md).
 
 ### `image()` and `video()`
 

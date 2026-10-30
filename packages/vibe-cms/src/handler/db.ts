@@ -47,6 +47,22 @@ export interface AssetRow {
   created_by: string
 }
 
+/** A deleted document (or one translation of it) or media file, kept until it's restored or purged. */
+export interface TrashRow {
+  id: string,
+  kind: "document" | "asset",
+  /** Content type for documents; null for assets. */
+  type: string | null,
+  item_id: string,
+  /** The one translation that was deleted; null when the whole document or a file was. */
+  locale: string | null,
+  label: string,
+  /** JSON: the removed `vibe_documents` rows, or the `vibe_assets` row. */
+  payload: string,
+  deleted_at: number,
+  deleted_by: string
+}
+
 const tables = [
   `CREATE TABLE IF NOT EXISTS vibe_meta (
     key TEXT PRIMARY KEY,
@@ -103,6 +119,20 @@ const tables = [
     path TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL
   )`,
+  // Deleting moves rows here. Versions and R2 objects stay where they are until the item is purged.
+  `CREATE TABLE IF NOT EXISTS vibe_trash (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    type TEXT,
+    item_id TEXT NOT NULL,
+    locale TEXT,
+    label TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    deleted_at INTEGER NOT NULL,
+    deleted_by TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS vibe_trash_deleted_at ON vibe_trash (deleted_at)",
+  "CREATE INDEX IF NOT EXISTS vibe_trash_item ON vibe_trash (item_id)",
   `CREATE TABLE IF NOT EXISTS vibe_codes (
     code TEXT PRIMARY KEY,
     payload TEXT NOT NULL,

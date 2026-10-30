@@ -17,7 +17,7 @@ import { findReferences, isRecord, pickUnionOption, schemaAt, validate, type Iss
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeMatches } from "./analyze.ts";
 import { can, require } from "./auth.ts";
-import { all, first, getMeta, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type VersionRow } from "./db.ts";
+import { all, first, getMeta, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "./db.ts";
 import type { D1, ExecutionContext, R2 } from "./platform.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
 import { jsonPath, SqlBuilder } from "./sql.ts";
@@ -65,6 +65,25 @@ interface StoredSite {
 }
 
 const SITE_KEY = "site";
+
+/** How long deleted items stay in the trash unless the config says otherwise. */
+export const DEFAULT_TRASH_DAYS = 30;
+
+export interface TrashItem {
+  id: string,
+  kind: "document" | "asset",
+  /** Content type, for documents. */
+  type: string | null,
+  /** The document or asset ID it restores to. */
+  itemId: string,
+  /** Set when only one translation was deleted. */
+  locale: string | null,
+  label: string,
+  deletedAt: string,
+  deletedBy: string,
+  /** When it's purged for good. */
+  expiresAt: string
+}
 
 export interface MediaFolder {
   /** `"posts/covers"`; segments are separated by `/`. */
@@ -625,6 +644,7 @@ export class Engine {
     return rows;
   }
 
+  /** Moves the document (or one translation) to the trash. Its history stays until the trash is purged. */
   async delete(type: string, id: string, options: { force?: boolean, locale?: string } = {}) {
     const session = this.writer({ action: "delete", type });
     const exists = await first(this.db, "SELECT 1 FROM vibe_documents WHERE id = ? AND type = ?", [id, type]);
@@ -632,12 +652,16 @@ export class Engine {
     if(options.locale && options.locale !== this.defaultLocale) {
       // Removing one translation only.
       const locale = this.locale(options.locale);
+      const rows = await all<DocumentRow>(this.db, "SELECT * FROM vibe_documents WHERE id = ? AND locale = ?", [id, locale]);
+      if(!rows.length) throw new HttpError(404, "Translation not found");
+      const trash = this.trashStatement({ kind: "document", type, itemId: id, locale, label: this.documentLabel(type, rows), payload: rows, session });
       await this.db.batch([
+        trash.statement,
         this.db.prepare("DELETE FROM vibe_documents WHERE id = ? AND locale = ?").bind(id, locale),
         this.db.prepare("DELETE FROM vibe_schedules WHERE id = ? AND locale = ?").bind(id, locale)
       ]);
       this.afterWrite({ type, id, locale, action: "delete", valid: false, doc: null });
-      return { deleted: true };
+      return { deleted: true, trash: trash.id };
     }
     if(!options.force) {
       const refs = await this.incomingReferences(id);
@@ -646,13 +670,29 @@ export class Engine {
     const output: { cancel?: string } = {};
     await this.state.plugins.transform("content.beforeDelete", { type, id, session: session ?? undefined }, output);
     if(output.cancel) throw new HttpError(409, output.cancel);
+    const rows = await all<DocumentRow>(this.db, "SELECT * FROM vibe_documents WHERE id = ?", [id]);
+    const trash = this.trashStatement({ kind: "document", type, itemId: id, locale: null, label: this.documentLabel(type, rows), payload: rows, session });
+    // Pending schedules are dropped: a restored document shouldn't publish itself on an old timetable.
     await this.db.batch([
+      trash.statement,
       this.db.prepare("DELETE FROM vibe_documents WHERE id = ?").bind(id),
-      this.db.prepare("DELETE FROM vibe_versions WHERE id = ?").bind(id),
       this.db.prepare("DELETE FROM vibe_schedules WHERE id = ?").bind(id)
     ]);
     this.afterWrite({ type, id, locale: "*", action: "delete", valid: false, doc: null });
-    return { deleted: true };
+    return { deleted: true, trash: trash.id };
+  }
+
+  /** The title the editor would show, from the default locale's draft when it's there. */
+  private documentLabel(type: string, rows: DocumentRow[]): string {
+    const row = rows.find(r => r.locale === this.defaultLocale) ?? rows[0];
+    if(!row) return "Untitled";
+    const doc = JSON.parse(row.draft) as DocumentData;
+    const shape = getSchema(this.config, type).shape;
+    const configured = this.config.collections?.[type]?.title;
+    const field = configured ?? ["title", "name", "label", "heading"].find(key => shape[key] && unwrap(shape[key]).type === "text")
+      ?? Object.entries(shape).find(([, schema]) => unwrap(schema).type === "text")?.[0];
+    const value = field ? doc[field] : undefined;
+    return typeof value === "string" && value.trim() ? value.slice(0, 200) : "Untitled";
   }
 
   async versions(type: string, id: string, localeInput?: string) {
@@ -932,7 +972,7 @@ export class Engine {
   }
 
   async deleteAsset(id: string) {
-    this.writer({ action: "delete", scope: "media" });
+    const session = this.writer({ action: "delete", scope: "media" });
     const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [id]);
     if(!row) throw new HttpError(404, "Asset not found");
     const used = await first(this.db, "SELECT 1 FROM vibe_documents WHERE draft LIKE ? OR published LIKE ? LIMIT 1", [
@@ -941,9 +981,183 @@ export class Engine {
     ]);
     if(used) throw new HttpError(409, "This file is used by a document");
     if((await this.storedSite()).icon === id) throw new HttpError(409, "This file is the site's icon");
-    await this.storage.delete(row.key);
-    await run(this.db, "DELETE FROM vibe_assets WHERE id = ?", [id]);
-    return { deleted: true };
+    // The R2 object stays until the trash is purged, so restoring brings back the same URL.
+    const trash = this.trashStatement({ kind: "asset", type: null, itemId: id, locale: null, label: row.filename, payload: row, session });
+    await this.db.batch([trash.statement, this.db.prepare("DELETE FROM vibe_assets WHERE id = ?").bind(id)]);
+    return { deleted: true, trash: trash.id };
+  }
+
+  // --- Trash -------------------------------------------------------------------
+
+  private get trashDays(): number {
+    return this.config.trash?.days ?? DEFAULT_TRASH_DAYS;
+  }
+
+  private trashStatement(input: {
+    kind: TrashRow["kind"],
+    type: string | null,
+    itemId: string,
+    locale: string | null,
+    label: string,
+    payload: unknown,
+    session: Session | null
+  }) {
+    const id = newId("trs");
+    const statement = this.db.prepare(
+      "INSERT INTO vibe_trash (id, kind, type, item_id, locale, label, payload, deleted_at, deleted_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(id, input.kind, input.type, input.itemId, input.locale, input.label, JSON.stringify(input.payload), Date.now(), input.session?.sub ?? "system");
+    return { id, statement };
+  }
+
+  /** Whether the session may see, restore and purge this item: the same permission that deleted it. */
+  private canTrash(row: Pick<TrashRow, "kind" | "type">): boolean {
+    if(this.scope.trusted && !this.scope.session) return true;
+    return can(this.config, this.scope.session, row.kind === "asset" ? { action: "delete", scope: "media" } : { action: "delete", type: row.type ?? undefined });
+  }
+
+  private toTrashItem(row: TrashRow): TrashItem {
+    return {
+      id: row.id,
+      kind: row.kind,
+      type: row.type,
+      itemId: row.item_id,
+      locale: row.locale,
+      label: row.label,
+      deletedAt: iso(row.deleted_at)!,
+      deletedBy: row.deleted_by,
+      expiresAt: iso(row.deleted_at + this.trashDays * 86_400_000)!
+    };
+  }
+
+  /** Newest first, only what this session may restore. Types no longer in the config are skipped. */
+  async listTrash(): Promise<{ items: TrashItem[], days: number }> {
+    if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
+    const rows = await all<TrashRow>(this.db, "SELECT * FROM vibe_trash ORDER BY deleted_at DESC LIMIT 500");
+    const known = (row: TrashRow) => row.kind === "asset" || (row.type !== null && row.type in this.config.schemas);
+    return { items: rows.filter(row => known(row) && this.canTrash(row)).map(row => this.toTrashItem(row)), days: this.trashDays };
+  }
+
+  private async trashRow(id: string): Promise<TrashRow> {
+    if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
+    const row = await first<TrashRow>(this.db, "SELECT * FROM vibe_trash WHERE id = ?", [id]);
+    if(!row || !this.canTrash(row)) throw new HttpError(404, "Not in the trash");
+    return row;
+  }
+
+  /** What the Trash page previews: each deleted language's draft, or the file's details. */
+  async trashDetail(id: string) {
+    const row = await this.trashRow(id);
+    const item = this.toTrashItem(row);
+    if(row.kind === "asset") {
+      const asset = this.toAsset(JSON.parse(row.payload) as AssetRow);
+      // Its public URL 404s while trashed; the editor fetches the bytes from here instead.
+      return { ...item, asset: { ...asset, url: `${this.scope.origin}${this.state.prefix}/api/trash/${row.id}/file` } };
+    }
+    const docs = JSON.parse(row.payload) as DocumentRow[];
+    return {
+      ...item,
+      documents: docs.map(d => ({ locale: d.locale, status: documentStatus(d), data: JSON.parse(d.draft) as DocumentData, updatedAt: iso(d.updated_at) }))
+    };
+  }
+
+  /** A trashed file's bytes, for signed-in editors who may restore it. */
+  async trashFile(id: string): Promise<Response> {
+    const row = await this.trashRow(id);
+    if(row.kind !== "asset") throw new HttpError(404, "Not a file");
+    const asset = JSON.parse(row.payload) as AssetRow;
+    const object = await this.storage.get(asset.key);
+    if(!object) throw new HttpError(404, "The file's content is gone");
+    const headers = new Headers({
+      "content-type": object.httpMetadata?.contentType ?? "application/octet-stream",
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff"
+    });
+    if(headers.get("content-type") === "image/svg+xml") headers.set("content-security-policy", "script-src 'none'");
+    return new Response(object.body, { headers });
+  }
+
+  /** Puts the item back exactly as it was deleted, published state included. */
+  async restoreTrash(id: string): Promise<TrashItem & { restored: true }> {
+    const row = await this.trashRow(id);
+    if(row.kind === "asset") {
+      const asset = JSON.parse(row.payload) as AssetRow;
+      if(await first(this.db, "SELECT 1 FROM vibe_assets WHERE id = ?", [asset.id])) throw new HttpError(409, "That file already exists");
+      await this.db.batch([
+        this.db.prepare("INSERT INTO vibe_assets (id, key, folder, filename, mime, size, meta, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(asset.id, asset.key, asset.folder, asset.filename, asset.mime, asset.size, asset.meta, asset.created_at, asset.created_by),
+        this.db.prepare("DELETE FROM vibe_trash WHERE id = ?").bind(id)
+      ]);
+      await this.touchFolder(asset.folder);
+      return { ...this.toTrashItem(row), restored: true };
+    }
+    const type = row.type!;
+    getSchema(this.config, type);
+    const docs = JSON.parse(row.payload) as DocumentRow[];
+    if(row.locale && !(await first(this.db, "SELECT 1 FROM vibe_documents WHERE id = ?", [row.item_id]))) {
+      throw new HttpError(409, "Restore the document itself first; this is only one of its translations");
+    }
+    const taken = await all<{ locale: string }>(this.db, "SELECT locale FROM vibe_documents WHERE id = ?", [row.item_id]);
+    if(taken.some(t => docs.some(d => d.locale === t.locale))) throw new HttpError(409, "A document with this ID and language exists again");
+    // Files it used that were deleted since come back with it, so its references still resolve.
+    const files = await all<TrashRow>(this.db, "SELECT * FROM vibe_trash WHERE kind = 'asset'");
+    const used = files.filter(file => docs.some(d => d.draft.includes(`"${file.item_id}"`) || d.published?.includes(`"${file.item_id}"`)));
+    const columns = ["id", "type", "locale", "draft", "published", "published_ver", "schema_hash", "created_at", "updated_at", "published_at", "updated_by"] as const;
+    await this.db.batch([
+      ...docs.map(d => this.db.prepare(`INSERT INTO vibe_documents (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`).bind(...columns.map(c => d[c]))),
+      this.db.prepare("DELETE FROM vibe_trash WHERE id = ?").bind(id)
+    ]);
+    for(const file of used) {
+      if(this.canTrash(file)) await this.restoreTrash(file.id).catch(() => {});
+    }
+    for(const d of docs) this.afterWrite({ type, id: row.item_id, locale: d.locale, action: "restore", valid: false, doc: null });
+    return { ...this.toTrashItem(row), restored: true };
+  }
+
+  /** Deletes for good: the row, the document's history or the file's bytes. */
+  async purgeTrash(id: string): Promise<{ purged: true }> {
+    await this.purge(await this.trashRow(id));
+    return { purged: true };
+  }
+
+  /** Purges everything this session may see, or (from cron) everything past its retention. */
+  async emptyTrash(options: { olderThan?: number } = {}): Promise<{ purged: number }> {
+    const rows = options.olderThan === undefined
+      ? await all<TrashRow>(this.db, "SELECT * FROM vibe_trash")
+      : await all<TrashRow>(this.db, "SELECT * FROM vibe_trash WHERE deleted_at < ? LIMIT 200", [options.olderThan]);
+    let purged = 0;
+    for(const row of rows) {
+      if(!this.canTrash(row)) continue;
+      await this.purge(row);
+      purged++;
+    }
+    return { purged };
+  }
+
+  /** Called from the `scheduled` handler. */
+  async purgeExpiredTrash(now = Date.now()): Promise<number> {
+    return (await this.emptyTrash({ olderThan: now - this.trashDays * 86_400_000 })).purged;
+  }
+
+  private async purge(row: TrashRow) {
+    if(row.kind === "asset") {
+      const asset = JSON.parse(row.payload) as AssetRow;
+      // Restored and deleted again leaves two trash rows for one object; only the last one out deletes it.
+      const live = await first(this.db, "SELECT 1 FROM vibe_assets WHERE id = ? UNION ALL SELECT 1 FROM vibe_trash WHERE item_id = ? AND id != ?", [asset.id, asset.id, row.id]);
+      if(!live && this.state.storage) await this.state.storage.delete(asset.key);
+      await run(this.db, "DELETE FROM vibe_trash WHERE id = ?", [row.id]);
+      return;
+    }
+    const docs = JSON.parse(row.payload) as DocumentRow[];
+    const statements = [this.db.prepare("DELETE FROM vibe_trash WHERE id = ?").bind(row.id)];
+    for(const { locale } of docs) {
+      // History goes only when nothing else still needs it: no live row and no other trash entry for that language.
+      statements.push(this.db.prepare(
+        `DELETE FROM vibe_versions WHERE id = ? AND locale = ?
+         AND NOT EXISTS (SELECT 1 FROM vibe_documents WHERE id = ? AND locale = ?)
+         AND NOT EXISTS (SELECT 1 FROM vibe_trash WHERE item_id = ? AND id != ? AND payload LIKE ?)`
+      ).bind(row.item_id, locale, row.item_id, locale, row.item_id, row.id, `%"locale":"${locale}"%`));
+    }
+    await this.db.batch(statements);
   }
 
   // --- Site settings ------------------------------------------------------------
@@ -1000,6 +1214,8 @@ export class Engine {
 
   async serveAsset(file: string, request: Request): Promise<Response> {
     const id = file.replace(/\.[a-z0-9]+$/i, "");
+    // Trashed files keep their bytes in R2 but aren't served.
+    if(!(await first(this.db, "SELECT 1 FROM vibe_assets WHERE id = ?", [id]))) return new Response("Not found", { status: 404 });
     const object = await this.storage.get(`assets/${id}`);
     if(!object) return new Response("Not found", { status: 404 });
     const headers = new Headers({

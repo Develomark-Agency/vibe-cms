@@ -218,6 +218,111 @@ describe("media", () => {
   });
 });
 
+describe("trash", () => {
+  async function uploadCover() {
+    const form = new FormData();
+    form.set("file", new File([png(1200, 600)], "cover.png", { type: "image/png" }));
+    return (await t.api("/api/assets", { method: "POST", body: form })).body;
+  }
+
+  test("deleting a document moves it to the trash; restoring brings it back as it was", async () => {
+    const created = await createPost({ title: "Gone", slug: "gone" });
+    const deleted = await t.api(`/api/documents/post/${created.id}`, { method: "DELETE" });
+    expect(deleted.body.trash).toMatch(/^trs_/);
+    expect((await t.api(`/api/documents/post/${created.id}`)).status).toBe(404);
+    expect(await t.vibe.client(t.env).query(post).findFirst()).toBeNull();
+
+    const { body } = await t.api("/api/trash");
+    expect(body.days).toBe(30);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({ kind: "document", type: "post", itemId: created.id, label: "Gone", locale: null });
+
+    const restored = await t.api(`/api/trash/${deleted.body.trash}/restore`, { method: "POST" });
+    expect(restored.status).toBe(200);
+    expect((await t.vibe.client(t.env).query(post).findFirst())?.title).toBe("Gone");
+    expect((await t.api(`/api/documents/post/${created.id}/versions`)).body.versions).toHaveLength(1);
+    expect((await t.api("/api/trash")).body.items).toHaveLength(0);
+  });
+
+  test("a translation is trashed and restored on its own", async () => {
+    const created = await createPost({ title: "Hello", slug: "hello" });
+    await t.api(`/api/documents/post/${created.id}?locale=fr`, { method: "PUT", json: { data: { ...created.draft, title: "Bonjour" }, publish: true } });
+    const deleted = await t.api(`/api/documents/post/${created.id}?locale=fr`, { method: "DELETE" });
+    const client = t.vibe.client(t.env);
+    expect((await client.query(post).findFirst({ locale: "fr" }))?.title).toBe("Hello");
+    expect((await t.api("/api/trash")).body.items[0]).toMatchObject({ locale: "fr", label: "Bonjour" });
+    await t.api(`/api/trash/${deleted.body.trash}/restore`, { method: "POST" });
+    expect((await client.query(post).findFirst({ locale: "fr" }))?.title).toBe("Bonjour");
+  });
+
+  test("trashed files stop being served, come back with their URL, and purging deletes the bytes", async () => {
+    const asset = await uploadCover();
+    const url = `https://site.test/_vibe/media/${asset.id}.png`;
+    const deleted = await t.api(`/api/assets/${asset.id}`, { method: "DELETE" });
+    expect((await t.vibe.handle(new Request(url), t.env, ctx)).status).toBe(404);
+    expect(t.env.MEDIA.objects.has(`assets/${asset.id}`)).toBe(true);
+
+    await t.api(`/api/trash/${deleted.body.trash}/restore`, { method: "POST" });
+    expect((await t.vibe.handle(new Request(url), t.env, ctx)).status).toBe(200);
+
+    const again = await t.api(`/api/assets/${asset.id}`, { method: "DELETE" });
+    expect((await t.api(`/api/trash/${again.body.trash}`, { method: "DELETE" })).body).toEqual({ purged: true });
+    expect(t.env.MEDIA.objects.has(`assets/${asset.id}`)).toBe(false);
+    expect((await t.api(`/api/trash/${again.body.trash}/restore`, { method: "POST" })).status).toBe(404);
+  });
+
+  test("restoring a document restores the files it used", async () => {
+    const asset = await uploadCover();
+    const created = await createPost({ title: "Pic", slug: "pic", cover: { asset: asset.id, alt: "" } });
+    const doc = await t.api(`/api/documents/post/${created.id}`, { method: "DELETE" });
+    // No longer used by a live document, so it can be deleted too.
+    expect((await t.api(`/api/assets/${asset.id}`, { method: "DELETE" })).status).toBe(200);
+    await t.api(`/api/trash/${doc.body.trash}/restore`, { method: "POST" });
+    expect((await t.vibe.client(t.env).query(post).findFirst())?.cover?.width).toBe(1200);
+    expect((await t.api("/api/trash")).body.items).toHaveLength(0);
+  });
+
+  test("the cron purges items past retention, with their history", async () => {
+    const created = await createPost({ title: "Old", slug: "old" });
+    await t.api(`/api/documents/post/${created.id}`, { method: "DELETE" });
+    await t.vibe.scheduled({ cron: "* * * * *", scheduledTime: Date.now() + 29 * 86_400_000 }, t.env, ctx);
+    expect((await t.api("/api/trash")).body.items).toHaveLength(1);
+    await t.vibe.scheduled({ cron: "* * * * *", scheduledTime: Date.now() + 31 * 86_400_000 }, t.env, ctx);
+    expect((await t.api("/api/trash")).body.items).toHaveLength(0);
+    expect(t.env.DB.sqlite.query("SELECT COUNT(*) AS n FROM vibe_versions WHERE id = ?").get(created.id)).toEqual({ n: 0 });
+  });
+
+  test("trashed items can be previewed, files only by signed-in editors", async () => {
+    const created = await createPost({ title: "Peek", slug: "peek" });
+    const doc = await t.api(`/api/documents/post/${created.id}`, { method: "DELETE" });
+    const detail = await t.api(`/api/trash/${doc.body.trash}`);
+    expect(detail.body.documents).toEqual([expect.objectContaining({ locale: "en", status: "published", data: expect.objectContaining({ title: "Peek" }) })]);
+
+    const asset = await uploadCover();
+    const file = await t.api(`/api/assets/${asset.id}`, { method: "DELETE" });
+    const fileDetail = await t.api(`/api/trash/${file.body.trash}`);
+    expect(fileDetail.body.asset.url).toBe(`https://site.test/_vibe/api/trash/${file.body.trash}/file`);
+    const bytes = await t.vibe.handle(new Request(fileDetail.body.asset.url, { headers: { authorization: `Bearer ${await token()}` } }), t.env, ctx);
+    expect(bytes.status).toBe(200);
+    expect(bytes.headers.get("content-type")).toBe("image/png");
+    expect((await t.vibe.handle(new Request(fileDetail.body.asset.url), t.env, ctx)).status).toBe(401);
+  });
+
+  async function token() {
+    return (await t.api("/api/session", { method: "POST", json: { dev: true } })).body.token as string;
+  }
+
+  test("emptying the trash, and anonymous users can't see it", async () => {
+    await t.api(`/api/documents/post/${(await createPost({ title: "A", slug: "a" })).id}`, { method: "DELETE" });
+    await t.api(`/api/assets/${(await uploadCover()).id}`, { method: "DELETE" });
+    t.setToken("");
+    expect((await t.api("/api/trash")).status).toBe(401);
+    await t.signIn();
+    expect((await t.api("/api/trash", { method: "DELETE" })).body).toEqual({ purged: 2 });
+    expect(t.env.MEDIA.objects.size).toBe(0);
+  });
+});
+
 describe("auth", () => {
   test("anonymous users read published content but not drafts or the editor API", async () => {
     await createPost({ title: "Public", slug: "public" });

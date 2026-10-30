@@ -82,7 +82,7 @@ export default vibe({
 ```
 
 - `fetch`: requests under `/_vibe/*` go to the CMS; everything else goes to yours.
-- `scheduled`: CMS jobs (scheduled publishing, plugin `cron`) run alongside yours.
+- `scheduled`: CMS jobs (scheduled publishing, purging expired trash, plugin `cron`) run alongside yours.
 - `queue`: batches for CMS/plugin queues are routed to them; others go to yours.
 
 ## When the framework owns the entry: `match` / `handle`

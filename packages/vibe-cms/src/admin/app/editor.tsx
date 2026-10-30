@@ -16,6 +16,7 @@ import {
   XIcon
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { emptyValue, validate, type Issue } from "../../schema/validate.ts";
 import type { DocumentData } from "../../schema/types.ts";
 import type { DocumentSlotProps } from "../index.ts";
@@ -243,11 +244,29 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     setBusy("delete");
     try {
       const translation = isTranslationOnly();
-      await cms.api(`/documents/${type}/${id}${translation ? `?locale=${locale}` : ""}`, { method: "DELETE" });
+      const { trash } = await cms.api<{ trash: string }>(`/documents/${type}/${id}${translation ? `?locale=${locale}` : ""}`, { method: "DELETE" });
       setNavigationBlocker(undefined);
       void queryClient.invalidateQueries({ queryKey: ["documents", type] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      cms.toast(translation ? `${localeName(locale)} translation deleted` : "Deleted", { type: "success" });
+      void queryClient.invalidateQueries({ queryKey: ["trash"] });
+      toast.success(translation ? `${localeName(locale)} translation moved to the trash` : "Moved to the trash", {
+        duration: 6000,
+        action: {
+          label: "Undo",
+          async onClick() {
+            try {
+              await cms.api(`/trash/${trash}/restore`, { method: "POST" });
+              void queryClient.invalidateQueries({ queryKey: ["documents", type] });
+              void queryClient.invalidateQueries({ queryKey: ["document", type, id] });
+              void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+              void queryClient.invalidateQueries({ queryKey: ["trash"] });
+              if(!translation) navigate(`/content/${type}/${id}`);
+            } catch (error) {
+              handleError(error);
+            }
+          }
+        }
+      });
       if(translation) void doc.refetch();
       else navigate(`/content/${type}`);
     } catch (error) {
@@ -450,7 +469,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
           <AlertDialogHeader>
             <AlertDialogTitle>{isTranslationOnly() ? `Delete the ${localeName(locale)} translation?` : `Delete “${title}”?`}</AlertDialogTitle>
             <AlertDialogDescription>
-              {isTranslationOnly() ? "Other languages are kept." : "This removes every language version and its history. Files it uses stay in the media library."}
+              {isTranslationOnly() ? "Other languages are kept." : "Every language version goes to the trash, with its history. Files it uses stay in the media library."} You can restore it from the trash.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -66,6 +66,7 @@ All in scope for v1:
 | Publishing | `published_ver` points at an immutable snapshot in `versions` |
 | Version history | `versions` is append-only; restore = copy a snapshot into `draft` |
 | Scheduling | `schedules` rows, executed by the CMS's `scheduled` handler (cron trigger) |
+| Trash | deletes move rows into `trash`; restore puts them back, purge removes them for good |
 | i18n | `(id, locale)` key; fallback rules configured via `locales` in the config |
 
 ```ts
@@ -111,6 +112,32 @@ A `v.asset()` field stores a reference plus per-usage fields, never a URL:
 Queries merge the asset record into the per-usage fields and add a URL. Deleting a document never deletes assets; assets no longer referenced by any document version are cleaned up separately.
 
 Image transforms (e.g. `image.src({ width: 800 })` producing Cloudflare Images URLs) are a fast follow after v1.
+
+## Trash
+
+Deleting a document, one translation, or a media file moves its rows into one table instead of removing them:
+
+```sql
+CREATE TABLE trash (
+  id         TEXT PRIMARY KEY,           -- "trs_…"
+  kind       TEXT NOT NULL,              -- "document" | "asset"
+  type       TEXT,                       -- content type, for documents
+  item_id    TEXT NOT NULL,              -- the document or asset ID it restores to
+  locale     TEXT,                       -- set when only one translation was deleted
+  label      TEXT NOT NULL,              -- title or filename, for the Trash page
+  payload    TEXT NOT NULL,              -- JSON: the removed documents rows, or the assets row
+  deleted_at INTEGER NOT NULL,
+  deleted_by TEXT NOT NULL
+);
+```
+
+- Version history and R2 objects stay where they are, so a restore is exact: same ID, same published state, same file URL. Trashed files return 404 while they're in the trash.
+- Pending schedules are dropped on delete, not restored.
+- Restoring a document also restores trashed files it references.
+- Restore is refused (409) if the ID and language exist again, or if it's a translation whose document is gone.
+- Purging removes the trash row, then the document's versions or the file's R2 object, unless something live or another trash row still needs them.
+- The `scheduled` handler purges items older than `trash.days` (default 30) in the config. Without a cron trigger, items stay until purged by hand.
+- API: `GET /trash`, `GET /trash/:id` (each deleted language's draft, or the file's details), `GET /trash/:id/file` (a trashed file's bytes, for previews), `POST /trash/:id/restore`, `DELETE /trash/:id`, `DELETE /trash` (empty). Each item needs the same delete permission that put it there.
 
 ## Open questions
 

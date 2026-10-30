@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
 import type { AnyConfig } from "../../config.ts";
@@ -37,6 +37,7 @@ import { Delayed } from "./delayed.tsx";
 import { MediaPage } from "./media.tsx";
 import { Dashboard, DocumentRoute, ListPage } from "./pages.tsx";
 import { SiteMark, SiteSettingsPage } from "./settings.tsx";
+import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
 import { embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 
@@ -207,6 +208,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   const types = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
   const singletons = types.filter(t => collectionSettings(config, t).singleton);
   const collections = types.filter(t => !collectionSettings(config, t).singleton);
+  const canTrash = session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete);
 
   let page: React.ReactNode = null;
   let params: Record<string, string> | null;
@@ -215,6 +217,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   else if((params = match("/content/:type/:id", path)) && types.includes(params.type!)) page = <DocumentRoute type={params.type!} id={params.id!} />;
   else if(path === "/media" && session.permissions.media.read) page = <MediaPage />;
   else if(path === "/settings" && session.permissions.site) page = <SiteSettingsPage />;
+  else if(path === "/trash" && canTrash) page = <TrashPage />;
   else {
     for(const [pattern, entry] of Object.entries(plugins.pages)) {
       const found = match(pattern, path);
@@ -329,6 +332,18 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
                       </NavButton>
                     </SidebarMenuItem>
                   ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          )}
+          {/* Apart from the content types, at the bottom, so it doesn't read as one of them. */}
+          {canTrash && (
+            <SidebarGroup className="mt-auto">
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <NavButton active={active("/trash")} to="/trash" tooltip="Trash"><Trash2Icon /> <span>Trash</span></NavButton>
+                  </SidebarMenuItem>
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -485,6 +500,9 @@ function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boo
               </CommandItem>
             ))}
             {session.permissions.media.read && <CommandItem onSelect={() => go("/media")}><ImageIcon /> Media</CommandItem>}
+            {(session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete)) && (
+              <CommandItem onSelect={() => go("/trash")}><Trash2Icon /> Trash</CommandItem>
+            )}
           </CommandGroup>
           <CommandGroup heading="Create">
             {types.filter(t => session.permissions.types[t]?.write && !collectionSettings(config, t).singleton).map(type => (
