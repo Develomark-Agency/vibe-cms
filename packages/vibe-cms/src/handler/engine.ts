@@ -16,10 +16,11 @@ import { findReferences, isRecord, pickUnionOption, schemaAt, validate, type Iss
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeMatches } from "./analyze.ts";
 import { can, require } from "./auth.ts";
-import { all, first, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type VersionRow } from "./db.ts";
+import { all, first, getMeta, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type VersionRow } from "./db.ts";
 import type { D1, ExecutionContext, R2 } from "./platform.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
 import { SqlBuilder } from "./sql.ts";
+import { MAX_TEXT_EDIT_BYTES, textKind, textMime } from "../text-files.ts";
 
 export interface EngineState {
   config: AnyConfig,
@@ -40,6 +41,57 @@ export interface RequestScope {
 }
 
 export type Doc = DocumentData & { id: string, $meta: DocumentMeta };
+
+/** How the site presents itself in the editor and the panel. Code sets the defaults; editors can change them. */
+export interface SiteSettings {
+  name: string,
+  /** `#rrggbb`, or null for the neutral default. */
+  accent: string | null,
+  icon: { id: string, url: string } | null
+}
+
+export interface SiteSettingsPatch {
+  name?: string,
+  accent?: string | null,
+  /** Asset ID; null removes the icon. */
+  icon?: string | null
+}
+
+interface StoredSite {
+  name?: string,
+  accent?: string,
+  icon?: string
+}
+
+const SITE_KEY = "site";
+
+export interface MediaFolder {
+  /** `"posts/covers"`; segments are separated by `/`. */
+  path: string,
+  /** Files directly in this folder, not in subfolders. */
+  files: number
+}
+
+/** `" /posts//covers/ "` → `"posts/covers"`; empty → null (the root). Rejects names a directory couldn't have. */
+export function normalizeFolder(input: string | null | undefined): string | null {
+  if(input === null || input === undefined) return null;
+  const segments = input.split("/").map(s => s.trim()).filter(Boolean);
+  if(segments.length === 0) return null;
+  for(const segment of segments) {
+    if(segment === "." || segment === ".." || segment.length > 64 || segment.includes("\\") || [...segment].some(char => char.charCodeAt(0) < 32)) {
+      throw new HttpError(400, `"${segment}" isn't a valid folder name`);
+    }
+  }
+  if(segments.length > 12) throw new HttpError(400, "Folders nest at most 12 deep");
+  return segments.join("/");
+}
+
+/** `"a/b/c"` → `["a", "a/b", "a/b/c"]`. */
+function withAncestors(path: string): string[] {
+  const parts = path.split("/");
+  return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+}
+const HEX = /^#[0-9a-f]{6}$/i;
 
 /** D1 caps bound parameters per statement at 100. */
 const MAX_PARAMS = 90;
@@ -288,8 +340,11 @@ export class Engine {
     }
   }
 
-  private assetUrl(row: Pick<AssetRow, "id" | "filename" | "mime">): string {
-    return `${this.scope.origin}${this.state.prefix}/media/${row.id}.${extensionFor(row.mime, row.filename)}`;
+  private assetUrl(row: Pick<AssetRow, "id" | "filename" | "mime" | "meta">): string {
+    // Media is cached as immutable, so edited content gets a new URL: `?v=` counts edits.
+    const version = (JSON.parse(row.meta) as AssetMeta).version;
+    const query = typeof version === "number" && version > 0 ? `?v=${version}` : "";
+    return `${this.scope.origin}${this.state.prefix}/media/${row.id}.${extensionFor(row.mime, row.filename)}${query}`;
   }
 
   toAsset(row: AssetRow) {
@@ -677,7 +732,9 @@ export class Engine {
 
   async upload(file: File, options: { folder?: string | null, type?: string, field?: string }) {
     const session = this.writer({ action: "write", scope: "media" });
-    const mime = file.type || "application/octet-stream";
+    // Browsers send unknown types (often .md, .yaml, .csv) as octet-stream in multipart bodies.
+    const sent = file.type && file.type !== "application/octet-stream" ? file.type : null;
+    const mime = sent ?? textMime(file.name) ?? "application/octet-stream";
     let schema: AssetSchema | undefined;
     if(options.type && options.field) {
       const found = schemaAt(getSchema(this.config, options.type), options.field.split("."));
@@ -687,7 +744,7 @@ export class Engine {
     }
     const output = {
       filename: (file.name || "upload").replace(/[/\\]/g, "_").slice(0, 200),
-      folder: options.folder ?? schema?.folder ?? null
+      folder: normalizeFolder(options.folder ?? schema?.folder)
     } as { filename: string, folder: string | null, reject?: string };
     await this.state.plugins.transform("media.beforeUpload", { mime, size: file.size, session: session ?? undefined }, output);
     if(output.reject) throw new HttpError(422, output.reject);
@@ -706,7 +763,7 @@ export class Engine {
     const row: AssetRow = {
       id,
       key,
-      folder: output.folder,
+      folder: normalizeFolder(output.folder),
       filename: output.filename,
       mime,
       size: file.size,
@@ -719,6 +776,7 @@ export class Engine {
       "INSERT INTO vibe_assets (id, key, folder, filename, mime, size, meta, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [row.id, row.key, row.folder, row.filename, row.mime, row.size, row.meta, row.created_at, row.created_by]
     );
+    await this.touchFolder(row.folder);
     return this.toAsset(row);
   }
 
@@ -746,8 +804,74 @@ export class Engine {
       options.offset ?? 0
     ]);
     const total = await first<{ n: number }>(this.db, `SELECT COUNT(*) AS n FROM vibe_assets WHERE ${where}`, params);
-    const folders = await all<{ folder: string }>(this.db, "SELECT DISTINCT folder FROM vibe_assets WHERE folder IS NOT NULL ORDER BY folder");
-    return { assets: rows.map(r => this.toAsset(r)), total: total?.n ?? 0, folders: folders.map(f => f.folder) };
+    const folders = await this.listFolders();
+    return { assets: rows.map(r => this.toAsset(r)), total: total?.n ?? 0, folders: folders.map(f => f.path) };
+  }
+
+  // --- Folders ---------------------------------------------------------------
+
+  private async touchFolder(path: string | null) {
+    if(path) await run(this.db, "INSERT OR IGNORE INTO vibe_folders (path, created_at) VALUES (?, ?)", [path, Date.now()]);
+  }
+
+  /** Every folder: stored ones, ones files are in, and all their parents. */
+  async listFolders(): Promise<MediaFolder[]> {
+    require(this.config, this.scope.session, { action: "read", scope: "media" });
+    const [stored, counts] = await Promise.all([
+      all<{ path: string }>(this.db, "SELECT path FROM vibe_folders"),
+      all<{ folder: string, n: number }>(this.db, "SELECT folder, COUNT(*) AS n FROM vibe_assets WHERE folder IS NOT NULL GROUP BY folder")
+    ]);
+    const files = new Map(counts.map(c => [c.folder, c.n]));
+    const paths = new Set<string>();
+    for(const path of [...stored.map(s => s.path), ...files.keys()]) withAncestors(path).forEach(p => paths.add(p));
+    return [...paths].sort((a, b) => a.localeCompare(b)).map(path => ({ path, files: files.get(path) ?? 0 }));
+  }
+
+  async createFolder(input: string): Promise<MediaFolder> {
+    this.writer({ action: "write", scope: "media" });
+    const path = normalizeFolder(input);
+    if(!path) throw new HttpError(400, "Name the folder");
+    await this.touchFolder(path);
+    return { path, files: 0 };
+  }
+
+  /** Renames or moves a folder with everything in it. */
+  async moveFolder(fromInput: string, toInput: string): Promise<{ path: string }> {
+    this.writer({ action: "write", scope: "media" });
+    const from = normalizeFolder(fromInput);
+    const to = normalizeFolder(toInput);
+    if(!from || !to) throw new HttpError(400, "Both folders need a name");
+    if(from === to) return { path: to };
+    if(to.startsWith(`${from}/`)) throw new HttpError(400, "A folder can't move into itself");
+    const existing = await this.listFolders();
+    if(!existing.some(f => f.path === from)) throw new HttpError(404, "Folder not found");
+    if(existing.some(f => f.path === to)) throw new HttpError(409, `There's already a folder called "${to}"`);
+    // Prefix compare rather than LIKE, so `%` and `_` in names stay literal.
+    const prefix = `${from}/`;
+    await run(
+      this.db,
+      "UPDATE vibe_assets SET folder = ? || substr(folder, ?) WHERE folder = ? OR substr(folder, 1, ?) = ?",
+      [to, from.length + 1, from, prefix.length, prefix]
+    );
+    await run(
+      this.db,
+      "UPDATE vibe_folders SET path = ? || substr(path, ?) WHERE path = ? OR substr(path, 1, ?) = ?",
+      [to, from.length + 1, from, prefix.length, prefix]
+    );
+    await this.touchFolder(to);
+    return { path: to };
+  }
+
+  /** Only empty folders: files have to be moved or deleted first, so nothing disappears by surprise. */
+  async deleteFolder(input: string): Promise<{ deleted: true }> {
+    this.writer({ action: "delete", scope: "media" });
+    const path = normalizeFolder(input);
+    if(!path) throw new HttpError(400, "Name the folder");
+    const prefix = `${path}/`;
+    const used = await first(this.db, "SELECT 1 FROM vibe_assets WHERE folder = ? OR substr(folder, 1, ?) = ? LIMIT 1", [path, prefix.length, prefix]);
+    if(used) throw new HttpError(409, "This folder still has files in it");
+    await run(this.db, "DELETE FROM vibe_folders WHERE path = ? OR substr(path, 1, ?) = ?", [path, prefix.length, prefix]);
+    return { deleted: true };
   }
 
   async getAsset(id: string) {
@@ -766,10 +890,25 @@ export class Engine {
     this.writer({ action: "write", scope: "media" });
     const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [id]);
     if(!row) throw new HttpError(404, "Asset not found");
-    const folder = patch.folder === undefined ? row.folder : patch.folder || null;
-    const filename = patch.filename?.trim() || row.filename;
+    const folder = patch.folder === undefined ? row.folder : normalizeFolder(patch.folder);
+    const filename = patch.filename?.trim().replace(/[/\\]/g, "_").slice(0, 200) || row.filename;
+    await this.touchFolder(folder);
     await run(this.db, "UPDATE vibe_assets SET folder = ?, filename = ? WHERE id = ?", [folder, filename, id]);
     return this.toAsset({ ...row, folder, filename });
+  }
+
+  /** Replaces a text file's content in place; the asset keeps its ID, so documents still point at it. */
+  async replaceContent(id: string, content: ArrayBuffer) {
+    this.writer({ action: "write", scope: "media" });
+    const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [id]);
+    if(!row) throw new HttpError(404, "Asset not found");
+    if(!textKind(row.filename, row.mime)) throw new HttpError(415, "Only text files can be edited");
+    if(content.byteLength > MAX_TEXT_EDIT_BYTES) throw new HttpError(413, "Text files can be edited up to 1 MB");
+    await this.storage.put(row.key, content, { httpMetadata: { contentType: row.mime } });
+    const meta = JSON.parse(row.meta) as AssetMeta;
+    const next = JSON.stringify({ ...meta, version: (typeof meta.version === "number" ? meta.version : 0) + 1, editedAt: new Date().toISOString() });
+    await run(this.db, "UPDATE vibe_assets SET size = ?, meta = ? WHERE id = ?", [content.byteLength, next, id]);
+    return this.toAsset({ ...row, size: content.byteLength, meta: next });
   }
 
   async deleteAsset(id: string) {
@@ -781,9 +920,62 @@ export class Engine {
       `%"${id}"%`
     ]);
     if(used) throw new HttpError(409, "This file is used by a document");
+    if((await this.storedSite()).icon === id) throw new HttpError(409, "This file is the site's icon");
     await this.storage.delete(row.key);
     await run(this.db, "DELETE FROM vibe_assets WHERE id = ?", [id]);
     return { deleted: true };
+  }
+
+  // --- Site settings ------------------------------------------------------------
+
+  private async storedSite(): Promise<StoredSite> {
+    const raw = await getMeta(this.db, SITE_KEY);
+    if(!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) ? parsed as StoredSite : {};
+  }
+
+  /** Public: the panel shows sites by these before anyone signs in. */
+  async site(fallbackName: string): Promise<SiteSettings> {
+    const stored = await this.storedSite();
+    const row = stored.icon ? await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [stored.icon]) : null;
+    return {
+      name: stored.name ?? this.config.name ?? fallbackName,
+      accent: stored.accent ?? null,
+      icon: row ? { id: row.id, url: this.assetUrl(row) } : null
+    };
+  }
+
+  async updateSite(patch: SiteSettingsPatch, fallbackName: string): Promise<SiteSettings> {
+    if(!this.scope.trusted || this.scope.session) require(this.config, this.scope.session, { action: "write", scope: "site" });
+    const next = await this.storedSite();
+    if(patch.name !== undefined) {
+      const name = patch.name.trim();
+      if(!name || name.length > 80) throw new HttpError(400, "The name needs 1-80 characters");
+      // Matching the code's name means "no override", so changing the config later still shows through.
+      if(name === this.config.name) delete next.name;
+      else next.name = name;
+    }
+    if(patch.accent !== undefined) {
+      if(patch.accent === null) delete next.accent;
+      else if(HEX.test(patch.accent)) next.accent = patch.accent.toLowerCase();
+      else throw new HttpError(400, "accent must be a #rrggbb color");
+    }
+    if(patch.icon !== undefined) {
+      if(patch.icon === null) {
+        delete next.icon;
+      } else {
+        const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [patch.icon]);
+        if(!row) throw new HttpError(400, "Icon asset not found");
+        if(!row.mime.startsWith("image/")) throw new HttpError(400, "The icon has to be an image");
+        next.icon = row.id;
+      }
+    }
+    await run(this.db, "INSERT INTO vibe_meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [
+      SITE_KEY,
+      JSON.stringify(next)
+    ]);
+    return this.site(fallbackName);
   }
 
   async serveAsset(file: string, request: Request): Promise<Response> {

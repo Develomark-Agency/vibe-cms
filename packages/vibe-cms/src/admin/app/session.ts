@@ -1,4 +1,6 @@
+import type { SiteSettings } from "../../handler/engine.ts";
 import { request, setToken, type SessionState, type SiteInfo } from "./client.ts";
+import { getTheme, isTheme, setTheme, subscribeTheme, type Theme } from "./theme.ts";
 
 /**
  * The panel ↔ editor message protocol (v1). The editor runs on the site's own
@@ -6,14 +8,20 @@ import { request, setToken, type SessionState, type SiteInfo } from "./client.ts
  */
 export type PanelMessage =
   | { type: "vibe:code", code: string }
-  | { type: "vibe:navigate", path: string };
+  | { type: "vibe:navigate", path: string }
+  /** The panel's theme, and its accent for sites that don't set their own. */
+  | { type: "vibe:appearance", theme: Theme, accent: string | null };
 
 export type EditorMessage =
   | { type: "vibe:ready", protocol: 1 }
   | { type: "vibe:needCode" }
   | { type: "vibe:navigated", path: string }
   | { type: "vibe:title", title: string }
-  | { type: "vibe:shortcut", key: string };
+  | { type: "vibe:shortcut", key: string }
+  /** The user changed the theme in the editor; the panel follows. */
+  | { type: "vibe:theme", theme: Theme }
+  /** The site's name, accent or icon changed. */
+  | { type: "vibe:site", site: SiteSettings };
 
 export const embedded = typeof window !== "undefined" && window.parent !== window;
 
@@ -21,6 +29,8 @@ export const embedded = typeof window !== "undefined" && window.parent !== windo
 let panelOrigin: string | null = null;
 const codeWaiters: Array<(code: string) => void> = [];
 const navigateListeners = new Set<(path: string) => void>();
+const accentListeners = new Set<() => void>();
+let panelAccent: string | null = null;
 
 if(embedded) {
   window.addEventListener("message", event => {
@@ -33,7 +43,28 @@ if(embedded) {
     if(message?.type === "vibe:navigate" && typeof message.path === "string" && (event.origin === panelOrigin || panelOrigin === "*")) {
       navigateListeners.forEach(listener => listener(message.path));
     }
+    // Only cosmetic, so accepted from the framing window before we know its origin.
+    if(message?.type === "vibe:appearance") {
+      if(isTheme(message.theme)) setTheme(message.theme);
+      const accent = typeof message.accent === "string" && /^#[0-9a-f]{6}$/i.test(message.accent) ? message.accent : null;
+      if(accent !== panelAccent) {
+        panelAccent = accent;
+        accentListeners.forEach(listener => listener());
+      }
+    }
   });
+  // Echoes of the panel's own change are ignored there, since the theme is already set.
+  subscribeTheme(() => postToPanel({ type: "vibe:theme", theme: getTheme() }));
+}
+
+/** The framing panel's accent, the fallback for sites without one. */
+export function getPanelAccent(): string | null {
+  return panelAccent;
+}
+
+export function subscribePanelAccent(listener: () => void): () => void {
+  accentListeners.add(listener);
+  return () => accentListeners.delete(listener);
 }
 
 export function postToPanel(message: EditorMessage) {

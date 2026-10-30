@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import type { SerializedConfig } from "../../config.ts";
 import { createQueryClient } from "../../query/index.ts";
+import type { SiteSettings } from "../../handler/engine.ts";
 import type { Session } from "../../server/index.ts";
 import type { AdminClient, Asset } from "../index.ts";
 
@@ -8,13 +9,17 @@ export interface SiteInfo extends SerializedConfig {
   prefix: string,
   dev: boolean,
   auth: { issuer: string } | null,
-  site: { id: string, name: string, admin: string }
+  site: { id: string, name: string, admin: string },
+  /** As of page load; the editor keeps the live copy under the "site" query. */
+  settings: SiteSettings
 }
 
 export interface Permissions {
   types: Record<string, { read: boolean, write: boolean, publish: boolean, delete: boolean }>,
   media: { read: boolean, write: boolean, delete: boolean },
-  locales: string[]
+  locales: string[],
+  /** May change the site's name, accent and icon. */
+  site: boolean
 }
 
 export interface SessionState {

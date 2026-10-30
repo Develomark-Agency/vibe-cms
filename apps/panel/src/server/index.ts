@@ -1,5 +1,5 @@
 import { decodeJwt } from "jose";
-import { fetchDescriptor, PanelError, type PanelSite } from "vibe-cms/panel";
+import { fetchDescriptor, normalizeBranding, PanelError, type PanelSite } from "vibe-cms/panel";
 import { authorizationUrl, exchangeCode, isAllowed, randomString, refresh, verifyIdToken, type OidcConfig } from "./oidc.ts";
 
 export interface Env {
@@ -10,7 +10,11 @@ export interface Env {
   OIDC_CLIENT_SECRET: string,
   /** Comma-separated email domains or group claim values allowed to use the panel. */
   PANEL_ALLOW?: string,
-  OIDC_SCOPES?: string
+  OIDC_SCOPES?: string,
+  /** White-labelling: the panel's name, accent (`#rrggbb`) and logo URL. */
+  PANEL_NAME?: string,
+  PANEL_ACCENT?: string,
+  PANEL_ICON?: string
 }
 
 interface SessionRow {
@@ -139,6 +143,9 @@ async function siteById(env: Env, id: string): Promise<PanelSite | null> {
 }
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
+  if(url.pathname === "/api/branding" && request.method === "GET") {
+    return json(normalizeBranding({ name: env.PANEL_NAME, accent: env.PANEL_ACCENT, icon: env.PANEL_ICON }), { headers: { "cache-control": "public, max-age=300" } });
+  }
   const session = await currentSession(request, env);
   if(!session) return json({ error: "Not signed in" }, { status: 401 });
   const path = url.pathname.slice(4);

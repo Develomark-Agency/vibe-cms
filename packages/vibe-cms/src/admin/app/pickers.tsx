@@ -229,9 +229,9 @@ export function AssetControl({ schema, value, onChange, path, issues, readOnly, 
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
         className={cn(
-          "relative flex flex-col overflow-hidden rounded-xl border bg-muted/30 transition-colors sm:flex-row",
-          dragging && "border-primary bg-primary/5",
-          field.errors.length > 0 && "border-destructive/60"
+          "relative flex flex-col overflow-hidden rounded-[16px] well transition-shadow sm:flex-row",
+          dragging && "shadow-[inset_0_0_0_2px_var(--brand)]",
+          field.errors.length > 0 && "shadow-[inset_0_0_0_1px_var(--destructive),var(--shadow-well)]"
         )}
       >
         {usage ? (
@@ -267,7 +267,7 @@ export function AssetControl({ schema, value, onChange, path, issues, readOnly, 
           </>
         ) : (
           <div className="flex w-full flex-col items-center gap-3 px-4 py-8 text-center">
-            <div className="flex size-10 items-center justify-center rounded-full bg-background shadow-sm ring-1 ring-border">
+            <div className="flex size-10 items-center justify-center rounded-full raised">
               {s.accept?.every(a => a.startsWith("image/")) ? <ImageIcon className="size-4" /> : s.accept?.every(a => a.startsWith("video/")) ? <FilmIcon className="size-4" /> : <FileIcon className="size-4" />}
             </div>
             <div>
@@ -391,8 +391,8 @@ export function AssetThumb({ asset, selected, onClick, style }: { asset: Asset, 
       onClick={onClick}
       style={style}
       className={cn(
-        "group/thumb flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-shadow hover:shadow-md focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
-        selected && "ring-2 ring-primary"
+        "group/thumb flex flex-col overflow-hidden rounded-[14px] elevated text-left transition-[box-shadow,scale] duration-150 hover:shadow-(--shadow-raised-hover) active:scale-[0.98] focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none",
+        selected && "shadow-[0_0_0_2px_var(--brand),var(--shadow-card)]"
       )}
     >
       <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-[repeating-conic-gradient(var(--muted)_0_25%,transparent_0_50%)] bg-[length:12px_12px]">
@@ -404,7 +404,7 @@ export function AssetThumb({ asset, selected, onClick, style }: { asset: Asset, 
           <FileIcon className="size-8 text-muted-foreground" />
         )}
       </div>
-      <div className="min-w-0 border-t px-2 py-1.5">
+      <div className="min-w-0 px-2.5 py-2">
         <p className="truncate text-xs font-medium">{asset.filename}</p>
         <p className="truncate text-[11px] text-muted-foreground">{describeAsset(asset)}</p>
       </div>

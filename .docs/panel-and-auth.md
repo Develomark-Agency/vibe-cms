@@ -210,6 +210,9 @@ OIDC_ISSUER=https://accounts.google.com
 OIDC_CLIENT_ID=1234.apps.googleusercontent.com
 OIDC_CLIENT_SECRET=…
 PANEL_ALLOW=my-agency.com        # who may use the panel: email domains, or a group claim value
+PANEL_NAME="Acme Studio"         # optional white-labelling: the panel's name,
+PANEL_ACCENT=#2563eb             #   accent colour (also used by framed sites without their own),
+PANEL_ICON=https://…/logo.png    #   and logo
 ```
 
 `PANEL_ALLOW` matters for providers like plain Google, where anyone with an account can sign in. Cloudflare Access can enforce this before requests reach the panel.

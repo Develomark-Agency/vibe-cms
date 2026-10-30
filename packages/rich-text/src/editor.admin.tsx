@@ -199,7 +199,7 @@ function LinkTool({ editor, cms }: { editor: Editor, cms: AdminClient }) {
           <ul className="-mx-1 max-h-48 overflow-y-auto">
             {results.map(r => (
               <li key={r.id}>
-                <button type="button" className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => apply(`vibe:${r.type}/${r.id}`)}>
+                <button type="button" className="flex w-full items-center justify-between gap-2 rounded-[10px] px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => apply(`vibe:${r.type}/${r.id}`)}>
                   <span className="truncate">{r.title}</span>
                   <span className="text-xs text-muted-foreground">{r.type}</span>
                 </button>
@@ -291,12 +291,13 @@ export default defineReactWidget<RichTextDoc, RichEditorOptions>(({ value, onCha
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-lg border border-input bg-transparent transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30",
-        field.errors.length > 0 && "border-destructive"
+        // Radii nest: 4px of well around a 10px toolbar, 2px of toolbar around 8px tools.
+        "rounded-[14px] well p-1 transition-shadow focus-within:ring-3 focus-within:ring-ring/50",
+        field.errors.length > 0 && "ring-1 ring-destructive"
       )}
     >
       {!field.readOnly && (
-        <div className="flex flex-wrap items-center gap-0.5 border-b bg-muted/40 px-1 py-1">
+        <div className="flex flex-wrap items-center gap-0.5 rounded-[10px] raised p-0.5">
           <Tool label="Bold" pressed={state.bold} onClick={() => chain().toggleBold().run()}><BoldIcon /></Tool>
           <Tool label="Italic" pressed={state.italic} onClick={() => chain().toggleItalic().run()}><ItalicIcon /></Tool>
           <Tool label="Underline" pressed={state.underline} onClick={() => chain().toggleUnderline().run()}><UnderlineIcon /></Tool>

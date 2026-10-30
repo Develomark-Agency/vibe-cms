@@ -3,12 +3,12 @@ import type { PluginDescriptor } from "../descriptor.ts";
 import { createQueryClient, type QueryClient } from "../query/index.ts";
 import { handleRequest } from "./api.ts";
 import { migrate, sha256 } from "./db.ts";
-import { Engine, type EngineState } from "./engine.ts";
+import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { PluginHost } from "./plugins.ts";
 
 export type * from "./platform.ts";
-export { Engine } from "./engine.ts";
+export { Engine, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
 
 export interface CoreBindings {
   /** D1 database holding content, versions and the media library index. */
@@ -61,6 +61,8 @@ export interface VibeHandler<C extends AnyConfig, E> {
   queue(batch: MessageBatch, env: E, ctx: ExecutionContext): Promise<boolean>,
   /** In-process content access for your site's code. */
   client(env: E): QueryClient<C>,
+  /** The site's name, accent and icon as editors set them in the editor's Site settings (asset URLs are root-relative). */
+  site(env: E): Promise<SiteSettings>,
   config: C
 }
 
@@ -171,6 +173,10 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     });
   }
 
+  async function site(env: E): Promise<SiteSettings> {
+    return new Engine(await state(env), { origin: "", session: null, trusted: true }).site(config.id ?? "site");
+  }
+
   function vibe(handlers: WorkerHandlers<E> = {}): WorkerExport<E> {
     return {
       async fetch(request, env, ctx) {
@@ -189,5 +195,5 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     };
   }
 
-  return Object.assign(vibe, { match, handle, scheduled, queue, client, config });
+  return Object.assign(vibe, { match, handle, scheduled, queue, client, site, config });
 }

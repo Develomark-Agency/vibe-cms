@@ -25,6 +25,8 @@ export interface RoleRules {
   write?: { locales: string[] },
   /** Media library access. */
   media?: Action[],
+  /** Editing the site's name, accent color and icon. */
+  siteSettings?: boolean,
   /** Per content type, or `"*"` for every type. */
   [type: string]: Action[] | boolean | { locales: string[] } | undefined
 }
@@ -128,7 +130,8 @@ type RuleChecks<C extends ConfigInput> = {
   all?: boolean,
   publish?: boolean,
   write?: { locales: ReadonlyArray<Locales<C>> },
-  media?: readonly Action[]
+  media?: readonly Action[],
+  siteSettings?: boolean
 } & { [T in Types<C> | "*"]?: readonly Action[] };
 
 type Placeholders<T> = T extends `${string}{${infer K}}${infer Rest}` ? K | Placeholders<Rest> : never;

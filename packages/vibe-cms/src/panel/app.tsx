@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronsUpDownIcon,
   ExternalLinkIcon,
@@ -6,10 +6,13 @@ import {
   KeyRoundIcon,
   LayoutGridIcon,
   LogOutIcon,
+  MonitorIcon,
+  MoonIcon,
   MoreHorizontalIcon,
   PlusIcon,
   ShieldAlertIcon,
   StarIcon,
+  SunIcon,
   Trash2Icon
 } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
@@ -18,7 +21,20 @@ import { toast } from "sonner";
 import { Button } from "../admin/components/ui/button.tsx";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, Command } from "../admin/components/ui/command.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../admin/components/ui/dialog.tsx";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../admin/components/ui/dropdown-menu.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger
+} from "../admin/components/ui/dropdown-menu.tsx";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../admin/components/ui/empty.tsx";
 import { Input } from "../admin/components/ui/input.tsx";
 import { Kbd } from "../admin/components/ui/kbd.tsx";
@@ -28,17 +44,10 @@ import { Spinner } from "../admin/components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../admin/components/ui/tooltip.tsx";
 import { cn } from "../admin/lib/utils.ts";
 import { ErrorBoundary } from "../admin/app/error-boundary.tsx";
-import { setDark } from "../admin/app/theme.ts";
+import type { EditorMessage, PanelMessage } from "../admin/app/session.ts";
+import { getTheme, isTheme, setAccent, setFavicon, setTheme, startTheme, subscribeTheme, useTheme, type Theme } from "../admin/app/theme.ts";
 import { Delayed } from "../admin/app/delayed.tsx";
-import { ShaderBackdrop } from "../admin/app/texture.tsx";
-import { PanelError, type PanelBackend, type PanelSite } from "./backend.ts";
-
-type EditorMessage =
-  | { type: "vibe:ready", protocol: number }
-  | { type: "vibe:needCode" }
-  | { type: "vibe:navigated", path: string }
-  | { type: "vibe:title", title: string }
-  | { type: "vibe:shortcut", key: string };
+import { DEFAULT_BRANDING, fetchDescriptor, PanelError, type PanelBackend, type PanelBranding, type PanelSite } from "./backend.ts";
 
 // --- Location ---------------------------------------------------------------------
 
@@ -91,44 +100,77 @@ function initials(name: string) {
   return name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
+/** The site's own icon, else its initials on its accent (or a colour derived from its ID). */
 function SiteMark({ site, className }: { site: PanelSite, className?: string }) {
+  const base = "flex size-6 shrink-0 items-center justify-center rounded-[6px] text-[10px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_0_0_1px_rgb(0_0_0/0.08)]";
+  if(site.icon) return <img src={site.icon} alt="" className={cn(base, "object-cover", className)} />;
   let hue = 0;
   for(const char of site.id) hue = (hue * 31 + char.charCodeAt(0)) % 360;
   return (
-    <span
-      className={cn("flex size-6 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold text-white", className)}
-      style={{ background: `oklch(0.55 0.15 ${hue})` }}
-    >
+    <span className={cn(base, className)} style={{ background: site.accent ?? `oklch(0.55 0.15 ${hue})` }}>
       {initials(site.name)}
     </span>
   );
+}
+
+/** The agency's logo, else the first letter of its name on the accent. */
+function PanelMark({ branding, className }: { branding: PanelBranding, className?: string }) {
+  if(branding.icon) return <img src={branding.icon} alt="" className={cn("aspect-square shrink-0 object-cover", className)} />;
+  return <span className={cn("flex aspect-square shrink-0 items-center justify-center raised-brand font-semibold", className)}>{branding.name.charAt(0).toLowerCase()}</span>;
+}
+
+/** Names, accents and icons change on the sites themselves; the stored list is only the fallback. */
+function useLiveSites(sites: PanelSite[] | undefined): PanelSite[] | undefined {
+  const descriptors = useQueries({
+    queries: (sites ?? []).map(site => ({
+      queryKey: ["descriptor", site.id],
+      queryFn: () => fetchDescriptor(site.url),
+      staleTime: 60_000,
+      retry: false
+    }))
+  });
+  return sites?.map((site, i) => {
+    const live = descriptors[i]?.data;
+    return live ? { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null } : site;
+  });
+}
+
+function useBranding(backend: PanelBackend): PanelBranding {
+  const branding = useQuery({ queryKey: ["branding"], queryFn: () => backend.branding(), staleTime: Infinity }).data ?? DEFAULT_BRANDING;
+  useEffect(() => {
+    setAccent(branding.accent);
+    setFavicon(branding.icon);
+  }, [branding.accent, branding.icon]);
+  return branding;
 }
 
 // --- App ----------------------------------------------------------------------------
 
 function Panel({ backend }: { backend: PanelBackend }) {
   const me = useQuery({ queryKey: ["me"], queryFn: () => backend.me(), retry: false });
+  const branding = useBranding(backend);
   if(me.isLoading) return <Delayed><div className="flex h-full items-center justify-center"><Spinner className="size-5" /></div></Delayed>;
   if(me.isError) return <div className="flex h-full items-center justify-center text-sm text-destructive">{(me.error as Error).message}</div>;
-  if(!me.data) return <SignIn backend={backend} />;
-  return <Shell backend={backend} user={me.data} />;
+  if(!me.data) return <SignIn backend={backend} branding={branding} />;
+  return <Shell backend={backend} branding={branding} user={me.data} />;
 }
 
-function SignIn({ backend }: { backend: PanelBackend }) {
+function SignIn({ backend, branding }: { backend: PanelBackend, branding: PanelBranding }) {
   const error = new URLSearchParams(location.search).get("error");
   return (
-    <div className="relative flex h-full items-center justify-center overflow-hidden p-6">
-      <ShaderBackdrop variant="aurora" />
-      <div className="relative z-10 flex w-full max-w-sm flex-col items-center gap-5 rounded-2xl border bg-background/80 px-8 py-10 text-center shadow-[0_24px_60px_-30px_rgb(0_0_0/0.45)] backdrop-blur-md">
-        <div className="flex size-12 items-center justify-center rounded-2xl bg-brand text-brand-foreground shadow-sm">
-          <KeyRoundIcon className="size-5" />
-        </div>
+    <div className="flex h-full items-center justify-center bg-sidebar p-6">
+      <div className="flex w-full max-w-sm flex-col items-center gap-5 rounded-[24px] elevated px-8 py-10 text-center">
+        {branding.icon ? <PanelMark branding={branding} className="size-12 rounded-[14px]" /> : (
+          <div className="flex size-12 items-center justify-center rounded-[14px] raised-brand">
+            <KeyRoundIcon className="size-5" />
+          </div>
+        )}
         <div className="space-y-2">
-          <p className="eyebrow">Panel</p>
+          <p className="eyebrow">{branding.name === DEFAULT_BRANDING.name ? "Panel" : branding.name}</p>
           <h1 className="text-xl font-medium tracking-tight">Sign in to your sites</h1>
           <p className="text-sm text-muted-foreground">One sign-in for every site your agency manages.</p>
         </div>
-        {error && <p className="w-full rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+        {error && <p className="w-full rounded-[12px] bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         <Button size="lg" className="w-full" render={<a href={`${backend.signInUrl}?return=${encodeURIComponent(location.pathname)}`} />} nativeButton={false}>
           Continue with your identity provider
         </Button>
@@ -137,7 +179,7 @@ function SignIn({ backend }: { backend: PanelBackend }) {
   );
 }
 
-function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string, email?: string } }) {
+function Shell({ backend, branding, user }: { backend: PanelBackend, branding: PanelBranding, user: { name?: string, email?: string } }) {
   const queryClient = useQueryClient();
   const { siteId, rest } = useRoute();
   const [addOpen, setAddOpen] = useState(false);
@@ -146,7 +188,9 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
   useCloseOnFrameFocus(accountOpen, () => setAccountOpen(false));
   useCloseOnFrameFocus(paletteOpen, () => setPaletteOpen(false));
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => backend.sites() });
-  const site = sites.data?.find(s => s.id === siteId) ?? null;
+  const live = useLiveSites(sites.data);
+  const site = live?.find(s => s.id === siteId) ?? null;
+  const [theme] = useTheme();
 
   const favorite = useMutation({
     mutationFn: ({ id, value }: { id: string, value: boolean }) => backend.setFavorite(id, value),
@@ -179,8 +223,8 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
   }, []);
 
   useEffect(() => {
-    if(!site) document.title = "Sites";
-  }, [site]);
+    if(!site) document.title = `Sites · ${branding.name}`;
+  }, [site, branding.name]);
 
   function openExternally(target: PanelSite) {
     window.open(backend.mode === "hosted" ? `/go/${encodeURIComponent(target.id)}` : `${target.admin}/`, "_blank", "noopener");
@@ -189,12 +233,12 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-sidebar px-3">
-        <button onClick={() => go("/")} className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm font-semibold tracking-tight hover:bg-sidebar-accent">
-          <span className="flex size-6 items-center justify-center rounded-md bg-primary text-[11px] text-primary-foreground">v</span>
-          <span className="hidden sm:inline">vibe</span>
+        <button onClick={() => go("/")} className="flex items-center gap-2 rounded-[10px] py-1 pr-2 pl-1 text-sm font-semibold tracking-tight transition-[background-color,scale] duration-150 hover:bg-foreground/[0.05] active:scale-[0.97]">
+          <PanelMark branding={branding} className="size-6 rounded-[7px] text-[11px]" />
+          <span className="hidden sm:inline">{branding.name}</span>
         </button>
         <span className="text-muted-foreground/40">/</span>
-        <SiteSwitcher sites={sites.data ?? []} current={site} onAdd={() => setAddOpen(true)} />
+        <SiteSwitcher sites={live ?? []} current={site} onAdd={() => setAddOpen(true)} />
         {site && (
           <>
             <Tooltip>
@@ -213,13 +257,13 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
           </>
         )}
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" className="hidden text-muted-foreground sm:flex" onClick={() => setPaletteOpen(true)}>
+          <Button variant="outline" size="sm" className="hidden pr-1 text-muted-foreground sm:flex" onClick={() => setPaletteOpen(true)}>
             Jump to… <Kbd>⌘K</Kbd>
           </Button>
-          {backend.mode === "local" && <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">Local</span>}
+          {backend.mode === "local" && <span className="rounded-full well px-2 py-0.5 text-xs text-muted-foreground">Local</span>}
           <DropdownMenu open={accountOpen} onOpenChange={setAccountOpen}>
             <DropdownMenuTrigger render={
-              <Button variant="ghost" size="icon-sm" aria-label="Account" className="rounded-full bg-muted text-xs font-medium">
+              <Button variant="ghost" size="icon-sm" aria-label="Account" className="rounded-full raised text-xs font-medium">
                 {(user.name ?? user.email ?? "?").charAt(0).toUpperCase()}
               </Button>
             } />
@@ -227,6 +271,17 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
               <DropdownMenuGroup>
                 <DropdownMenuLabel className="truncate">{user.email ?? user.name}</DropdownMenuLabel>
               </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>{theme === "dark" ? <MoonIcon /> : theme === "light" ? <SunIcon /> : <MonitorIcon />} Theme</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup value={theme} onValueChange={next => setTheme(next as Theme)}>
+                    <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               {backend.signOut && (
                 <>
                   <DropdownMenuSeparator />
@@ -242,9 +297,9 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
       </header>
       <main className="relative min-h-0 flex-1">
         {siteId === null ? (
-          <SiteList backend={backend} sites={sites.data} loading={sites.isLoading} onAdd={() => setAddOpen(true)} onOpenExternally={openExternally} />
+          <SiteList backend={backend} sites={live} loading={sites.isLoading} onAdd={() => setAddOpen(true)} onOpenExternally={openExternally} />
         ) : site ? (
-          <SiteFrame key={site.id} backend={backend} site={site} initialPath={rest} onShortcut={() => setPaletteOpen(true)} />
+          <SiteFrame key={site.id} backend={backend} branding={branding} site={site} initialPath={rest} onShortcut={() => setPaletteOpen(true)} />
         ) : sites.isLoading ? (
           <Delayed><div className="flex h-full items-center justify-center"><Spinner /></div></Delayed>
         ) : (
@@ -258,7 +313,7 @@ function Shell({ backend, user }: { backend: PanelBackend, user: { name?: string
           <CommandList>
             <CommandEmpty>No sites found.</CommandEmpty>
             <CommandGroup heading="Sites">
-              {sortSites(sites.data ?? []).map(s => (
+              {sortSites(live ?? []).map(s => (
                 <CommandItem key={s.id} value={`${s.name} ${s.url}`} onSelect={() => {
                   setPaletteOpen(false);
                   go(`/s/${encodeURIComponent(s.id)}/`);
@@ -346,9 +401,8 @@ function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
   const list = sortSites(sites ?? []).filter(s => `${s.name} ${s.url}`.toLowerCase().includes(filter.toLowerCase()));
   return (
     <div className="h-full overflow-y-auto">
-      <section className="relative overflow-hidden border-b">
-        <ShaderBackdrop />
-        <div className="relative z-10 mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-3 px-4 pt-16 pb-8 md:px-8">
+      <section>
+        <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-3 px-4 pt-12 pb-2 md:px-8">
           <div className="space-y-2">
             <p className="eyebrow">{backend.mode === "hosted" ? "Agency" : "Local"} · {sites?.length ?? 0} {sites?.length === 1 ? "site" : "sites"}</p>
             <h1 className="text-3xl font-medium tracking-[-0.03em]">Sites</h1>
@@ -357,14 +411,14 @@ function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
             </p>
           </div>
           <div className="flex gap-2">
-            {(sites?.length ?? 0) > 6 && <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter" className="w-48 bg-background/70 backdrop-blur" />}
+            {(sites?.length ?? 0) > 6 && <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter" className="w-48" />}
             <Button onClick={onAdd}><PlusIcon /> Add site</Button>
           </div>
         </div>
       </section>
       <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 md:px-8">
         {sites?.length === 0 ? (
-          <Empty className="border border-dashed">
+          <Empty className="rounded-[16px] well">
             <EmptyHeader>
               <EmptyMedia variant="icon"><GlobeIcon /></EmptyMedia>
               <EmptyTitle>No sites yet</EmptyTitle>
@@ -375,21 +429,22 @@ function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
         ) : (
           <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((site, i) => (
-              <div key={site.id} style={{ "--i": i } as CSSProperties} className="group/card relative flex items-center gap-3 rounded-xl border bg-card p-4 transition-[box-shadow,translate,border-color] duration-200 hover:-translate-y-0.5 hover:border-foreground/15 hover:shadow-md">
-                <SiteMark site={site} className="size-10 rounded-lg text-sm" />
+              <div key={site.id} style={{ "--i": i } as CSSProperties} className="group/card relative flex items-center gap-3 rounded-[18px] elevated p-2.5 transition-[box-shadow,scale] duration-200 ease-out hover:shadow-(--shadow-raised-hover) has-[button:active]:scale-[0.985]">
+                <SiteMark site={site} className="size-11 rounded-[8px] text-sm" />
                 <button className="min-w-0 flex-1 text-left after:absolute after:inset-0" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
                   <span className="block truncate font-medium">{site.name}</span>
                   <span className="block truncate text-xs text-muted-foreground">{new URL(site.url).host}</span>
                 </button>
+                {/* Same 44px square and 8px corner as the mark: both sit 10px inside the 18px card. */}
                 <div className="relative z-10 flex items-center">
-                  <Button variant="ghost" size="icon-sm" aria-label={site.favorite ? "Unfavorite" : "Favorite"} onClick={async () => {
+                  <Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label={site.favorite ? "Unfavorite" : "Favorite"} onClick={async () => {
                     await backend.setFavorite(site.id, !site.favorite);
                     void queryClient.invalidateQueries({ queryKey: ["sites"] });
                   }}>
                     <StarIcon className={cn(site.favorite ? "fill-amber-400 text-amber-400" : "opacity-0 group-hover/card:opacity-100")} />
                   </Button>
                   <DropdownMenu>
-                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
+                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem onClick={() => onOpenExternally(site)}><ExternalLinkIcon /> Open in new tab</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
@@ -456,13 +511,31 @@ function AddSiteDialog({ backend, open, onOpenChange }: { backend: PanelBackend,
 }
 
 /** Frames one site's editor and speaks the panel ↔ editor protocol with it. */
-function SiteFrame({ backend, site, initialPath, onShortcut }: { backend: PanelBackend, site: PanelSite, initialPath: string, onShortcut(): void }) {
+function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
+  backend: PanelBackend,
+  branding: PanelBranding,
+  site: PanelSite,
+  initialPath: string,
+  onShortcut(): void
+}) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const queryClient = useQueryClient();
   const origin = new URL(site.admin).origin;
   const [state, setState] = useState<"loading" | "ready" | "denied" | "unreachable">("loading");
   const [error, setError] = useState<string | null>(null);
   // The src is fixed per site; later navigation happens inside the editor and is mirrored here.
   const src = useMemo(() => `${site.admin}${initialPath.startsWith("/") ? initialPath : `/${initialPath}`}`, [site.id]);
+
+  function post(message: PanelMessage) {
+    frame.current?.contentWindow?.postMessage(message, origin);
+  }
+  function sendAppearance() {
+    post({ type: "vibe:appearance", theme: getTheme(), accent: branding.accent });
+  }
+
+  // The editor follows the panel's theme, and the panel follows changes made in the editor.
+  useEffect(() => subscribeTheme(sendAppearance), [site.id, branding.accent]);
+  useEffect(sendAppearance, [branding.accent]);
 
   useEffect(() => {
     const timeout = setTimeout(() => setState(s => (s === "loading" ? "unreachable" : s)), 20_000);
@@ -472,13 +545,25 @@ function SiteFrame({ backend, site, initialPath, onShortcut }: { backend: PanelB
       switch(message?.type) {
         case "vibe:ready":
           clearTimeout(timeout);
+          sendAppearance();
           setState("ready");
+          break;
+        case "vibe:theme":
+          if(isTheme(message.theme)) setTheme(message.theme);
+          break;
+        case "vibe:site":
+          queryClient.setQueryData(["descriptor", site.id], (old: object | undefined) => old && {
+            ...old,
+            name: message.site.name,
+            accent: message.site.accent,
+            icon: message.site.icon?.url ?? null
+          });
           break;
         case "vibe:needCode":
           try {
             // Codes are only ever minted for, and sent to, the framed site.
             const code = await backend.codeFor(site.id);
-            if(code) frame.current?.contentWindow?.postMessage({ type: "vibe:code", code }, origin);
+            if(code) post({ type: "vibe:code", code });
           } catch (e) {
             setError((e as Error).message);
             setState(e instanceof PanelError && e.status === 403 ? "denied" : "unreachable");
@@ -528,17 +613,8 @@ function SiteFrame({ backend, site, initialPath, onShortcut }: { backend: PanelB
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
 
-function applyTheme() {
-  const media = matchMedia("(prefers-color-scheme: dark)");
-  function apply() {
-    setDark(media.matches);
-  }
-  apply();
-  media.addEventListener("change", apply);
-}
-
 export function startPanel(backend: PanelBackend, element: HTMLElement = document.getElementById("root")!) {
-  applyTheme();
+  startTheme();
   createRoot(element).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

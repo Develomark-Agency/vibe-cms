@@ -132,8 +132,8 @@ export interface Permit {
   action: Action,
   type?: string,
   locale?: string,
-  /** `"media"` for the asset library. */
-  scope?: "content" | "media"
+  /** `"media"` for the asset library, `"site"` for the site's name, accent and icon. */
+  scope?: "content" | "media" | "site"
 }
 
 export function can(config: AnyConfig, session: Session | null, permit: Permit): boolean {
@@ -148,6 +148,7 @@ export function can(config: AnyConfig, session: Session | null, permit: Permit):
 
 function allows(rules: RoleRules, { action, type, locale, scope }: Permit): boolean {
   if(rules.all) return true;
+  if(scope === "site") return rules.siteSettings === true;
   if(scope === "media") {
     if(rules.media) return rules.media.includes(action);
     return action === "read" || hasAnyWrite(rules);
@@ -199,6 +200,7 @@ export function permissionSummary(config: AnyConfig, session: Session) {
       write: can(config, session, { action: "write", scope: "media" }),
       delete: can(config, session, { action: "delete", scope: "media" })
     },
-    locales: writeLocales
+    locales: writeLocales,
+    site: can(config, session, { action: "write", scope: "site" })
   };
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { permissionSummary } from "../src/handler/auth.ts";
 import { createHandler } from "../src/handler/index.ts";
 import { and, desc, eq, gt, has, inArray } from "../src/query/index.ts";
 import { calls, config } from "./fixture.ts";
@@ -234,9 +235,109 @@ describe("auth", () => {
       protocol: 1,
       id: "test-site",
       name: "Test site",
+      accent: null,
+      icon: null,
       auth: { issuer: "https://issuer.test", clientId: "panel" },
       admin: "https://site.test/_vibe/admin"
     });
+  });
+});
+
+describe("folders", () => {
+  async function upload(name: string, folder?: string) {
+    const form = new FormData();
+    form.set("file", new File([png(10, 10)], name, { type: "image/png" }));
+    if(folder) form.set("folder", folder);
+    return (await t.api("/api/assets", { method: "POST", body: form })).body;
+  }
+
+  test("folders nest, persist when empty, and move with their files", async () => {
+    const a = await upload("a.png", "/posts//covers/");
+    expect(a.folder).toBe("posts/covers");
+    await t.api("/api/folders", { method: "POST", json: { path: "drafts" } });
+    expect((await t.api("/api/folders")).body.folders).toEqual([
+      { path: "drafts", files: 0 },
+      { path: "posts", files: 0 },
+      { path: "posts/covers", files: 1 }
+    ]);
+
+    // Moving a file out leaves its folder in place.
+    await t.api(`/api/assets/${a.id}`, { method: "PATCH", json: { folder: "drafts" } });
+    expect((await t.api("/api/folders")).body.folders.map((f: any) => f.path)).toContain("posts/covers");
+
+    // Renaming a folder carries its subfolders and files.
+    await t.api(`/api/assets/${a.id}`, { method: "PATCH", json: { folder: "posts/covers" } });
+    const moved = await t.api("/api/folders", { method: "PATCH", json: { from: "posts", to: "archive/2026" } });
+    expect(moved.body.path).toBe("archive/2026");
+    expect((await t.api(`/api/assets/${a.id}`)).body.folder).toBe("archive/2026/covers");
+    expect((await t.api("/api/assets?folder=archive/2026/covers")).body.total).toBe(1);
+
+    expect((await t.api("/api/folders", { method: "PATCH", json: { from: "archive", to: "archive/inner" } })).status).toBe(400);
+    expect((await t.api("/api/folders", { method: "PATCH", json: { from: "drafts", to: "archive" } })).status).toBe(409);
+    expect((await t.api("/api/folders", { method: "POST", json: { path: "../up" } })).status).toBe(400);
+
+    // Only empty folders can be deleted.
+    expect((await t.api("/api/folders?path=archive", { method: "DELETE" })).status).toBe(409);
+    expect((await t.api("/api/folders?path=drafts", { method: "DELETE" })).status).toBe(200);
+    expect((await t.api("/api/folders")).body.folders.map((f: any) => f.path)).toEqual(["archive", "archive/2026", "archive/2026/covers"]);
+  });
+});
+
+describe("text files", () => {
+  test("edits replace content in place and bump the URL", async () => {
+    const form = new FormData();
+    // Browsers often send .md as octet-stream; the engine infers the type.
+    form.set("file", new File(["# Hello"], "notes.md", { type: "application/octet-stream" }));
+    const notes = (await t.api("/api/assets", { method: "POST", body: form })).body;
+    expect(notes.mime).toBe("text/markdown");
+    expect(notes.url).not.toContain("?v=");
+
+    const edited = await t.api(`/api/assets/${notes.id}/content`, { method: "PUT", body: "# Hello, world" });
+    expect(edited.status).toBe(200);
+    expect(edited.body.url).toMatch(/\.md\?v=1$/);
+    expect(edited.body.size).toBe(14);
+    const served = await t.vibe.handle(new Request(edited.body.url), t.env, ctx);
+    expect(await served.text()).toBe("# Hello, world");
+
+    const image = new FormData();
+    image.set("file", new File([png(10, 10)], "a.png", { type: "image/png" }));
+    const png1 = (await t.api("/api/assets", { method: "POST", body: image })).body;
+    expect((await t.api(`/api/assets/${png1.id}/content`, { method: "PUT", body: "nope" })).status).toBe(415);
+  });
+});
+
+describe("site settings", () => {
+  test("name, accent and icon override the config and show up everywhere", async () => {
+    expect((await t.api("/api/site")).body).toEqual({ name: "Test site", accent: null, icon: null });
+
+    const form = new FormData();
+    form.set("file", new File([png(64, 64)], "logo.png", { type: "image/png" }));
+    const logo = (await t.api("/api/assets", { method: "POST", body: form })).body;
+
+    const saved = await t.api("/api/site", { method: "PATCH", json: { name: "  Acme  ", accent: "#2563EB", icon: logo.id } });
+    expect(saved.body).toEqual({ name: "Acme", accent: "#2563eb", icon: { id: logo.id, url: logo.url } });
+
+    const descriptor = await (await t.vibe.handle(new Request("https://site.test/.well-known/vibe-cms"), t.env, ctx)).json() as any;
+    expect(descriptor).toMatchObject({ name: "Acme", accent: "#2563eb", icon: logo.url });
+    expect((await t.api("/api/info")).body.settings.name).toBe("Acme");
+    expect((await t.vibe.site(t.env)).icon?.url).toBe(`/_vibe/media/${logo.id}.png`);
+
+    // The icon can't be deleted out from under the site.
+    expect((await t.api(`/api/assets/${logo.id}`, { method: "DELETE" })).status).toBe(409);
+
+    // The code's name again clears the override; null clears the rest.
+    const reset = await t.api("/api/site", { method: "PATCH", json: { name: "Test site", accent: null, icon: null } });
+    expect(reset.body).toEqual({ name: "Test site", accent: null, icon: null });
+  });
+
+  test("rejects bad values and needs the siteSettings permission", async () => {
+    expect((await t.api("/api/site", { method: "PATCH", json: { accent: "orange" } })).status).toBe(400);
+    expect((await t.api("/api/site", { method: "PATCH", json: { name: " " } })).status).toBe(400);
+    expect((await t.api("/api/site", { method: "PATCH", json: { icon: "ast_missing" } })).status).toBe(400);
+    t.setToken("");
+    expect((await t.api("/api/site", { method: "PATCH", json: { name: "Nope" } })).status).toBe(401);
+    // Writing content doesn't imply changing the site's branding.
+    expect(permissionSummary(config, { sub: "x", roles: ["editor"] }).site).toBe(false);
   });
 });
 

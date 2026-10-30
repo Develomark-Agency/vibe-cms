@@ -98,6 +98,11 @@ const tables = [
     created_by TEXT NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS vibe_assets_folder ON vibe_assets (folder, created_at)",
+  // Folders that exist on their own, so empty ones survive. Asset folders and their ancestors exist implicitly too.
+  `CREATE TABLE IF NOT EXISTS vibe_folders (
+    path TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS vibe_codes (
     code TEXT PRIMARY KEY,
     payload TEXT NOT NULL,

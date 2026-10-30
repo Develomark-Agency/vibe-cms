@@ -54,6 +54,7 @@ import {
 } from "./context.tsx";
 import { Field, FormValueContext } from "./fields.tsx";
 import { Link, navigate, setNavigationBlocker } from "./router.tsx";
+import { Segmented } from "./segmented.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 
 export interface DocumentState {
@@ -135,7 +136,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const title = documentTitle(config, type, value);
 
   useEffect(() => {
-    document.title = `${title} · ${config.name ?? admin.info.site.name}`;
+    document.title = `${title} · ${admin.site.name}`;
   }, [title]);
 
   // Unsaved-changes guard, for in-app navigation and for leaving the page.
@@ -381,18 +382,18 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
               <LocaleBar type={type} id={id} doc={doc.data} />
             )}
             {isNewTranslation && (
-              <div className="flex items-start gap-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-sm">
+              <div className="flex items-start gap-3 rounded-[14px] bg-sky-500/8 p-3 text-sm shadow-[inset_0_0_0_1px] shadow-sky-500/20">
                 <LanguagesIcon className="mt-0.5 size-4 text-sky-600" />
                 <p>There's no {localeName(locale)} version yet. The form starts from the {localeName(config.defaultLocale!)} copy; saving creates the translation.</p>
               </div>
             )}
             {readOnly && (
-              <div className="rounded-xl border bg-muted/40 p-3 text-sm text-muted-foreground">
+              <div className="rounded-[14px] well p-3 text-sm text-muted-foreground">
                 {permissions.write ? `You can't edit the ${localeName(locale)} version.` : "You can view this document but not edit it."}
               </div>
             )}
             {showIssues && issues.length > 0 && (
-              <div className="flex items-start justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+              <div className="flex items-start justify-between gap-3 rounded-[14px] bg-destructive/8 p-3 text-sm text-destructive shadow-[inset_0_0_0_1px] shadow-destructive/25">
                 <div className="flex items-start gap-2">
                   <TriangleAlertIcon className="mt-0.5 size-4" />
                   <p>{issues.length === 1 ? "1 field needs attention" : `${issues.length} fields need attention`} before this can be published.</p>
@@ -428,7 +429,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             <DocumentInfo doc={doc.data} />
             {doc.data?.schedules.length ? <Schedules type={type} id={id!} doc={doc.data} onChange={applyResult} /> : null}
             {panels.map(panel => (
-              <section key={panel.id} className="rounded-xl border p-3">
+              <section key={panel.id} className="rounded-[16px] elevated p-4">
                 <h3 className="mb-2 text-sm font-medium">{panel.label}</h3>
                 <panel.component {...slotProps} />
               </section>
@@ -503,28 +504,24 @@ function dedupe(issues: Issue[]): Issue[] {
 function LocaleBar({ type, id, doc }: { type: string, id: string, doc: DocumentState | undefined }) {
   const { config, locale, setLocale } = useAdmin();
   return (
-    <div className="flex flex-wrap items-center gap-1 rounded-xl border bg-muted/30 p-1" role="tablist" aria-label="Language">
-      {config.locales!.map(l => {
+    <Segmented
+      label={`Language of this ${type} (${id})`}
+      value={locale}
+      onChange={setLocale}
+      options={config.locales!.map(l => {
         const version = doc?.locales.find(v => v.locale === l);
-        return (
-          <button
-            key={l}
-            role="tab"
-            aria-selected={l === locale}
-            onClick={() => setLocale(l)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground",
-              l === locale && "bg-background text-foreground shadow-sm ring-1 ring-border"
-            )}
-          >
-            {version ? <StatusDot status={version.status} /> : <span className="size-2 rounded-full border border-dashed border-muted-foreground/60" />}
-            {localeName(l)}
-            {l === config.defaultLocale && <span className="text-[10px] text-muted-foreground">default</span>}
-          </button>
-        );
+        return {
+          value: l,
+          label: (
+            <>
+              {version ? <StatusDot status={version.status} /> : <span className="size-2 rounded-full border border-dashed border-muted-foreground/60" />}
+              {localeName(l)}
+              {l === config.defaultLocale && <span className="text-[11px] font-normal text-muted-foreground">default</span>}
+            </>
+          )
+        };
       })}
-      <span className="sr-only">{type} {id}</span>
-    </div>
+    />
   );
 }
 
@@ -536,7 +533,7 @@ function DocumentInfo({ doc }: { doc: DocumentState | undefined }) {
     ["Published", doc.publishedAt ? formatDate(doc.publishedAt) : "Never"]
   ] : [["Status", "Not saved yet"]];
   return (
-    <section className="rounded-xl border p-3">
+    <section className="rounded-[16px] elevated p-4">
       <h3 className="mb-2 text-sm font-medium">Document</h3>
       <dl className="grid gap-1.5 text-sm">
         {rows.map(([label, text]) => (
@@ -553,7 +550,7 @@ function DocumentInfo({ doc }: { doc: DocumentState | undefined }) {
 function Schedules({ type, id, doc, onChange }: { type: string, id: string, doc: DocumentState, onChange(doc: DocumentState): void }) {
   const { cms, locale } = useAdmin();
   return (
-    <section className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
+    <section className="rounded-[16px] bg-violet-500/8 p-4 shadow-[inset_0_0_0_1px] shadow-violet-500/20">
       <h3 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-violet-700 dark:text-violet-300">
         <CalendarClockIcon className="size-3.5" /> Scheduled
       </h3>
@@ -604,13 +601,12 @@ function ScheduleDialog({ open, onOpenChange, type, id, status, dirty, onDone, o
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
-          <div className="inline-flex w-fit rounded-lg border bg-muted/40 p-0.5">
-            {(["publish", "unpublish"] as const).map(a => (
-              <button key={a} type="button" disabled={a === "unpublish" && !status}
-                className={cn("rounded-md px-3 py-1 text-sm text-muted-foreground disabled:opacity-40", action === a && "bg-background text-foreground shadow-sm ring-1 ring-border")}
-                onClick={() => setAction(a)}>{a === "publish" ? "Publish" : "Unpublish"}</button>
-            ))}
-          </div>
+          <Segmented<"publish" | "unpublish">
+            label="Action"
+            value={action}
+            onChange={setAction}
+            options={[{ value: "publish", label: "Publish" }, { value: "unpublish", label: "Unpublish", disabled: !status }]}
+          />
           <label className="grid gap-1.5 text-sm font-medium">
             Date and time
             <Input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} />
@@ -676,7 +672,7 @@ function HistorySheet({ open, onOpenChange, type, id, doc, onRestore, readOnly }
               <li key={v.ver}>
                 <button
                   onClick={() => setSelected(v.ver)}
-                  className={cn("w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted", selected === v.ver && "bg-muted")}
+                  className={cn("w-full rounded-[10px] px-2.5 py-2 text-left text-sm transition-[background-color,box-shadow] hover:bg-foreground/[0.04]", selected === v.ver && "raised")}
                 >
                   <span className="flex items-center gap-1.5 font-medium">
                     Version {v.ver}

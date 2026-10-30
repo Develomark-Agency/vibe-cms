@@ -4,7 +4,32 @@ export interface PanelSite {
   url: string,
   name: string,
   admin: string,
-  favorite: boolean
+  favorite: boolean,
+  /** From the site's live descriptor; absent until it's been fetched. */
+  accent?: string | null,
+  icon?: string | null
+}
+
+/** The agency's own look for the panel: its name, accent and logo. */
+export interface PanelBranding {
+  name: string,
+  /** `#rrggbb`; null keeps the neutral default. Also the accent of framed sites that don't set their own. */
+  accent: string | null,
+  /** Image URL. */
+  icon: string | null
+}
+
+export const DEFAULT_BRANDING: PanelBranding = { name: "vibe", accent: null, icon: null };
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/** Drops anything that isn't a usable value, so bad configuration falls back instead of breaking the page. */
+export function normalizeBranding(input: Partial<Record<keyof PanelBranding, unknown>>): PanelBranding {
+  return {
+    name: typeof input.name === "string" && input.name.trim() ? input.name.trim() : DEFAULT_BRANDING.name,
+    accent: typeof input.accent === "string" && HEX.test(input.accent) ? input.accent.toLowerCase() : null,
+    icon: typeof input.icon === "string" && input.icon ? input.icon : null
+  };
 }
 
 export interface PanelUser {
@@ -16,6 +41,8 @@ export interface SiteDescriptor {
   protocol: number,
   id: string,
   name: string,
+  accent?: string | null,
+  icon?: string | null,
   auth: { issuer: string, clientId: string } | null,
   admin: string
 }
@@ -27,6 +54,8 @@ export interface SiteDescriptor {
  */
 export interface PanelBackend {
   mode: "hosted" | "local",
+  /** Public, so the sign-in page carries the agency's look too. */
+  branding(): Promise<PanelBranding>,
   me(): Promise<PanelUser | null>,
   sites(): Promise<PanelSite[]>,
   addSite(url: string): Promise<PanelSite>,
@@ -69,7 +98,7 @@ export async function fetchDescriptor(url: string): Promise<SiteDescriptor> {
 const STORAGE_KEY = "vibe-panel:sites";
 
 /** The local panel (`vibe-cms admin`): no identity provider, sites in localStorage. */
-export function localBackend(): PanelBackend {
+export function localBackend(branding: Partial<PanelBranding> = {}): PanelBackend {
   function read(): PanelSite[] {
     try {
       return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as PanelSite[];
@@ -82,6 +111,7 @@ export function localBackend(): PanelBackend {
   }
   return {
     mode: "local",
+    branding: async () => normalizeBranding(branding),
     me: async () => ({ name: "Local developer" }),
     sites: async () => read(),
     async addSite(url) {
@@ -122,6 +152,13 @@ export function hostedBackend(base = ""): PanelBackend {
   }
   return {
     mode: "hosted",
+    async branding() {
+      try {
+        return normalizeBranding(await api<PanelBranding>("/branding"));
+      } catch {
+        return DEFAULT_BRANDING;
+      }
+    },
     async me() {
       try {
         return await api<PanelUser>("/me");

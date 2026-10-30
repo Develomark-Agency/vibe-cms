@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon } from "lucide-react";
-import { StrictMode, useEffect, useMemo, useState, type ComponentType } from "react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon } from "lucide-react";
+import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
 import type { AnyConfig } from "../../config.ts";
 import { collectDescriptors, IMPL, loadLazy } from "../../descriptor.ts";
@@ -27,18 +27,18 @@ import {
   SidebarTrigger
 } from "../components/ui/sidebar.tsx";
 import { Toaster } from "../components/ui/sonner.tsx";
-import { cn } from "../lib/utils.ts";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { TooltipProvider } from "../components/ui/tooltip.tsx";
 import { createAdminClient, request, setUnauthorizedHandler, type SessionState, type SiteInfo } from "./client.ts";
 import { AdminContext, collectionLabel, collectionSettings, documentTitle, localeName, useAdmin, type AdminContextValue } from "./context.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
-import { setDark } from "./theme.ts";
-import { ShaderBackdrop } from "./texture.tsx";
+import { setAccent, setFavicon, startTheme, useTheme, type Theme } from "./theme.ts";
 import { Delayed } from "./delayed.tsx";
-import { Dashboard, DocumentRoute, ListPage, MediaPage } from "./pages.tsx";
+import { MediaPage } from "./media.tsx";
+import { Dashboard, DocumentRoute, ListPage } from "./pages.tsx";
+import { SiteMark, SiteSettingsPage } from "./settings.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
-import { embedded, postToPanel, renewSession, signOut, startSession } from "./session.ts";
+import { embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false } }
@@ -52,23 +52,6 @@ function Icon({ name, className }: { name?: IconName | ComponentType<{ className
   }
   const Component = (name && navIcons[name]) || FileTextIcon;
   return <Component className={className} />;
-}
-
-type Theme = "light" | "dark" | "system";
-
-function useTheme(): [Theme, (theme: Theme) => void] {
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem("vibe:theme") as Theme | null) ?? "system");
-  useEffect(() => {
-    const media = matchMedia("(prefers-color-scheme: dark)");
-    function apply() {
-      setDark(theme === "dark" || (theme === "system" && media.matches));
-    }
-    apply();
-    media.addEventListener("change", apply);
-    localStorage.setItem("vibe:theme", theme);
-    return () => media.removeEventListener("change", apply);
-  }, [theme]);
-  return [theme, setTheme];
 }
 
 async function loadPlugins(config: AnyConfig, cms: AdminClient): Promise<Required<AdminPlugin>> {
@@ -134,10 +117,9 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 function SignIn({ info, error }: { info: SiteInfo, error: string | null }) {
   return (
-    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-background p-8">
-      <ShaderBackdrop variant="aurora" />
-      <div className="relative z-10 flex w-full max-w-sm flex-col items-center gap-5 rounded-2xl border bg-background/80 px-8 py-10 text-center shadow-[0_24px_60px_-30px_rgb(0_0_0/0.45)] backdrop-blur-md">
-        <div className="flex size-11 items-center justify-center rounded-xl bg-brand text-brand-foreground shadow-sm">
+    <div className="flex min-h-full items-center justify-center bg-sidebar p-8">
+      <div className="flex w-full max-w-sm flex-col items-center gap-5 rounded-[24px] elevated px-8 py-10 text-center">
+        <div className="flex size-12 items-center justify-center rounded-[14px] raised-brand">
           <KeyRoundIcon className="size-5" />
         </div>
         <div className="space-y-2">
@@ -150,7 +132,7 @@ function SignIn({ info, error }: { info: SiteInfo, error: string | null }) {
           </p>
           {info.auth && <p className="text-xs text-muted-foreground">{new URL(info.auth.issuer).host}</p>}
         </div>
-        {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+        {error && <p className="rounded-[12px] bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       </div>
     </div>
   );
@@ -165,6 +147,13 @@ function Shell({ config, info, session, prefix, onSignOut }: {
 }) {
   const cms = useMemo(() => createAdminClient(prefix, Object.keys(config.schemas), path => navigate(path)), [prefix]);
   const [plugins, setPlugins] = useState<Required<AdminPlugin> | null>(null);
+  const site = useQuery({ queryKey: ["site"], queryFn: () => cms.api<SiteInfo["settings"]>("/site"), initialData: info.settings, staleTime: Infinity }).data;
+  const panelAccent = useSyncExternalStore(subscribePanelAccent, getPanelAccent);
+
+  useEffect(() => {
+    setAccent(site.accent ?? panelAccent);
+    setFavicon(site.icon?.url ?? null);
+  }, [site.accent, site.icon?.url, panelAccent]);
   const { search } = useLocation();
   const locale = search.get("locale") && config.locales!.includes(search.get("locale")!) ? search.get("locale")! : config.defaultLocale!;
 
@@ -182,7 +171,7 @@ function Shell({ config, info, session, prefix, onSignOut }: {
   }
 
   if(!plugins) return <Delayed><Centered><Spinner className="size-5" /></Centered></Delayed>;
-  const value: AdminContextValue = { config, info, session, cms, plugins, locale, setLocale };
+  const value: AdminContextValue = { config, info, site, session, cms, plugins, locale, setLocale };
   return (
     <AdminContext.Provider value={value}>
       <Layout onSignOut={onSignOut} />
@@ -191,7 +180,7 @@ function Shell({ config, info, session, prefix, onSignOut }: {
 }
 
 function Layout({ onSignOut }: { onSignOut(): void }) {
-  const { config, session, plugins, locale, setLocale, info, cms } = useAdmin();
+  const { config, session, plugins, locale, setLocale, info, site, cms } = useAdmin();
   const { path } = useLocation();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useTheme();
@@ -225,6 +214,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   else if((params = match("/content/:type", path)) && types.includes(params.type!)) page = <ListPage key={params.type} type={params.type!} />;
   else if((params = match("/content/:type/:id", path)) && types.includes(params.type!)) page = <DocumentRoute type={params.type!} id={params.id!} />;
   else if(path === "/media" && session.permissions.media.read) page = <MediaPage />;
+  else if(path === "/settings" && session.permissions.site) page = <SiteSettingsPage />;
   else {
     for(const [pattern, entry] of Object.entries(plugins.pages)) {
       const found = match(pattern, path);
@@ -249,17 +239,15 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   }
 
   return (
-    <SidebarProvider className="texture-grain h-full min-h-0 bg-sidebar">
+    <SidebarProvider className="h-full min-h-0 bg-sidebar">
       <Sidebar collapsible="icon" variant="inset" className="[&_[data-slot=sidebar-inner]]:bg-transparent">
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip={config.name ?? info.site.name}>
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-brand text-sm font-semibold text-brand-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.25)]">
-                  {(config.name ?? info.site.name).charAt(0).toUpperCase()}
-                </div>
+              <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip={site.name}>
+                <SiteMark site={site} className="size-8 rounded-[10px] text-sm" />
                 <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate text-sm font-semibold">{config.name ?? info.site.name}</span>
+                  <span className="truncate text-sm font-semibold">{site.name}</span>
                   <span className="truncate text-xs text-muted-foreground">{location.host}</span>
                 </div>
               </SidebarMenuButton>
@@ -270,11 +258,11 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
             type="button"
             onClick={() => setPaletteOpen(true)}
             aria-label="Search"
-            className="mt-1 flex h-8 w-full items-center gap-2 rounded-lg border border-sidebar-border bg-sidebar-accent/40 px-2.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+            className="mt-1 flex h-9 w-full items-center gap-2 rounded-[10px] well pr-1.5 pl-2.5 text-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
           >
             <SearchIcon className="size-4 shrink-0" />
             <span className="flex-1 text-left group-data-[collapsible=icon]:hidden">Search…</span>
-            <Kbd className="group-data-[collapsible=icon]:hidden">⌘J</Kbd>
+            <Kbd className="h-6 rounded-[4px] px-1.5 group-data-[collapsible=icon]:hidden">⌘J</Kbd>
           </button>
         </SidebarHeader>
         <SidebarContent>
@@ -307,11 +295,16 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          {singletons.length > 0 && (
+          {(singletons.length > 0 || session.permissions.site) && (
             <SidebarGroup>
               <SidebarGroupLabel className="eyebrow">Settings</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
+                  {session.permissions.site && (
+                    <SidebarMenuItem>
+                      <NavButton active={active("/settings")} to="/settings" tooltip="Site"><SlidersHorizontalIcon /> <span>Site</span></NavButton>
+                    </SidebarMenuItem>
+                  )}
                   {singletons.map(type => (
                     <SidebarMenuItem key={type}>
                       <NavButton active={active(`/content/${type}`)} to={`/content/${type}`} tooltip={collectionLabel(config, type)}>
@@ -386,11 +379,12 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:shadow-[0_0_0_1px_var(--border),0_12px_40px_-20px_rgb(0_0_0/0.35)]">
+      <SidebarInset className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:rounded-[20px] md:peer-data-[variant=inset]:shadow-(--shadow-card)">
         <div className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
           <SidebarTrigger />
         </div>
-        <div className="pointer-events-none fixed top-3 right-4 z-30 hidden md:block">
+        {/* 10px in from the panel's 20px corner (its margin is 8px), so the 10px button corner sits concentric. */}
+        <div className="pointer-events-none fixed top-[18px] right-[18px] z-30 hidden md:block">
           {config.locales!.length > 1 && (
             <div className="pointer-events-auto">
               <LocaleMenu locale={locale} setLocale={setLocale} />
@@ -419,7 +413,7 @@ function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: s
   if(match("/content/:type/:id", path)) return null;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="bg-background/80 backdrop-blur"><LanguagesIcon /> {localeName(locale)}</Button>} />
+      <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="h-8 rounded-[10px]"><LanguagesIcon /> {localeName(locale)}</Button>} />
       <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup value={locale} onValueChange={next => setLocale(next as string)}>
           {config.locales!.map(l => <DropdownMenuRadioItem key={l} value={l}>{localeName(l)}</DropdownMenuRadioItem>)}
@@ -429,22 +423,15 @@ function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: s
   );
 }
 
-/** A sidebar link: the active item's background fades in place, marked by a small ember bar. */
+/** A sidebar link. The active item is a raised tile with an accent-coloured icon; hover is only a faint tint. */
 function NavButton({ to, active, tooltip, children }: { to: string, active: boolean, tooltip: string, children: React.ReactNode }) {
   return (
     <SidebarMenuButton
       isActive={active}
       tooltip={tooltip}
-      className="relative transition-[background-color,color] duration-200 ease-out data-active:font-medium"
+      className="rounded-[10px] transition-[background-color,box-shadow,color,scale] duration-150 ease-out active:scale-[0.98] data-active:raised data-active:font-medium data-active:[&_svg]:text-brand"
       render={<Link to={to} />}
     >
-      <span
-        aria-hidden
-        className={cn(
-          "absolute top-1/2 left-0.5 h-4 w-[3px] -translate-y-1/2 rounded-full bg-brand transition-[opacity,scale] duration-200 ease-out group-data-[collapsible=icon]:hidden",
-          active ? "scale-y-100 opacity-100" : "scale-y-50 opacity-0"
-        )}
-      />
       {children}
     </SidebarMenuButton>
   );
@@ -526,6 +513,7 @@ function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boo
 
 /** Boots the site's editor. Called by the build's generated entry with the site's config. */
 export function startAdmin(config: AnyConfig, element: HTMLElement = document.getElementById("root")!) {
+  startTheme();
   createRoot(element).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

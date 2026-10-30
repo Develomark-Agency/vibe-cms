@@ -181,6 +181,9 @@ function adminViteConfig(root: string, configFile: string, base: string, cssFile
     base,
     configFile: false as const,
     envDir: root,
+    // Per site: the default (next to ADMIN_ROOT) would be shared by every site and the local panel,
+    // and one server re-optimizing would pull the dependencies out from under the others.
+    cacheDir: path.join(root, "node_modules", ".vibe-cms", "vite"),
     logLevel: "warn" as const,
     appType: "custom" as const,
     resolve: {
@@ -191,7 +194,13 @@ function adminViteConfig(root: string, configFile: string, base: string, cssFile
     server: { fs: { allow: [searchForWorkspaceRoot(root), root, PACKAGE_ROOT] } },
     optimizeDeps: {
       entries,
-      include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "shaders/react"]
+      include: [
+        "react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime",
+        // The text editor's language packs load on demand; bundling them up front saves a dev-server
+        // re-optimise (and reload) the first time someone opens a text file.
+        "codemirror", "@codemirror/lang-markdown", "@codemirror/lang-json", "@codemirror/lang-yaml", "@codemirror/lang-xml",
+        "@codemirror/lang-css", "@codemirror/lang-javascript", "@codemirror/lang-html"
+      ]
     },
     plugins: [
       react(),

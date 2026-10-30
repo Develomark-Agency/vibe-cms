@@ -2,7 +2,7 @@ import { HttpError, serializeConfig, type AnyConfig } from "../config.ts";
 import type { Order, SerializedQuery } from "../query/index.ts";
 import type { Session } from "../server/index.ts";
 import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, sessionFromIdToken, verifySession } from "./auth.ts";
-import { Engine, type EngineState } from "./engine.ts";
+import { Engine, type EngineState, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
 import type { ExecutionContext, Fetcher } from "./platform.ts";
 import { matchRoute } from "./plugins.ts";
 
@@ -58,11 +58,13 @@ function cors(response: Response): Response {
   return new Response(response.body, { status: response.status, headers });
 }
 
-export function descriptor(config: AnyConfig, url: URL, prefix: string) {
+export function descriptor(config: AnyConfig, url: URL, prefix: string, site: SiteSettings) {
   return {
     protocol: 1,
     id: siteId(config, url),
-    name: config.name ?? url.hostname,
+    name: site.name,
+    accent: site.accent,
+    icon: site.icon?.url ?? null,
     auth: config.auth ? { issuer: config.auth.issuer, clientId: config.auth.clientId } : null,
     admin: `${url.origin}${prefix}/admin`
   };
@@ -73,7 +75,8 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
   const url = new URL(request.url);
   const { config, prefix } = api.state;
   if(url.pathname === "/.well-known/vibe-cms") {
-    return cors(json(descriptor(config, url, prefix), { headers: { "cache-control": "public, max-age=60" } }));
+    const site = await new Engine(api.state, { origin: url.origin, session: null, trusted: false }).site(url.hostname);
+    return cors(json(descriptor(config, url, prefix, site), { headers: { "cache-control": "public, max-age=60" } }));
   }
   const path = url.pathname.slice(prefix.length) || "/";
   const method = request.method.toUpperCase();
@@ -122,13 +125,20 @@ async function editorRoute(
   let m: RegExpExecArray | null;
 
   if(route === "/info" && method === "GET") {
+    const site = await engine.site(url.hostname);
     return json({
       ...serializeConfig(config),
       prefix: api.state.prefix,
       dev: api.dev,
       auth: config.auth ? { issuer: config.auth.issuer } : null,
-      site: descriptor(config, url, api.state.prefix)
+      site: descriptor(config, url, api.state.prefix, site),
+      settings: site
     });
+  }
+
+  if(route === "/site") {
+    if(method === "GET") return json(await engine.site(url.hostname));
+    if(method === "PATCH") return json(await engine.updateSite(await body<SiteSettingsPatch>(request), url.hostname));
   }
 
   if(route === "/session") {
@@ -248,6 +258,20 @@ async function editorRoute(
         field: (form.get("field") as string | null) || undefined
       }), { status: 201 });
     }
+  }
+
+  if(route === "/folders") {
+    if(method === "GET") return json({ folders: await engine.listFolders() });
+    if(method === "POST") return json(await engine.createFolder((await body<{ path: string }>(request)).path ?? ""), { status: 201 });
+    if(method === "PATCH") {
+      const input = await body<{ from: string, to: string }>(request);
+      return json(await engine.moveFolder(input.from ?? "", input.to ?? ""));
+    }
+    if(method === "DELETE") return json(await engine.deleteFolder(q.get("path") ?? ""));
+  }
+
+  if((m = /^\/assets\/([\w-]+)\/content$/.exec(route)) && method === "PUT") {
+    return json(await engine.replaceContent(m[1]!, await request.arrayBuffer()));
   }
 
   if((m = /^\/assets\/([\w-]+)$/.exec(route))) {

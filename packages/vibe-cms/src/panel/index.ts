@@ -1,2 +1,2 @@
 export { startPanel } from "./app.tsx";
-export { fetchDescriptor, hostedBackend, localBackend, PanelError, type PanelBackend, type PanelSite, type PanelUser, type SiteDescriptor } from "./backend.ts";
+export { DEFAULT_BRANDING, fetchDescriptor, hostedBackend, localBackend, normalizeBranding, PanelError, type PanelBackend, type PanelBranding, type PanelSite, type PanelUser, type SiteDescriptor } from "./backend.ts";

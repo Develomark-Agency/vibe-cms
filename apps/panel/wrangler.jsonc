@@ -19,6 +19,8 @@
     "OIDC_CLIENT_ID": "1234.apps.googleusercontent.com",
     // Comma-separated email domains or group claim values.
     "PANEL_ALLOW": "my-agency.com"
+    // Optional white-labelling: "PANEL_NAME", "PANEL_ACCENT" (#rrggbb, also the accent of framed
+    // sites that don't set their own) and "PANEL_ICON" (an image URL).
   }
   // Secret: `wrangler secret put OIDC_CLIENT_SECRET` (locally: .dev.vars).
 }

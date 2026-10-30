@@ -29,6 +29,7 @@ import { cn } from "../lib/utils.ts";
 import type { FieldDescriptor, WidgetContext, WidgetImpl } from "../index.ts";
 import { humanize, useAdmin } from "./context.tsx";
 import { AssetControl, RefControl } from "./pickers.tsx";
+import { Segmented } from "./segmented.tsx";
 
 export interface FieldProps {
   schema: AnySchema,
@@ -158,9 +159,9 @@ function WidgetHost({ descriptor, field, value, onChange }: {
   }, [descriptor]);
   const ctx: WidgetContext = { value, onChange, options: descriptor.options, field, cms };
   if(impl instanceof Error) {
-    return <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">Widget “{descriptor.id}” failed to load: {impl.message}</div>;
+    return <div className="rounded-[10px] bg-destructive/8 p-3 text-sm text-destructive shadow-[inset_0_0_0_1px] shadow-destructive/25">Widget “{descriptor.id}” failed to load: {impl.message}</div>;
   }
-  if(!impl) return <div className="h-9 animate-pulse rounded-lg bg-muted" />;
+  if(!impl) return <div className="h-9 animate-pulse rounded-[10px] well" />;
   if(impl.react) {
     const Component = impl.react;
     return <Component {...ctx} />;
@@ -367,24 +368,14 @@ function EnumControl({ schema, value, onChange, path, readOnly, optional, field 
   const items = s.values.map(v => ({ value: v, label: s.labels?.[v] ?? humanize(v) }));
   if(s.values.length <= 4 && !optional) {
     return (
-      <div role="radiogroup" id={fieldId(path)} className="inline-flex w-fit rounded-lg border bg-muted/40 p-0.5">
-        {items.map(item => (
-          <button
-            key={item.value}
-            type="button"
-            role="radio"
-            aria-checked={value === item.value}
-            disabled={readOnly}
-            onClick={() => onChange(item.value)}
-            className={cn(
-              "rounded-md px-3 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground",
-              value === item.value && "bg-background text-foreground shadow-sm ring-1 ring-border"
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        id={fieldId(path)}
+        label={field.label}
+        options={items}
+        value={typeof value === "string" ? value : undefined}
+        onChange={onChange}
+        disabled={readOnly}
+      />
     );
   }
   return (
@@ -421,9 +412,9 @@ function TagControl({ value, onChange, path, readOnly }: ControlProps) {
     setDraft("");
   }
   return (
-    <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-lg border border-input bg-transparent px-2 py-1.5 focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30">
+    <div className="flex min-h-8 flex-wrap items-center gap-1 rounded-[10px] well p-1 focus-within:ring-3 focus-within:ring-ring/50">
       {tags.map(tag => (
-        <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+        <Badge key={tag} variant="secondary" className="h-6 gap-1 rounded-[6px] border-0 pr-1 raised text-foreground">
           {tag}
           {!readOnly && (
             <button type="button" aria-label={`Remove ${tag}`} className="rounded-sm opacity-60 hover:opacity-100" onClick={() => onChange(tags.filter(t => t !== tag))}>
@@ -437,7 +428,7 @@ function TagControl({ value, onChange, path, readOnly }: ControlProps) {
           id={fieldId(path)}
           value={draft}
           placeholder={tags.length ? "" : "Type and press Enter"}
-          className="min-w-24 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          className="min-w-24 flex-1 bg-transparent px-1.5 text-sm outline-none placeholder:text-muted-foreground"
           onChange={e => (e.target.value.includes(",") ? add(e.target.value) : setDraft(e.target.value))}
           onBlur={() => draft && add(draft)}
           onKeyDown={e => {
@@ -467,7 +458,7 @@ function ObjectControl({ schema, value, onChange, path, issues, readOnly, option
   }
   const fields = Object.entries(s.shape).filter(([, f]) => unwrap(f).type !== "literal");
   return (
-    <div className={cn("flex flex-col gap-5", !bare && "rounded-xl border bg-muted/20 p-4")}>
+    <div className={cn("flex flex-col gap-5", !bare && "rounded-[16px] elevated p-4")}>
       {fields.map(([key, field]) => (
         <Field
           key={key}
@@ -614,7 +605,7 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
 
   return (
     <div className="flex flex-col gap-2">
-      {items.length === 0 && <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">No items yet</p>}
+      {items.length === 0 && <p className="rounded-[14px] well px-3 py-4 text-center text-sm text-muted-foreground">No items yet</p>}
       {items.map((entry, i) => {
         const key = keys[i]!;
         const itemPath = [...path, i];
@@ -654,7 +645,7 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
           );
         }
         return (
-          <div key={key} className={cn("group/item rounded-xl border bg-card", hasIssues && "border-destructive/50")}>
+          <div key={key} className={cn("group/item overflow-hidden rounded-[14px] elevated", hasIssues && "shadow-[0_0_0_1px_var(--destructive),var(--shadow-card)]")}>
             <div className="flex items-center gap-1.5 border-b px-2 py-1.5 data-[collapsed=true]:border-b-0" data-collapsed={isCollapsed}>
               <GripVerticalIcon className="size-3.5 text-muted-foreground/50" />
               <button

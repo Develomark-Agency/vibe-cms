@@ -19,7 +19,7 @@ export default defineConfig({
   permissions: {
     roles: {
       "agency-staff": { all: true },
-      "client-editor": { post: ["read", "write"], author: ["read"], settings: ["read", "write"], publish: false }
+      "client-editor": { post: ["read", "write"], author: ["read"], homepage: ["read", "write"], publish: false, siteSettings: true }
     },
     users: {
       "jane@my-agency.com": ["agency-staff"]
@@ -28,7 +28,7 @@ export default defineConfig({
   collections: {
     post: { icon: "newspaper", preview: "/posts/{slug}" },
     author: { icon: "user-round" },
-    settings: { singleton: true, label: "Site settings", icon: "settings" }
+    homepage: { singleton: true, icon: "home" }
   },
   schemas: {
     post: v.object({
@@ -51,12 +51,13 @@ export default defineConfig({
       name: v.text({ min: 1 }),
       email: v.optional(v.text({ format: "email" })),
       bio: v.optional(richText({ toolbar: "minimal" })),
-      avatar: v.optional(image({ alt: "optional", aspectRatio: 1 }))
+      avatar: v.optional(image({ alt: "optional", aspectRatio: 1 })),
+      // A framework-neutral widget, written against the plain `mount` contract.
+      color: v.optional(v.text({ label: "Profile colour", widget: ColorPicker({ swatches: ["#6d28d9", "#0f766e", "#be123c", "#1d4ed8", "#c2410c"] }) }))
     }),
-    settings: v.object({
-      title: v.text({ min: 1 }),
-      tagline: v.optional(v.text()),
-      accent: v.text({ widget: ColorPicker({ swatches: ["#6d28d9", "#0f766e", "#be123c", "#1d4ed8", "#c2410c"] }) })
+    // The site's name, accent and icon are built in (the editor's Site settings); this is the site's own content.
+    homepage: v.object({
+      tagline: v.optional(v.text())
     })
   }
 });

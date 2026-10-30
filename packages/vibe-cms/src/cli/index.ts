@@ -7,6 +7,8 @@ const usage = `vibe-cms <command>
 
 Commands:
   admin [--port 5173] [--site <url>]   Run a local panel for development sites
+        [--name <text>] [--accent <#rrggbb>] [--icon <url>]
+                                       …with your agency's name, accent and logo
   build-admin --out <dir> [--config ./vibe-cms.config.ts] [--prefix /_vibe]
                                        Build the site's editor without the Vite plugin
 `;
@@ -14,7 +16,10 @@ Commands:
 const [command, ...rest] = process.argv.slice(2);
 
 if(command === "admin") {
-  const { values } = parseArgs({ args: rest, options: { port: { type: "string", default: "5173" }, site: { type: "string" } } });
+  const { values } = parseArgs({
+    args: rest,
+    options: { port: { type: "string", default: "5173" }, site: { type: "string" }, name: { type: "string" }, accent: { type: "string" }, icon: { type: "string" } }
+  });
   const [{ createServer, searchForWorkspaceRoot }, { default: react }, { default: tailwindcss }] = await Promise.all([
     import("vite"),
     import("@vitejs/plugin-react"),
@@ -24,7 +29,10 @@ if(command === "admin") {
   const server = await createServer({
     root,
     configFile: false,
+    // Kept apart from the editor's caches, which sites keep in their own node_modules.
+    cacheDir: path.join(process.cwd(), "node_modules", ".vibe-cms", "panel-vite"),
     plugins: [react(), tailwindcss()],
+    define: { __VIBE_PANEL_BRANDING__: JSON.stringify({ name: values.name, accent: values.accent, icon: values.icon }) },
     // Dependencies (fonts, React) live in the workspace's node_modules, e.g. under node_modules/.bun.
     server: { port: Number(values.port), fs: { allow: [path.resolve(root, "../.."), searchForWorkspaceRoot(root), searchForWorkspaceRoot(process.cwd())] } },
     appType: "spa",

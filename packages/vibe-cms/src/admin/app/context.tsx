@@ -3,11 +3,14 @@ import type { AnyConfig, Collection, CollectionSettings } from "../../config.ts"
 import type { AnySchema, ObjectSchema, OptionalSchema } from "../../schema/types.ts";
 import type { AdminClient, AdminPlugin } from "../index.ts";
 import type { DocumentData } from "../../schema/types.ts";
+import type { SiteSettings } from "../../handler/engine.ts";
 import type { SessionState, SiteInfo } from "./client.ts";
 
 export interface AdminContextValue {
   config: AnyConfig,
   info: SiteInfo,
+  /** Name, accent and icon, kept current after edits in the settings page. */
+  site: SiteSettings,
   session: SessionState,
   cms: AdminClient,
   plugins: Required<AdminPlugin>,

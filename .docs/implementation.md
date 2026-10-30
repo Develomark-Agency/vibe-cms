@@ -26,6 +26,22 @@ How the code settles questions the design docs leave open, and where it delibera
 - **Typed hooks:** `defineServer<typeof Plugin, typeof config>` types document hooks against the site's content types. The document lives on `output` next to `type` and `valid` (TypeScript can't narrow one parameter from a check on another), so `if(output.type === "post" && output.valid)` gives a typed post. Drafts that fail validation stay plain JSON. Plugins written for any site get `DocumentData` (JSON) throughout.
 - **Config strings are checked by `defineConfig`:** collection keys, `title` (a text field), `preview` placeholders (`"/posts/{slug}"`; `{id}` and `{locale}` too), `icon` (the editor's icon set), role rule keys, user role names, `defaultLocale`, and `v.ref()` targets. Query `locale` options take the site's locales.
 
+## Media folders
+
+- **Folders are paths** (`posts/covers`) on each asset, plus a `vibe_folders` table so empty folders persist. A folder exists if it's stored, holds files, or is a parent of either. Uploading or moving a file into a folder stores it.
+- **API:** `GET /folders` (every folder with its direct file count), `POST /folders { path }`, `PATCH /folders { from, to }` (rename or move, carrying subfolders and files; refused into itself or onto an existing folder), `DELETE /folders?path=` (empty folders only). Files move with `PATCH /assets/:id { folder }`.
+- **Names** are normalised (`" /a//b/ "` → `a/b`); `.`/`..`, control characters and backslashes are refused, at most 12 levels deep.
+- **Text files** (txt, md, csv/tsv, json, yaml, xml, css, js/ts, html; see `src/text-files.ts`) preview in the pane and open in a CodeMirror editor, loaded on demand with one language pack per file. CSV and TSV also get an editable table. SVG shows as an image. `PUT /assets/:id/content` replaces the content (media write, text files up to 1 MB). The asset keeps its ID, and its URL gains `?v=<edits>`, because media is served as immutable. Uploads that arrive as octet-stream get a text type from their extension.
+- **The media page** has a tree view and a folders view (subfolders listed, files in a grid), a collapsible preview pane, and drag and drop: files and folders onto a folder or breadcrumb move them, files from the desktop upload into the folder they're dropped on.
+
+## Site settings and appearance
+
+- **Every site has built-in settings:** name, accent colour and icon, edited on the editor's **Site** page and stored in `vibe_meta`. `config.name` is the default; saving the code's name again clears the override. They're in `/.well-known/vibe-cms`, so the panel shows each site's current name, accent and icon, and in `vibe.site(env)` for the site's own pages. Content-like settings (a tagline, a homepage) stay ordinary singleton collections.
+- **Permission:** the `siteSettings: true` role rule (or `all`). Writing content doesn't imply it.
+- **The accent is one colour.** `styles.css` derives the brand gradient, ring and foreground from `--accent-source` with relative colour syntax; dark text takes over once the accent is lighter than L 0.7, and dark mode lifts dark accents to L 0.68.
+- **Panel white-labelling:** `PANEL_NAME`, `PANEL_ACCENT` and `PANEL_ICON` on the hosted panel (`--name`, `--accent`, `--icon` for `vibe-cms admin`). The panel's accent is also the fallback for framed sites without their own.
+- **Theme sync:** the panel and the editors it frames keep one light/dark/system choice through the frame protocol: the panel sends `vibe:appearance` (theme and accent) when an editor is ready and on every change, and editors send `vibe:theme` when the user changes it there. Editors also send `vibe:site` after saving site settings, so the panel updates without refetching. A full-page editor keeps its own choice in its origin's storage.
+
 ## Auth
 
 - **Dev sessions:** with `dev` (default: Vite's `import.meta.env.DEV`), `POST /_vibe/api/session { dev: true }` signs in a local developer with every permission. An embedded editor in dev mode also posts navigation and title messages to any parent, since no code tells it who the panel is.
@@ -39,6 +55,7 @@ How the code settles questions the design docs leave open, and where it delibera
 
 - **The editor is built by a separate Vite instance**, not a Vite environment inside the site's build. Frameworks like Astro own the build orchestration, so the plugin runs `vite.build()` after the client environment writes its bundle, into `<client outDir>/_vibe/admin`. In dev the same configuration runs as a middleware-mode server at `/_vibe/admin`, sharing the site's HTTP server for HMR.
 - **Editor stylesheet:** a generated `node_modules/.vibe-cms/admin.css` imports the admin core's styles and adds the project, plus installed packages that depend on vibe-cms, as Tailwind sources. It's a cache file, never in your source tree.
+- **Editor dependency cache:** the editor's Vite instance pre-bundles into `node_modules/.vibe-cms/vite` in the site, and the local panel into `node_modules/.vibe-cms/panel-vite`. Vite's default would sit next to the editor's sources, shared by every site and the panel, so one server re-optimizing broke the others' imports (504 "Outdated Optimize Dep").
 - **Stubs keep export names:** a stubbed `.admin`/`.server` module exports every name the real one does (as `undefined`), so `export { X } from "./x.server"` still links. Loading the config at build time (for `vibe-cms/exports`) stubs both.
 - **Plugin classes:** `definePlugin` takes `exports: { from: import.meta.url, names: ["SessionDO"] }`; `vibe-cms/exports` re-exports them.
 - **Deep links** into the editor fall back to `/_vibe/admin/index.html` through the assets binding (`env.ASSETS` unless `bindings.assets` is given).
