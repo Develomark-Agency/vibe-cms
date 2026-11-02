@@ -1,4 +1,4 @@
-import { animate, motion, useDragControls, useMotionValue, type PanInfo } from "motion/react";
+import { animate, motion, useDragControls, useMotionValue, useMotionValueEvent, type PanInfo } from "motion/react";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, LinkIcon, MoreHorizontalIcon, RotateCwIcon, RotateCwSquareIcon, ScalingIcon, SmartphoneIcon, XIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "../components/ui/button.tsx";
@@ -151,6 +151,17 @@ function layoutSize(layout: Layout): Size {
   return fit(layout, shape);
 }
 
+/** Page pixels to screen pixels: a fixed shape scales its width to the window's; freeform uses the zoom. */
+function frameScale({ shape, zoom }: { shape: Shape | null, zoom: number | "fit" }, windowWidth: number): number {
+  if(shape) return windowWidth > 0 ? windowWidth / shape.width : 1;
+  return zoom === "fit" ? 1 : zoom;
+}
+
+/** The title bar shows the path from "wide", and makes Freeform an icon below "narrow". */
+function widthBand(width: number): "narrow" | "medium" | "wide" {
+  return width < 400 ? "narrow" : width < 440 ? "medium" : "wide";
+}
+
 /** Where a window of this size sits in a corner. */
 function cornerPosition(corner: Corner, size: Size) {
   return {
@@ -185,20 +196,47 @@ export function PreviewWindow() {
   const preview = useSyncExternalStore(subscribePreview, getPreview);
   const [layout, setLayout] = useState(loadLayout);
   const [busy, setBusy] = useState<null | "drag" | "resize">(null);
-  // During a resize the size lives here, not in `layout`, until the pointer is released.
-  const [live, setLive] = useState<Size | null>(null);
   const [slow, setSlow] = useState(false);
-  const [body, setBody] = useState<Size>({ width: 0, height: 0 });
   const [, setViewport] = useState(0);
-  const bodyRef = useRef<HTMLDivElement>(null);
   const controls = useDragControls();
+  // Position and size are Motion values: a drag or resize writes them straight to the element, all in
+  // the same frame, with no React render until the pointer is released (then `layout` is saved).
   const x = useMotionValue(0);
   const y = useMotionValue(0);
+  const width = useMotionValue(0);
+  const height = useMotionValue(0);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [hover, setHover] = useState(false);
   // A press on a tucked window that never became a drag is a click: it comes out.
   const dragged = useRef(false);
 
-  const size = live ?? layoutSize(layout);
+  const size = layoutSize(layout);
+  const { shape } = layout;
+  // What the iframe needs to size itself, current as of this render, for the motion value handlers.
+  const fitting = useRef({ shape, zoom: layout.zoom });
+  fitting.current = { shape, zoom: layout.zoom };
+  // The title bar's layout changes at a few widths; a resize re-renders only when it crosses one.
+  const [band, setBand] = useState(() => widthBand(size.width));
+
+  /**
+   * Sizes the iframe from the window's size: the page renders at the shape's width (or the window's,
+   * over the zoom) and is scaled down to fit. Derived, not measured, so it moves in the same frame.
+   */
+  function fitFrame() {
+    const frame = frameRef.current;
+    if(!frame) return;
+    const scale = frameScale(fitting.current, width.get());
+    frame.style.width = `${width.get() / scale}px`;
+    frame.style.height = `${Math.max(0, height.get() - HEADER) / scale}px`;
+    frame.style.transform = `scale(${scale})`;
+  }
+
+  useMotionValueEvent(width, "change", value => {
+    fitFrame();
+    const next = widthBand(value);
+    if(next !== band) setBand(next);
+  });
+  useMotionValueEvent(height, "change", fitFrame);
 
   useEffect(() => {
     try {
@@ -217,7 +255,11 @@ export function PreviewWindow() {
 
   // In its corner, unless it's being moved: on opening, after a size change, after the window resizes.
   useLayoutEffect(() => {
-    if(!preview.open || busy || x.isAnimating() || y.isAnimating()) return;
+    if(!preview.open || busy) return;
+    width.set(size.width);
+    height.set(size.height);
+    fitFrame();
+    if(x.isAnimating() || y.isAnimating()) return;
     const target = layout.tucked ? tuckPosition(false) : cornerPosition(layout.corner, size);
     x.set(target.x);
     y.set(target.y);
@@ -238,14 +280,6 @@ export function PreviewWindow() {
     reveals.current = preview.reveals;
     if(layout.tucked) untuck();
   }, [preview.reveals]);
-
-  useLayoutEffect(() => {
-    const element = bodyRef.current;
-    if(!element) return;
-    const observer = new ResizeObserver(([entry]) => setBody({ width: entry!.contentRect.width, height: entry!.contentRect.height }));
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [preview.open]);
 
   // A page that never announces itself didn't get the preview script: the cookie was refused, or the site doesn't route through vibe().
   useEffect(() => {
@@ -268,9 +302,10 @@ export function PreviewWindow() {
   if(!preview.open || !preview.src) return null;
 
   // A fixed shape renders the page at its own width, scaled to the window; freeform at the zoom, as wide as the window allows.
-  const { shape } = layout;
-  const scale = shape ? (body.width ? body.width / shape.width : 1) : layout.zoom === "fit" ? 1 : layout.zoom;
-  const page = shape ? { width: shape.width, height: Math.round(shape.width * shape.h / shape.w) } : { width: Math.round(body.width / scale), height: Math.round(body.height / scale) };
+  const scale = frameScale({ shape, zoom: layout.zoom }, size.width);
+  const page = shape
+    ? { width: shape.width, height: Math.round(shape.width * shape.h / shape.w) }
+    : { width: Math.round(size.width / scale), height: Math.round((size.height - HEADER) / scale) };
 
   /** Eases into a corner, carrying some of the throw's velocity: capped, so a hard flick can't sail past it. */
   function settle(corner: Corner, next: Size, velocity = { x: 0, y: 0 }) {
@@ -329,14 +364,16 @@ export function PreviewWindow() {
       if(move.buttons === 0) return onUp();
       const dx = horizontal ? (move.clientX - start.px) * (west ? -1 : 1) : 0;
       const dy = vertical ? (move.clientY - start.py) * (north ? -1 : 1) : 0;
-      let width = start.width + dx;
+      let nextWidth = start.width + dx;
       if(shape && (!horizontal || (vertical && Math.abs(dy) > Math.abs(dx)))) {
-        width = (start.height + dy - HEADER) * shape.w / shape.h;
+        nextWidth = (start.height + dy - HEADER) * shape.w / shape.h;
       }
-      latest = fit({ width, height: start.height + dy }, shape, room);
+      latest = fit({ width: nextWidth, height: start.height + dy }, shape, room);
+      // All four in the same frame, so the side that doesn't move stays exactly where it was.
       x.set(west ? start.x + start.width - latest.width : start.x);
       y.set(north ? start.y + start.height - latest.height : start.y);
-      setLive(latest);
+      width.set(latest.width);
+      height.set(latest.height);
     }
     function onUp() {
       handle.removeEventListener("pointermove", onMove);
@@ -345,7 +382,6 @@ export function PreviewWindow() {
       handle.removeEventListener("lostpointercapture", onUp);
       const corner = nearestCorner(x.get(), y.get(), latest);
       settle(corner, latest);
-      setLive(null);
       setBusy(null);
       // Resizing a fixed shape picks its zoom; freeform keeps its zoom and gains page width.
       setLayout(current => ({ ...current, ...latest, corner, zoom: current.shape ? "fit" : current.zoom }));
@@ -399,7 +435,7 @@ export function PreviewWindow() {
       }}
       onDragEnd={onDragEnd}
       className="fixed top-0 left-0 z-40 flex flex-col rounded-[14px] bg-background shadow-[0_0_0_1px_var(--border),0_12px_40px_-8px_rgb(0_0_0/0.3)]"
-      style={{ x, y, width: size.width, height: size.height }}
+      style={{ x, y, width, height }}
     >
       <div
         className={cn("flex shrink-0 cursor-grab touch-none items-center gap-1 border-b pr-1.5 pl-3 select-none", busy === "drag" && "cursor-grabbing")}
@@ -415,14 +451,14 @@ export function PreviewWindow() {
       >
         {/* Narrow windows (a phone) keep the title bar for the controls. */}
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {size.width >= 440 && (
+          {band === "wide" && (
             <>
               <span className="shrink-0 text-xs font-medium">Preview</span>
               <span className="truncate font-mono text-[11px] text-muted-foreground">{preview.path ?? ""}</span>
             </>
           )}
         </div>
-        <ShapePicker shape={shape} onChange={setShape} pageWidth={page.width} compact={size.width < 400} />
+        <ShapePicker shape={shape} onChange={setShape} pageWidth={page.width} compact={band === "narrow"} />
         {shape && (
           <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Rotate" onClick={rotate}><RotateCwSquareIcon /></Button>} />
@@ -444,17 +480,19 @@ export function PreviewWindow() {
         </DropdownMenu>
         <Button variant="ghost" size="icon-xs" aria-label="Close preview" onClick={closePreview}><XIcon /></Button>
       </div>
-      <div ref={bodyRef} className="relative min-h-0 flex-1 overflow-hidden rounded-b-[14px] bg-muted/40">
-        {body.width > 0 && (
-          <iframe
-            // Known before the page loads, so its first message is recognised as the frame's.
-            ref={element => setPreviewFrame(element?.contentWindow ?? null)}
-            src={preview.src}
-            title="Draft preview"
-            className={cn("absolute top-0 left-0 border-0 bg-white", busy && "pointer-events-none")}
-            style={{ width: body.width / scale, height: body.height / scale, transform: `scale(${scale})`, transformOrigin: "0 0" }}
-          />
-        )}
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-[14px] bg-muted/40">
+        <iframe
+          // Known before the page loads, so its first message is recognised as the frame's.
+          ref={element => {
+            frameRef.current = element;
+            setPreviewFrame(element?.contentWindow ?? null);
+            fitFrame();
+          }}
+          src={preview.src}
+          title="Draft preview"
+          // Sized by `fitFrame`, never by React, so a render can't put back a stale size.
+          className={cn("absolute top-0 left-0 origin-top-left border-0 bg-white", busy && "pointer-events-none")}
+        />
         {!preview.ready && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 p-6 text-center text-sm text-muted-foreground">
             {slow ? (
