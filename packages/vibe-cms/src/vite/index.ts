@@ -10,6 +10,7 @@ import { build, createServer, runnerImport, searchForWorkspaceRoot, type Connect
 import type { AnyConfig } from "../config.ts";
 import { collectDescriptors } from "../descriptor.ts";
 
+/** Options for the `vibe()` Vite plugin. */
 export interface VibeOptions {
   /** Path to the config, relative to the Vite root. Defaults to `./vibe-cms.config.ts`. */
   config?: string,
@@ -200,7 +201,7 @@ function adminViteConfig(root: string, configFile: string, base: string, cssFile
       alias: [{ find: /^cloudflare:.*/, replacement: fileURLToPath(new URL("./cloudflare-stub.ts", import.meta.url)) }]
     },
     server: {
-      fs: { allow: [searchForWorkspaceRoot(root), root, PACKAGE_ROOT] },
+      fs: { allow: [searchForWorkspaceRoot(root), root, PACKAGE_ROOT, searchForWorkspaceRoot(PACKAGE_ROOT)] },
       // Tailwind sources the whole site, which puts it under watch. Tools keep state in dot-folders
       // (Alchemy rewrites a pid file several times a second), and every change would rebuild the CSS.
       watch: { ignored: (file: string) => isToolOutput(root, file) }
@@ -272,6 +273,14 @@ function serveAdmin(parent: ViteDevServer, root: string, configFile: string, bas
   };
 }
 
+/**
+ * The Vite plugin. In dev it serves the editor at `/_vibe/admin/`; in builds it builds the editor into the
+ * client output's `_vibe/admin/` (so the client environment must build: Astro always does; a plain Worker
+ * needs a `public/` file or an `index.html`). It also stubs `.admin` files outside the editor and `.server`
+ * files in browser code, and provides `vibe-cms/exports`. The examples list it before `cloudflare()`.
+ *
+ * See `vibe-cms docs vite`.
+ */
 export function vibe(options: VibeOptions = {}): Plugin[] {
   const configFile = options.config ?? "./vibe-cms.config.ts";
   let root = process.cwd();
@@ -329,7 +338,12 @@ export function vibe(options: VibeOptions = {}): Plugin[] {
   ];
 }
 
-/** Builds the editor without a Vite-based site build, e.g. for plain `wrangler deploy`. */
+/**
+ * Builds the editor without a Vite-based site build, e.g. for plain `wrangler deploy`. The editor has the
+ * config compiled in, so rebuild it after config changes. `vibe-cms build-admin` runs this.
+ *
+ * See `vibe-cms docs wrangler`.
+ */
 export async function buildAdmin(options: { root?: string, config?: string, outDir: string, prefix?: string }) {
   const root = path.resolve(options.root ?? process.cwd());
   const configFile = options.config ?? "./vibe-cms.config.ts";

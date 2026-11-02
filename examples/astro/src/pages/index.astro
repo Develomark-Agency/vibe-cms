@@ -1,0 +1,10 @@
+---
+import { cms, post } from "../content.ts";
+
+const posts = await cms.query(post).findMany({ limit: 20 });
+---
+<h1>Posts</h1>
+<ul>
+  {posts.map(entry => <li><a href={`/posts/${entry.slug}`}>{entry.title}</a></li>)}
+</ul>
+<p><a href="/_vibe/admin/">Editor</a></p>

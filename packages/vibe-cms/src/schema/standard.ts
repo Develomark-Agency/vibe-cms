@@ -29,8 +29,10 @@ export interface StandardIssue {
 
 export type StandardResult<Output> = { readonly value: Output, readonly issues?: undefined } | { readonly issues: readonly StandardIssue[] };
 
+/** JSON Schema dialects `toJsonSchema` can produce: `draft-2020-12` and `draft-07`; others throw. */
 export type JsonSchemaTarget = "draft-2020-12" | "draft-07" | "openapi-3.0" | ({} & string);
 
+/** Options for `toJsonSchema` and `~standard.jsonSchema`. */
 export interface JsonSchemaOptions {
   readonly target: JsonSchemaTarget,
   readonly libraryOptions?: Record<string, unknown> | undefined

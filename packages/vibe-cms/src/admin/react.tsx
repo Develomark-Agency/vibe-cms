@@ -5,6 +5,8 @@ import type { WidgetContext, WidgetImpl } from "./index.ts";
 /**
  * The first-class way to write a widget. Rendered inside the admin's React
  * tree, so design system components, theme and form state just work.
+ * Default-export the result from the widget's `*.admin.tsx` file.
+ * See `vibe-cms docs widgets`.
  */
 export function defineReactWidget<T, O = {}>(Component: ComponentType<WidgetContext<T, O>>): WidgetImpl<T, O> {
   return {

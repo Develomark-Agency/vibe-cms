@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { permissionSummary } from "../src/handler/auth.ts";
 import { createHandler } from "../src/handler/index.ts";
 import { and, desc, eq, gt, has, inArray } from "../src/query/index.ts";
+import { defineConfig } from "../src/index.ts";
+import { image } from "../src/media/index.ts";
+import v from "../src/schema/index.ts";
 import { calls, config } from "./fixture.ts";
 import { createD1, createR2, ctx, png } from "./helpers.ts";
 
@@ -435,6 +438,26 @@ describe("site settings", () => {
     expect(reset.body).toEqual({ name: "Test site", accent: null, icon: null });
   });
 
+  test("saving the default name stores no override, so a name added to the config later shows through", async () => {
+    const env = { DB: createD1() };
+    function call(vibe: ReturnType<typeof createHandler>, path: string, method: string, json: unknown, token = "") {
+      return vibe.handle(
+        new Request(`https://site.test/_vibe/api/${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(json) }),
+        env,
+        ctx
+      );
+    }
+    async function patch(vibe: ReturnType<typeof createHandler>, json: unknown) {
+      const { token } = await (await call(vibe, "session", "POST", { dev: true })).json() as { token: string };
+      return call(vibe, "site", "PATCH", json, token);
+    }
+    const unnamed = createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { dev: true, bindings: (e: typeof env) => ({ db: e.DB }) });
+    // Without a configured name the editor shows the host; saving it as is keeps it the default.
+    expect((await patch(unnamed, { name: "site.test" })).status).toBe(200);
+    const named = createHandler(defineConfig({ name: "Acme", schemas: { page: v.object({ title: v.text() }) } }), { dev: true, bindings: (e: typeof env) => ({ db: e.DB }) });
+    expect((await named.site(env)).name).toBe("Acme");
+  });
+
   test("rejects bad values and needs the siteSettings permission", async () => {
     expect((await t.api("/api/site", { method: "PATCH", json: { accent: "orange" } })).status).toBe(400);
     expect((await t.api("/api/site", { method: "PATCH", json: { name: " " } })).status).toBe(400);
@@ -443,6 +466,69 @@ describe("site settings", () => {
     expect((await t.api("/api/site", { method: "PATCH", json: { name: "Nope" } })).status).toBe(401);
     // Writing content doesn't imply changing the site's branding.
     expect(permissionSummary(config, { sub: "x", roles: ["editor"] }).site).toBe(false);
+  });
+});
+
+describe("content stored under an older schema", () => {
+  const before = defineConfig({ schemas: { post: v.object({ title: v.text(), cover: v.optional(v.text({ format: "url" })), views: v.optional(v.number()) }) } });
+  const after = defineConfig({ schemas: { post: v.object({ title: v.text(), cover: v.optional(image()), views: v.optional(v.number()), subtitle: v.text() }) } });
+
+  async function publishedUnderOldSchema() {
+    const env = { DB: createD1(), MEDIA: createR2() };
+    function bindings(e: typeof env) {
+      return { db: e.DB, storage: e.MEDIA };
+    }
+    const old = createHandler(before, { dev: true, bindings });
+    const { token } = await (await old.handle(new Request("https://site.test/_vibe/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dev: true }) }), env, ctx)).json() as { token: string };
+    const created = await old.handle(new Request("https://site.test/_vibe/api/actions/documents.create", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ type: "post", data: { title: "Hi", cover: "https://cdn.test/a.jpg" }, publish: true })
+    }), env, ctx);
+    const { id } = await created.json() as { id: string };
+    return { env, id, token, vibe: createHandler(after, { dev: true, bindings }) };
+  }
+
+  test("published reads name the document and field that no longer fit", async () => {
+    const { env, id, vibe } = await publishedUnderOldSchema();
+    const error = await vibe.client(env).query(after.schemas.post).findMany().then(undefined, (e: unknown) => e) as Error & { status: number, details: any };
+    expect(error.status).toBe(409);
+    expect(error.message).toContain(`post ${id} (en) has the text "https://cdn.test/a.jpg" in "cover", which expects a media library file`);
+    expect(error.message).toContain("vibe-cms docs schema-changes");
+    expect(error.details.mismatches).toEqual([{ type: "post", id, locale: "en", path: ["cover"], expected: expect.any(String), found: "the text \"https://cdn.test/a.jpg\"" }]);
+
+    // The public API answers with the same, as a tagged error.
+    const response = await vibe.handle(new Request("https://site.test/_vibe/api/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ queries: [{ type: "post", op: "findMany", args: {} }] })
+    }), env, ctx);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ tag: "Conflict", details: { mismatches: [{ id, path: ["cover"] }] } });
+  });
+
+  test("missing fields aren't mismatches, and drafts and edits still work", async () => {
+    const { env, id, token, vibe } = await publishedUnderOldSchema();
+    // Drafts may hold anything; they come back as stored.
+    const [draft] = await vibe.client(env).query(after.schemas.post, { drafts: true }).findMany();
+    expect(draft!.cover as unknown).toBe("https://cdn.test/a.jpg");
+
+    // Saving the document reports the old value as an issue instead of failing.
+    const saved = await vibe.handle(new Request("https://site.test/_vibe/api/actions/documents.update", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ type: "post", id, data: { title: "Hi", cover: "https://cdn.test/a.jpg" } })
+    }), env, ctx);
+    expect(saved.status).toBe(200);
+    expect((await saved.json() as { issues: Array<{ path: string[] }> }).issues.map(i => i.path[0])).toEqual(expect.arrayContaining(["cover", "subtitle"]));
+
+    // Once fixed and republished, reads work, though older documents still lack the new required field.
+    await vibe.handle(new Request("https://site.test/_vibe/api/actions/documents.update", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ type: "post", id, data: { title: "Hi", subtitle: "Now valid" }, publish: true })
+    }), env, ctx);
+    expect((await vibe.client(env).query(after.schemas.post).findMany()).map(p => p.subtitle)).toEqual(["Now valid"]);
   });
 });
 

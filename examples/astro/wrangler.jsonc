@@ -1,0 +1,12 @@
+{
+  "name": "vibe-example-astro",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-08",
+  "compatibility_flags": ["nodejs_compat"],
+  // Astro's client build, which includes the editor under /_vibe/admin.
+  "assets": { "directory": "dist/client", "binding": "ASSETS", "not_found_handling": "none" },
+  "d1_databases": [{ "binding": "DB", "database_name": "vibe-example-astro", "database_id": "local" }],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "vibe-example-astro-media" }],
+  // Scheduled publishing and trash purging.
+  "triggers": { "crons": ["* * * * *"] }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@vibe-cms/example-schemas",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "vibe-cms": "workspace:*",
+    "@vibe-cms/rich-text": "workspace:*",
+    "@vibe-cms/blocks": "workspace:*"
+  }
+}

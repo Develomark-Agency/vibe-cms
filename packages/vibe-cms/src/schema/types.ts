@@ -54,12 +54,17 @@ export interface FieldOptions<T> {
 }
 
 export interface TextOptions extends FieldOptions<string> {
+  /** Minimum length. `min: 1` refuses empty strings. */
   min?: number,
+  /** Maximum length. */
   max?: number,
   /** `path`: a site path like `/about/team` (lowercase, no trailing slash). */
   format?: "email" | "url" | "slug" | "path",
+  /** A regular expression (source, not a literal) the value must match. */
   pattern?: string,
+  /** A textarea in the editor. */
   multiline?: boolean,
+  /** Adds a database index, for fields you often filter or sort on. Filtering works without it. */
   indexed?: boolean,
   /** No two documents of this type may share the value in the same locale. Top-level fields only. */
   unique?: boolean
@@ -72,8 +77,11 @@ export interface TextSchema extends BaseSchema<string>, Omit<TextOptions, "widge
 export interface NumberOptions extends FieldOptions<number> {
   min?: number,
   max?: number,
+  /** Refuse fractions. */
   integer?: boolean,
+  /** The editor's increment. Not validated. */
   step?: number,
+  /** Adds a database index, for fields you often filter or sort on. */
   indexed?: boolean
 }
 
@@ -129,7 +137,9 @@ export interface OptionalSchema<S extends AnySchema = AnySchema>
 }
 
 export interface ArrayOptions<T> extends FieldOptions<T[]> {
+  /** Fewest items. */
   min?: number,
+  /** Most items. */
   max?: number
 }
 
@@ -140,6 +150,7 @@ export interface ArraySchema<S extends AnySchema = AnySchema> extends BaseSchema
   max?: number
 }
 
+/** An object schema's fields: key → schema. */
 export type Shape = Record<string, AnySchema>;
 
 export interface ObjectSchema<S extends Shape = Shape> extends BaseSchema<ShapeInput<S>, ShapeOutput<S>> {
@@ -157,6 +168,7 @@ export interface UnionSchema<S extends readonly AnySchema[] = readonly AnySchema
 export type RefValue<To extends string | undefined> = To extends string ? string : { type: string, id: string };
 
 export interface RefOptions extends FieldOptions<any> {
+  /** Adds a database index, for references you filter by. */
   indexed?: boolean
 }
 
@@ -166,6 +178,7 @@ export interface RefSchema<To extends string | undefined = string | undefined> e
   indexed?: boolean
 }
 
+/** What's known about a file: image dimensions, plus whatever `media.analyze` plugins report. */
 export interface AssetMeta {
   width?: number,
   height?: number,
@@ -209,7 +222,9 @@ export interface AssetSchema<F extends Shape = Shape>
   validate?: AssetOptions["validate"]
 }
 
+/** A schema's stored type. `Infer` (from `vibe-cms`) also takes collections. */
 export type Input<S> = S extends { readonly "~types"?: Types<infer I, any> } ? I : never;
+/** A schema's query result type. `InferOutput` (from `vibe-cms`) also takes collections. */
 export type Output<S> = S extends { readonly "~types"?: Types<any, infer O> } ? O : never;
 
 export type Simplify<T> = { [K in keyof T]: T[K] } & {};

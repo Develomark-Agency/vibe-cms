@@ -62,7 +62,12 @@ export function SiteSettingsPage() {
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if(!dirty || !name.trim()) return;
-    save.mutate({ name: name.trim(), accent, icon: icon?.id ?? null });
+    // Only what changed: sending the shown name would store the default as an override.
+    const patch: SiteSettingsPatch = {};
+    if(name.trim() !== site.name) patch.name = name.trim();
+    if(accent !== site.accent) patch.accent = accent;
+    if(icon?.id !== site.icon?.id) patch.icon = icon?.id ?? null;
+    save.mutate(patch);
   }
 
   return (

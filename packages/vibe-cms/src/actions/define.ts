@@ -21,6 +21,7 @@ export interface ActionAnnotations {
   idempotent?: boolean
 }
 
+/** A named capability with a Zod input, run by every surface (REST, MCP, CLI, the editor). */
 export interface Action<N extends string = string, I extends z.ZodType = z.ZodType, O = unknown> {
   /** `group.verb`, e.g. `documents.list`. Surfaces derive their own names from it. */
   name: N,
@@ -31,10 +32,14 @@ export interface Action<N extends string = string, I extends z.ZodType = z.ZodTy
   run(ctx: ActionContext, input: z.output<I>): Promise<Result<O, ActionError>>
 }
 
+/** Any action. */
 export type AnyAction = Action<string, z.ZodType, any>;
+/** An action's input, as callers write it. */
 export type ActionInput<A extends AnyAction> = z.input<A["input"]>;
+/** What an action resolves to. */
 export type ActionOutput<A extends AnyAction> = A extends Action<any, any, infer O> ? O : never;
 
+/** Declares an action; the identity function, for inference. */
 export function defineAction<const N extends string, I extends z.ZodType, O>(action: Action<N, I, O>): Action<N, I, O> {
   return action;
 }

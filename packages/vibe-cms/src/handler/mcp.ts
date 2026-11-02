@@ -1,15 +1,14 @@
 import { coreActions } from "../actions/core.ts";
 import { runAction, type ActionContext, type AnyAction } from "../actions/define.ts";
 import { filesFromJson } from "../actions/describe.ts";
-import { actionTools, serveMcp, toolName, toolResult, type McpTool } from "../actions/mcp.ts";
+import { actionTools, CONTENT_INSTRUCTIONS, serveMcp, toolName, toolResult, type McpTool } from "../actions/mcp.ts";
 import pkg from "../../package.json" with { type: "json" };
 
 /** A site's own MCP server: every action is a tool, run with the request's site session. */
 
-const INSTRUCTIONS = `Content management for this site.
-Call schema_list for the content types, then schema_get for a type's fields before creating or updating its documents.
-Documents are drafts until published. Pass a document's updatedAt as baseUpdatedAt when updating, so you don't overwrite someone else's edit.
-Deleting moves things to the trash; trash_purge and trash_empty can't be undone.`;
+const INSTRUCTIONS = `Content management for this site: its documents, media library, translations and trash. Every tool runs as the signed-in user, with their permissions.
+
+${CONTENT_INSTRUCTIONS}`;
 
 const tools = new Map<string, AnyAction>(Object.values(coreActions).map(action => [toolName(action.name), action as AnyAction]));
 

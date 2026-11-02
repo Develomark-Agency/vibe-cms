@@ -1,0 +1,9 @@
+---
+import { eq } from "vibe-cms/query";
+import { cms, post } from "../../content.ts";
+
+const entry = await cms.query(post).findFirst({ where: eq(post.slug, Astro.params.slug!) });
+if(!entry) return new Response("Not found", { status: 404 });
+---
+<h1>{entry.title}</h1>
+<p>{entry.body}</p>

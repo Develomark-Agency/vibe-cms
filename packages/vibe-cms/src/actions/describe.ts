@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ActionAnnotations, AnyAction } from "./define.ts";
 import { inputFields } from "./inputs.ts";
 
+/** An action as `GET /_vibe/api/actions` lists it: name, title, description, annotations, input JSON Schema. */
 export interface ActionDescription {
   name: string,
   title: string,
@@ -48,6 +49,7 @@ export function inputJsonSchema(action: AnyAction, options: { files?: "binary" |
   }) as Record<string, unknown>;
 }
 
+/** Every action's description, for listings and generated clients. */
 export function describeActions(actions: Record<string, AnyAction>, options: { files?: "binary" | "json" } = {}): ActionDescription[] {
   return Object.values(actions).map(action => ({
     name: action.name,

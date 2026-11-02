@@ -22,6 +22,7 @@ export type Condition =
   | { op: "not", condition: Condition }
   | { op: "search", value: string };
 
+/** A sort key, from `asc()` / `desc()`. */
 export interface Order {
   path: string[],
   dir: "asc" | "desc"
@@ -37,26 +38,32 @@ function scalar(value: unknown): Primitive {
   return value instanceof Date ? value.toISOString() : (value as Primitive);
 }
 
+/** Equal. Date columns take ISO strings or `Date`. See `vibe-cms docs queries`. */
 export function eq<C extends Column>(col: C, value: ValueOf<C>): Condition {
   return { op: "eq", path: path(col), value: scalar(value) };
 }
 
+/** Not equal. */
 export function ne<C extends Column>(col: C, value: ValueOf<C>): Condition {
   return { op: "ne", path: path(col), value: scalar(value) };
 }
 
+/** Greater than. */
 export function gt<C extends Column>(col: C, value: ValueOf<C>): Condition {
   return { op: "gt", path: path(col), value: scalar(value) };
 }
 
+/** Greater than or equal. */
 export function gte<C extends Column>(col: C, value: ValueOf<C>): Condition {
   return { op: "gte", path: path(col), value: scalar(value) };
 }
 
+/** Less than. */
 export function lt<C extends Column>(col: C, value: ValueOf<C>): Condition {
   return { op: "lt", path: path(col), value: scalar(value) };
 }
 
+/** Less than or equal. */
 export function lte<C extends Column>(col: C, value: ValueOf<C>): Condition {
   return { op: "lte", path: path(col), value: scalar(value) };
 }
@@ -66,10 +73,12 @@ export function like(col: Column<string | undefined>, pattern: string): Conditio
   return { op: "like", path: path(col), value: pattern };
 }
 
+/** Equal to one of the values. */
 export function inArray<C extends Column>(col: C, values: ReadonlyArray<ValueOf<C>>): Condition {
   return { op: "in", path: path(col), values: values.map(scalar) };
 }
 
+/** Equal to none of the values. */
 export function notInArray<C extends Column>(col: C, values: ReadonlyArray<ValueOf<C>>): Condition {
   return { op: "nin", path: path(col), values: values.map(scalar) };
 }
@@ -79,35 +88,42 @@ export function has<T>(col: Column<T[] | undefined>, value: T): Condition {
   return { op: "has", path: path(col), value: scalar(value) };
 }
 
+/** The field is missing or null. */
 export function isNull(col: Column): Condition {
   return { op: "null", path: path(col) };
 }
 
+/** The field has a value. */
 export function isNotNull(col: Column): Condition {
   return { op: "notNull", path: path(col) };
 }
 
+/** All of the conditions. `undefined` and `false` are skipped, for optional filters. */
 export function and(...conditions: Array<Condition | undefined | false>): Condition {
   return { op: "and", conditions: conditions.filter((c): c is Condition => Boolean(c)) };
 }
 
+/** Any of the conditions. `undefined` and `false` are skipped. */
 export function or(...conditions: Array<Condition | undefined | false>): Condition {
   return { op: "or", conditions: conditions.filter((c): c is Condition => Boolean(c)) };
 }
 
+/** The condition doesn't hold. */
 export function not(condition: Condition): Condition {
   return { op: "not", condition };
 }
 
-/** Loose text match over the whole document. */
+/** The text anywhere in the document's JSON (a `LIKE` over all of it, keys included). */
 export function search(value: string): Condition {
   return { op: "search", value };
 }
 
+/** Ascending. */
 export function asc(col: Column): Order {
   return { path: path(col), dir: "asc" };
 }
 
+/** Descending. */
 export function desc(col: Column): Order {
   return { path: path(col), dir: "desc" };
 }
@@ -127,6 +143,7 @@ function metaColumn(name: string): Column<string> {
 
 // --- Requests -------------------------------------------------------------
 
+/** Options for one `with:` expansion. Reverse expansions use them all; forward ones only a nested `with`. */
 export interface WithOptions {
   where?: Condition,
   orderBy?: Order[],
@@ -134,11 +151,15 @@ export interface WithOptions {
   with?: Record<string, true | WithOptions>
 }
 
+/** `with:` keys: reference fields, or `<type>s` for documents of that type pointing here. */
 export type WithSpec = Record<string, true | WithOptions>;
 
+/** Options for `findMany`, `findFirst` and (without `where`) `findById`. */
 export interface FindOptions<W extends WithSpec = WithSpec, L extends string = string> {
   where?: Condition,
+  /** Defaults to most recently updated first. */
   orderBy?: Order[],
+  /** Defaults to 100, at most 1000. */
   limit?: number,
   offset?: number,
   /** One of the site's `locales`; falls back to the default locale per document. */
@@ -149,6 +170,7 @@ export interface FindOptions<W extends WithSpec = WithSpec, L extends string = s
 /** The site's locales, from `defineConfig({ locales })`. */
 export type LocaleOf<Cfg> = Cfg extends { locales: ReadonlyArray<infer L extends string> } ? L : string;
 
+/** A query's arguments as sent to the engine. */
 export interface QueryArgs {
   where?: Condition,
   orderBy?: Order[],
@@ -168,10 +190,16 @@ export interface QueryRequest<T = unknown> extends PromiseLike<T> {
   readonly "~result"?: T
 }
 
+/** A query as JSON, the body of `POST /_vibe/api/query`. */
 export type SerializedQuery = Pick<QueryRequest, "type" | "op" | "args" | "drafts">;
 
+/** Runs serialized queries and returns their results in order: in-process or over HTTP. */
 export type Executor = (queries: SerializedQuery[]) => Promise<unknown[]>;
 
+/**
+ * Every result's `$meta`. `status`: `draft` (never published), `published`, or `changed`
+ * (published, with newer draft edits). `locale` is the one returned, after fallback.
+ */
 // A type alias (not an interface) so documents carrying it stay valid JSON objects.
 export type DocumentMeta = {
   locale: string,
@@ -185,6 +213,7 @@ type SchemasOf<Cfg> = Cfg extends { schemas: infer S } ? S : never;
 
 type ShapeOf<C> = C extends CollectionMarker<any, infer S> ? (S extends ObjectSchema<infer Sh> ? Sh : never) : never;
 
+/** A query result for a collection: its output fields plus `id` and `$meta`. */
 export type Doc<C> = (C extends CollectionMarker<any, infer S> ? Output<S> : never) & {
   id: string,
   $meta: DocumentMeta
@@ -213,6 +242,7 @@ type Expansions<Cfg, C, W> = {
     : Array<Result<Cfg, SchemasOf<Cfg>[ReverseTarget<Cfg, K>], W[K] extends { with: infer N } ? N : {}>>
 };
 
+/** A query result with `with:` expansions applied. */
 export type Result<Cfg, C, W = {}> = {} extends W
   ? Doc<C>
   : Omit<Doc<C>, keyof W> & Expansions<Cfg, C, W>;
@@ -223,6 +253,7 @@ export type WithFor<Cfg, C> = { [K in RefKeys<ShapeOf<C>>]?: true | WithOptions 
   [K in keyof SchemasOf<Cfg> as `${K & string}s`]?: true | WithOptions
 };
 
+/** `cms.query(collection)`. Each method returns a lazy request: it runs when awaited, or in `cms.batch`. */
 export interface QueryBuilder<Cfg, C> {
   findMany<const W extends WithFor<Cfg, C> = {}>(options?: FindOptions<W & WithSpec, LocaleOf<Cfg>>): QueryRequest<Array<Result<Cfg, C, W>>>,
   findFirst<const W extends WithFor<Cfg, C> = {}>(options?: FindOptions<W & WithSpec, LocaleOf<Cfg>>): QueryRequest<Result<Cfg, C, W> | null>,
@@ -235,6 +266,7 @@ export interface QueryOptions {
   drafts?: boolean
 }
 
+/** A query builder over any executor. Use a client's `query()` instead. */
 export function createQueryBuilder<Cfg, C extends CollectionMarker>(
   collection: C,
   execute: Executor,
@@ -262,12 +294,17 @@ export function createQueryBuilder<Cfg, C extends CollectionMarker>(
   };
 }
 
+/**
+ * Typed content reads: `vibe.client(env)` in the Worker, `ctx.cms` in plugins, `createClient({ url })`
+ * over HTTP. Read-only; writes go through actions. See `vibe-cms docs queries`.
+ */
 export interface QueryClient<Cfg> {
   query<C extends Collection>(collection: C, options?: QueryOptions): QueryBuilder<Cfg, C>,
   /** Runs several queries in one round trip. */
   batch<const Q extends readonly QueryRequest[]>(queries: Q): Promise<{ [K in keyof Q]: Awaited<Q[K]> }>
 }
 
+/** A query client over any executor, e.g. your own transport. */
 export function createQueryClient<Cfg extends AnyConfig>(execute: Executor): QueryClient<Cfg> {
   return {
     query: (collection, options) => createQueryBuilder(collection, execute, options),
@@ -275,6 +312,7 @@ export function createQueryClient<Cfg extends AnyConfig>(execute: Executor): Que
   };
 }
 
+/** A request's JSON form, without its `then`. */
 export function serializeQuery(query: QueryRequest | SerializedQuery): SerializedQuery {
   return { type: query.type, op: query.op, args: query.args, ...(query.drafts ? { drafts: true } : {}) };
 }

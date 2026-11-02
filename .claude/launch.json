@@ -34,6 +34,17 @@
         "5200"
       ],
       "port": 5200
+    },
+    {
+      "name": "example-worker",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--filter",
+        "@vibe-cms/example-worker",
+        "dev"
+      ],
+      "port": 1340
     }
   ]
 }

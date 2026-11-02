@@ -13,7 +13,7 @@ import type {
   TextSchema,
   UnionSchema
 } from "../schema/types.ts";
-import { findReferences, isRecord, pickUnionOption, schemaAt, validate, type Issue } from "../schema/validate.ts";
+import { findReferences, isAssetValue, isRecord, pickUnionOption, schemaAt, shapeMismatches, validate, type Issue } from "../schema/validate.ts";
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
 import { can, require } from "./auth.ts";
@@ -275,6 +275,8 @@ export class Engine {
     );
     const schema = getSchema(this.config, type);
     let docs = rows.map(row => this.toDoc(row, drafts));
+    // Drafts may be invalid by design; a published copy that doesn't fit was stored under an older schema.
+    if(!drafts) checkStoredShape(type, schema, docs);
     docs = await this.resolveAssets(schema, docs);
     if(args.with) await this.expand(type, docs, args.with, locale, drafts);
     if(this.state.plugins.has.read) {
@@ -1225,8 +1227,8 @@ export class Engine {
     if(patch.name !== undefined) {
       const name = patch.name.trim();
       if(!name || name.length > 80) throw new HttpError(400, "The name needs 1-80 characters");
-      // Matching the code's name means "no override", so changing the config later still shows through.
-      if(name === this.config.name) delete next.name;
+      // Matching the default (the code's name, else the host) means "no override", so changing the config later still shows through.
+      if(name === (this.config.name ?? fallbackName)) delete next.name;
       else next.name = name;
     }
     if(patch.accent !== undefined) {
@@ -1293,12 +1295,31 @@ export function formatBytes(bytes: number): string {
 }
 
 /** Rebuilds a value with every asset usage passed through `fn`. */
+/**
+ * Published reads fail with the documents and fields whose stored values no longer fit the schema,
+ * rather than returning values of the wrong type (or failing deep inside D1).
+ */
+function checkStoredShape(type: string, schema: ObjectSchema, docs: Doc[]) {
+  const found = docs.flatMap(doc => shapeMismatches(schema, doc).map(m => ({ type, id: doc.id, locale: doc.$meta.locale, ...m })));
+  if(found.length === 0) return;
+  const [first] = found;
+  const field = first!.path.join(".");
+  const more = found.length > 1 ? ` (and ${found.length - 1} more; see details)` : "";
+  throw new HttpError(
+    409,
+    `Stored content doesn't match the schema: ${type} ${first!.id} (${first!.locale}) has ${first!.found} in "${field}", which expects ${first!.expected}${more}. `
+    + "The field's type probably changed after this was published. Fix the document in the editor, or move the data to a new field: `vibe-cms docs schema-changes`.",
+    { mismatches: found.slice(0, 20) }
+  );
+}
+
 export function mapAssets(schema: AnySchema, value: unknown, fn: (value: unknown) => unknown): unknown {
   if(value === undefined || value === null) return value;
   switch(schema.type) {
     case "optional":
       return mapAssets((schema as OptionalSchema).inner, value, fn);
     case "asset": {
+      if(!isAssetValue(value)) return value;
       const fields = (schema as AssetSchema).fields;
       const inner: { [key: string]: unknown } = { ...(isRecord(value) ? value : {}) };
       for(const [key, field] of Object.entries(fields)) inner[key] = mapAssets(field, inner[key], fn);

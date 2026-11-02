@@ -30,39 +30,54 @@ type PluginBindings<C> = {
 export type Bindings<C> = CoreBindings & PluginBindings<C>;
 
 export interface HandlerOptions<C, E> {
+  /**
+   * Maps your Worker's `env` to the CMS's resources, plus each plugin's bindings under its name.
+   * Called per request, so it can read `env` freely.
+   */
   bindings: (env: E) => Bindings<C>,
   /**
-   * Development mode: the editor can sign in without an identity provider.
-   * Defaults to Vite's `import.meta.env.DEV`.
+   * Development mode: the editor, the CLI and local agents sign in as a developer with every
+   * permission, without an identity provider. Defaults to Vite's `import.meta.env.DEV`, so it's
+   * false in builds and outside Vite (set it yourself under plain wrangler). Never true in production.
    */
   dev?: boolean
 }
 
+/** Your Worker's own handlers, which get everything the CMS doesn't handle. */
 export interface WorkerHandlers<E> {
   fetch?: (request: Request, env: E, ctx: ExecutionContext) => Response | Promise<Response>,
   scheduled?: (event: ScheduledEvent, env: E, ctx: ExecutionContext) => void | Promise<void>,
   queue?: (batch: MessageBatch, env: E, ctx: ExecutionContext) => void | Promise<void>
 }
 
+/** A complete Worker module export: `export default vibe({ fetch })`. */
 export interface WorkerExport<E> {
   fetch(request: Request, env: E, ctx: ExecutionContext): Promise<Response>,
   scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void>,
   queue(batch: MessageBatch, env: E, ctx: ExecutionContext): Promise<void>
 }
 
+/** The CMS mounted in your Worker. Call it to wrap your handlers, or use its methods to route requests yourself. */
 export interface VibeHandler<C extends AnyConfig, E> {
-  /** Wraps your Worker's handlers: CMS requests, cron work and queues are routed to the CMS. */
+  /**
+   * Wraps your Worker's handlers. Requests under the prefix (`/_vibe`) and `/.well-known/vibe-cms` go to the
+   * CMS, the rest to `fetch`. `scheduled` runs scheduled publishing, trash purging and plugin cron jobs, then
+   * yours. `queue` runs the plugin consumer for that queue, else yours, else throws.
+   */
   (handlers?: WorkerHandlers<E>): WorkerExport<E>,
-  /** Whether a request belongs to the CMS. */
+  /** Whether a request belongs to the CMS, for routing it yourself. */
   match(request: Request): boolean,
+  /** Answers a request that `match` accepted. */
   handle(request: Request, env: E, ctx: ExecutionContext): Promise<Response>,
+  /** The CMS's cron work: scheduled publishing, trash purging, plugin cron jobs. */
   scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void>,
   /** Returns true when the batch belonged to a CMS or plugin queue. */
   queue(batch: MessageBatch, env: E, ctx: ExecutionContext): Promise<boolean>,
-  /** In-process content access for your site's code. */
+  /** In-process, typed reads of published content for your site's code. No HTTP, no token. See `vibe-cms docs queries`. */
   client(env: E): QueryClient<C>,
   /** The site's name, accent and icon as editors set them in the editor's Site settings (asset URLs are root-relative). */
   site(env: E): Promise<SiteSettings>,
+  /** The config it was created with. */
   config: C
 }
 
@@ -90,6 +105,17 @@ function checkBindings(config: AnyConfig, bindings: Record<string, unknown>) {
   }
 }
 
+/**
+ * Creates the CMS for your Worker from the config and the bindings it gets. Nothing is provisioned:
+ * the database's tables are created on the first request each isolate handles.
+ *
+ * ```ts
+ * export const vibe = createHandler(config, { bindings: env => ({ db: env.DB, storage: env.MEDIA }) });
+ * export default vibe({ fetch: (request, env) => new Response("Hello") });
+ * ```
+ *
+ * See `vibe-cms docs getting-started`.
+ */
 export function createHandler<C extends AnyConfig, E = any>(config: C, options: HandlerOptions<C, E>): VibeHandler<C, E> {
   const prefix = (config.prefix ?? "/_vibe").replace(/\/$/, "");
   const dev = options.dev ?? readDevFlag();

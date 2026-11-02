@@ -20,6 +20,7 @@ export type ThrowingActionClient<A extends Record<string, AnyAction>> = {
   }
 };
 
+/** Sends one action by name and resolves to its `Result`: `httpCaller` over HTTP, or your own transport. */
 export type ActionCaller = (name: string, input: unknown) => Promise<Result<unknown, ActionError>>;
 
 function proxy(call: (name: string, input: unknown) => Promise<unknown>): any {
@@ -30,10 +31,15 @@ function proxy(call: (name: string, input: unknown) => Promise<unknown>): any {
   });
 }
 
+/**
+ * A typed client for actions: `createActionClient<CoreActions>(httpCaller({ url, token }))`, then
+ * `client.documents.create({ … })` resolves to a `Result`. See `vibe-cms docs queries` (Writing).
+ */
 export function createActionClient<A extends Record<string, AnyAction>>(call: ActionCaller): ActionClient<A> {
   return proxy(call);
 }
 
+/** Like `createActionClient`, but failures reject with the tagged error (`_tag`, `message`, `details`). */
 export function createThrowingActionClient<A extends Record<string, AnyAction>>(call: ActionCaller): ThrowingActionClient<A> {
   return proxy(async (name, input) => {
     const result = await call(name, input);
@@ -47,6 +53,7 @@ export interface HttpCallerOptions {
   url: string,
   /** The CMS prefix, if the site changed it. */
   prefix?: string,
+  /** A site session token. Development sites give one to `POST /_vibe/api/session { dev: true }`. */
   token?: string,
   fetch?: typeof fetch,
   credentials?: RequestCredentials

@@ -16,18 +16,22 @@ import type {
   JsonValue
 } from "./types.ts";
 
+/** Keys and array indexes from the document root to a field: `["sessions", 0, "title"]`. */
 export type Path = Array<string | number>;
 
+/** A validation problem, as returned with drafts and in `Rejected` errors. */
 export interface Issue {
   path: Path,
   message: string
 }
 
+/** The normalized value (always set) and its issues (empty when valid). */
 export interface ValidationResult<T = unknown> {
   value: T,
   issues: Issue[]
 }
 
+/** `v.text({ format })` checks: pattern and message. */
 export const formats: Record<string, [RegExp, string]> = {
   email: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Must be an email address"],
   url: [/^(https?:\/\/|\/)\S*$/, "Must be a URL"],
@@ -190,11 +194,12 @@ export function findReferences(schema: AnySchema, value: unknown, path: Path = [
     switch(s.type) {
       case "optional":
         return visit((s as OptionalSchema).inner, v, p);
+      // Malformed values (an invalid draft, content stored under an older schema) aren't references.
       case "ref":
-        found.push({ kind: "ref", schema: s as RefSchema, value: v, path: p });
+        if(isRefValue(s as RefSchema, v)) found.push({ kind: "ref", schema: s as RefSchema, value: v, path: p });
         return;
       case "asset":
-        found.push({ kind: "asset", schema: s as AssetSchema, value: v, path: p });
+        if(isAssetValue(v)) found.push({ kind: "asset", schema: s as AssetSchema, value: v, path: p });
         for(const [key, field] of Object.entries((s as AssetSchema).fields)) {
           visit(field, isRecord(v) ? v[key] : undefined, [...p, key]);
         }
@@ -215,6 +220,89 @@ export function findReferences(schema: AnySchema, value: unknown, path: Path = [
   }
   visit(schema, value, path);
   return found;
+}
+
+export function isRefValue(schema: RefSchema, value: unknown): boolean {
+  if(schema.to) return typeof value === "string";
+  return isRecord(value) && typeof value.type === "string" && typeof value.id === "string";
+}
+
+export function isAssetValue(value: unknown): value is { asset: string } {
+  return isRecord(value) && typeof value.asset === "string";
+}
+
+/** A stored value whose type doesn't fit its field, e.g. a string where an image now goes. */
+export interface Mismatch {
+  path: Path,
+  expected: string,
+  found: string
+}
+
+/**
+ * Values of the wrong type for their field, as left behind by a schema change. Unlike `validate`,
+ * missing values and broken rules (`min`, `format`, …) aren't mismatches: only values a reader
+ * can't use as the schema says, so reads of content written under an older schema can say what's wrong.
+ */
+export function shapeMismatches(schema: AnySchema, value: unknown, path: Path = []): Mismatch[] {
+  const out: Mismatch[] = [];
+  function visit(s: AnySchema, v: unknown, p: Path) {
+    if(v === undefined || v === null) return;
+    function wrong(expected: string) {
+      out.push({ path: p, expected, found: describeValue(v) });
+    }
+    switch(s.type) {
+      case "optional":
+        return visit((s as OptionalSchema).inner, v, p);
+      case "text":
+        if(typeof v !== "string") wrong("text");
+        return;
+      case "date":
+        if(typeof v !== "string") wrong("a date (an ISO 8601 string)");
+        return;
+      case "enum":
+        if(typeof v !== "string") wrong(`one of ${(s as EnumSchema).values.map(x => JSON.stringify(x)).join(", ")}`);
+        return;
+      case "number":
+        if(typeof v !== "number") wrong("a number");
+        return;
+      case "boolean":
+        if(typeof v !== "boolean") wrong("true or false");
+        return;
+      case "ref":
+        if(!isRefValue(s as RefSchema, v)) wrong((s as RefSchema).to ? `a reference to a ${(s as RefSchema).to} (its document ID)` : "a reference ({ type, id })");
+        return;
+      case "asset":
+        if(!isAssetValue(v)) return void wrong("a media library file ({ asset: \"ast_…\" }, uploaded with assets.upload)");
+        for(const [key, field] of Object.entries((s as AssetSchema).fields)) visit(field, v[key as never], [...p, key]);
+        return;
+      case "array":
+        if(!Array.isArray(v)) return void wrong("a list");
+        v.forEach((item, i) => visit((s as ArraySchema).item, item, [...p, i]));
+        return;
+      case "object":
+        if(!isRecord(v)) return void wrong("an object");
+        for(const [key, field] of Object.entries((s as ObjectSchema).shape)) visit(field, v[key], [...p, key]);
+        return;
+      case "union": {
+        const option = pickUnionOption(s as UnionSchema, v);
+        if(!option) return void wrong("one of the union's options");
+        return visit(option, v, p);
+      }
+    }
+  }
+  visit(schema, value, path);
+  return out;
+}
+
+function describeValue(value: unknown): string {
+  if(typeof value === "string") return `the text ${JSON.stringify(value.length > 60 ? `${value.slice(0, 57)}...` : value)}`;
+  if(typeof value === "number" || typeof value === "boolean") return `${typeof value === "number" ? "the number " : ""}${value}`;
+  if(Array.isArray(value)) return `a list of ${value.length}`;
+  if(isRecord(value)) {
+    const keys = Object.keys(value);
+    return keys.length ? `an object with ${keys.slice(0, 5).join(", ")}${keys.length > 5 ? ", …" : ""}` : "an empty object";
+  }
+  return String(value);
 }
 
 export function pickUnionOption(schema: UnionSchema, value: unknown): AnySchema | undefined {

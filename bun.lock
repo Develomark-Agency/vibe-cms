@@ -28,6 +28,18 @@
         "wrangler": "^4.155.0",
       },
     },
+    "examples/astro": {
+      "name": "@vibe-cms/example-astro",
+      "dependencies": {
+        "@astrojs/cloudflare": "14.4.3",
+        "astro": "7.4.4",
+        "vibe-cms": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261029.1",
+        "wrangler": "^4.156.0",
+      },
+    },
     "examples/blog": {
       "name": "@vibe-cms/example-blog",
       "dependencies": {
@@ -47,6 +59,48 @@
         "@cloudflare/workers-types": "^5.20261029.1",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
+        "wrangler": "^4.156.0",
+      },
+    },
+    "examples/client": {
+      "name": "@vibe-cms/example-client",
+      "dependencies": {
+        "react": "^19.3.1",
+        "vibe-cms": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/react": "^19.3.0",
+      },
+    },
+    "examples/plugins": {
+      "name": "@vibe-cms/example-plugins",
+      "dependencies": {
+        "react": "^19.3.1",
+        "vibe-cms": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20261029.1",
+        "@types/react": "^19.3.0",
+      },
+    },
+    "examples/schemas": {
+      "name": "@vibe-cms/example-schemas",
+      "dependencies": {
+        "@vibe-cms/blocks": "workspace:*",
+        "@vibe-cms/rich-text": "workspace:*",
+        "vibe-cms": "workspace:*",
+      },
+    },
+    "examples/worker": {
+      "name": "@vibe-cms/example-worker",
+      "dependencies": {
+        "vibe-cms": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/vite-plugin": "^1.66.0",
+        "@cloudflare/workers-types": "^5.20261029.1",
+        "vite": "^8.3.5",
         "wrangler": "^4.156.0",
       },
     },
@@ -852,7 +906,17 @@
 
     "@vibe-cms/blocks": ["@vibe-cms/blocks@workspace:packages/blocks"],
 
+    "@vibe-cms/example-astro": ["@vibe-cms/example-astro@workspace:examples/astro"],
+
     "@vibe-cms/example-blog": ["@vibe-cms/example-blog@workspace:examples/blog"],
+
+    "@vibe-cms/example-client": ["@vibe-cms/example-client@workspace:examples/client"],
+
+    "@vibe-cms/example-plugins": ["@vibe-cms/example-plugins@workspace:examples/plugins"],
+
+    "@vibe-cms/example-schemas": ["@vibe-cms/example-schemas@workspace:examples/schemas"],
+
+    "@vibe-cms/example-worker": ["@vibe-cms/example-worker@workspace:examples/worker"],
 
     "@vibe-cms/panel": ["@vibe-cms/panel@workspace:apps/panel"],
 

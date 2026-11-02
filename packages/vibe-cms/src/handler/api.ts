@@ -112,7 +112,7 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
       const agent = session ?? (api.dev ? DEV_SESSION : null);
       if(!agent) {
         return json(
-          { jsonrpc: "2.0", id: null, error: { code: -32001, message: "Send a site session token as `Authorization: Bearer <token>`" } },
+          { jsonrpc: "2.0", id: null, error: { code: -32001, message: "This site only lets agents in with a site session token (`Authorization: Bearer <token>`). For deployed sites, connect the agent to your agency panel's /mcp instead: it signs the agent in and covers every site in the panel." } },
           { status: 401, headers: { "www-authenticate": "Bearer" } }
         );
       }

@@ -4,10 +4,12 @@
  * symbol so `JSON.stringify` drops it.
  */
 
+/** Where descriptors keep their lazy imports, out of `JSON.stringify`'s reach. */
 export const IMPL: unique symbol = Symbol.for("vibe-cms.impl") as never;
 
 type Lazy<T> = () => Promise<T | { default: T }>;
 
+/** A widget placed on a field through its `widget` option. Made by a `defineWidget` factory. */
 export interface WidgetDescriptor<T = any, O = any> {
   kind: "widget",
   id: string,
@@ -24,10 +26,17 @@ export interface WidgetDefinition {
   admin: Lazy<unknown>
 }
 
+/** Makes a widget descriptor from per-field options; the options argument is optional when all options are. */
 export type WidgetFactory<T, O> = {} extends O
   ? (options?: O) => WidgetDescriptor<T, O>
   : (options: O) => WidgetDescriptor<T, O>;
 
+/**
+ * Declares a field widget: `T` is the value it edits (using it on a field of
+ * another type is a type error), `O` its options. The descriptor is plain data,
+ * safe for the config; `admin` lazily imports the `*.admin.*` implementation
+ * (`defineReactWidget`, or a `WidgetImpl`). See `vibe-cms docs widgets`.
+ */
 export function defineWidget<T, O = {}>(definition: WidgetDefinition): WidgetFactory<T, O> {
   function factory(options?: O): WidgetDescriptor<T, O> {
     return {
@@ -47,15 +56,21 @@ export interface PluginWorkerExports {
   names: string[]
 }
 
+/** What a `definePlugin` factory returns. */
 export interface PluginDefinition<O> {
+  /** Letters, digits, `_` and `-`: used in URLs (`/_vibe/plugins/<name>/`, `/_vibe/admin/p/<name>/`) and as the bindings key. */
   name: string,
+  /** Plain data, handed to the server entry. */
   options: O,
+  /** `() => import("./plugin.server.ts")`, whose default export is `defineServer(…)`. Loaded only in the Worker. */
   server?: Lazy<unknown>,
+  /** `() => import("./plugin.admin.tsx")`, whose default export is `defineAdmin(…)`. Loaded only in the editor. */
   admin?: Lazy<unknown>,
   /** Classes re-exported through `vibe-cms/exports`. */
   exports?: PluginWorkerExports
 }
 
+/** A plugin as listed in the config's `plugins`. Made by a `definePlugin` factory. */
 export interface PluginDescriptor<B = {}, O = any, N extends string = string> {
   kind: "plugin",
   name: N,
@@ -67,8 +82,10 @@ export interface PluginDescriptor<B = {}, O = any, N extends string = string> {
 }
 
 /**
- * Curried so the binding contract can be given explicitly while the
- * plugin's options and name are inferred.
+ * Declares a plugin. Curried so the binding contract (what the site must
+ * supply in `createHandler({ bindings })` under the plugin's name) can be given
+ * explicitly while the plugin's options and name are inferred. The factory's
+ * parameters are the plugin's options. See `vibe-cms docs plugins`.
  *
  * ```ts
  * export const SearchPlugin = definePlugin<{ cache: KVNamespace }>()((options: SearchOptions = {}) => ({
@@ -95,6 +112,7 @@ export function definePlugin<B = {}>() {
   };
 }
 
+/** Resolves a lazy import, unwrapping a default export. */
 export async function loadLazy<T>(lazy: Lazy<T>): Promise<T> {
   const mod = (await lazy()) as T | { default: T };
   if(mod && typeof mod === "object" && "default" in mod) return mod.default;

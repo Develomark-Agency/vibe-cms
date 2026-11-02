@@ -1,4 +1,4 @@
-import { actionTools, coreActions, errorResult, serveMcp, textResult, toolName, type AnyAction, type McpTool } from "vibe-cms/actions";
+import { actionTools, CONTENT_INSTRUCTIONS, coreActions, errorResult, serveMcp, textResult, toolName, type AnyAction, type McpTool } from "vibe-cms/actions";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
 import { resourceUrl, SCOPE_READ, type GrantRow } from "./oauth.ts";
 import { codeFor, siteById, type Env, type SessionRow } from "./shared.ts";
@@ -9,12 +9,10 @@ import { codeFor, siteById, type Env, type SessionRow } from "./shared.ts";
  * session the panel gets for the agent's user, so the site decides what's allowed.
  */
 
-const INSTRUCTIONS = `Content management for the sites in this panel.
-Call sites_list first; every other tool takes the site's id as \`site\`.
-On a site, call schema_list for its content types, then schema_get for a type's fields before creating or updating its documents.
-Documents are drafts until published. Pass a document's updatedAt as baseUpdatedAt when updating, so you don't overwrite someone else's edit.
-Deleting moves things to the trash; trash_purge and trash_empty can't be undone.
-Each site decides what this user may do there; a Forbidden error means the user can't.`;
+const INSTRUCTIONS = `Content management for the sites in this agency panel. Call sites_list first; every other tool takes the site's id as \`site\`.
+Each call runs on that site as the signed-in user, and each site decides what they may do there: a Forbidden error means this user can't, not that the tool is broken. Read-only connections only have read-only tools.
+
+${CONTENT_INSTRUCTIONS}`;
 
 const actions = new Map<string, AnyAction>(Object.values(coreActions).map(action => [toolName(action.name), action as AnyAction]));
 

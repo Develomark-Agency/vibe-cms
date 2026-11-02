@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM for the types vibe-cms shares with browsers (File, Request); Workers for the bindings.
+    "lib": ["ESNext", "DOM"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src", "*.ts"]
+}

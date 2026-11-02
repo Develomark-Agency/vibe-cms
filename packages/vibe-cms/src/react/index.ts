@@ -5,14 +5,17 @@ import type { QueryBuilder, QueryClient, QueryOptions, QueryRequest } from "../q
 
 type Requests = Record<string, QueryRequest>;
 
+/** What `useContent` returns: loading, then either the results keyed like the requests, or the error. */
 export type ContentState<R extends Requests> =
   | { loading: true, error: undefined, data: undefined, refresh(): void }
   | { loading: false, error: Error, data: undefined, refresh(): void }
   | { loading: false, error: undefined, data: { [K in keyof R]: Awaited<R[K]> }, refresh(): void };
 
 /**
- * Runs the queries when the component mounts, batched into one request.
+ * Runs the queries when the component mounts, batched into one request, and again when `deps` change.
  * No live updates; `refresh()` re-runs them.
+ *
+ * See `vibe-cms docs http-client`.
  */
 export function useContent<C extends AnyConfig, R extends Requests>(
   cms: QueryClient<C>,

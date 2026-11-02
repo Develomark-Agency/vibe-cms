@@ -6,7 +6,9 @@ export function createD1(): D1 & { sqlite: Database } {
   const sqlite = new Database(":memory:");
   function statement(sql: string, params: unknown[] = []): D1Statement & { exec(): { results: unknown[] } } {
     function values() {
-      return params.map(p => (p === undefined ? null : p)) as never[];
+      // Like D1, which refuses `undefined` rather than binding NULL.
+      if(params.includes(undefined)) throw new Error("D1_TYPE_ERROR: Type 'undefined' not supported for value 'undefined'");
+      return params as never[];
     }
     return {
       bind: (...next: unknown[]) => statement(sql, next),

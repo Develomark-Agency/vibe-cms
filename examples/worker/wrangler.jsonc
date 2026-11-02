@@ -1,0 +1,12 @@
+{
+  "name": "vibe-example-worker",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-08",
+  "compatibility_flags": ["nodejs_compat"],
+  // The editor is static files under /_vibe/admin; the CMS serves its deep links through this binding.
+  "assets": { "binding": "ASSETS", "not_found_handling": "none" },
+  "d1_databases": [{ "binding": "DB", "database_name": "vibe-example-worker", "database_id": "local" }],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "vibe-example-worker-media" }],
+  // Scheduled publishing and trash purging.
+  "triggers": { "crons": ["* * * * *"] }
+}

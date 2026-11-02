@@ -1,4 +1,5 @@
-// Design system components for widgets and admin plugins.
+// The editor's own components (shadcn/ui on Base UI), for widgets and admin plugins,
+// so they match the editor and follow its light and dark themes. See `vibe-cms docs admin-extensions`.
 export { Button, buttonVariants } from "./components/ui/button.tsx";
 export { Input } from "./components/ui/input.tsx";
 export { Textarea } from "./components/ui/textarea.tsx";

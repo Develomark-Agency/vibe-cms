@@ -2,15 +2,20 @@
 
 A headless, Cloudflare-native CMS whose content schemas, widgets and plugins are defined in code. It mounts inside the Worker you already have; content lives in D1, media in R2, and every site serves its own editor at `/_vibe/admin`.
 
-Design notes are in [`.docs/`](./.docs/README.md); [`.docs/implementation.md`](./.docs/implementation.md) records how the implementation settles the open questions.
+The user guides are in [`packages/vibe-cms/docs/`](./packages/vibe-cms/docs) and print with `bunx vibe-cms docs <topic>` (`bunx vibe-cms docs topics` lists them). Internal design notes are in [`.docs/`](./.docs/README.md); [`.docs/implementation.md`](./.docs/implementation.md) records how the implementation settles the open questions.
 
 ## Workspace
 
 | Package | What |
 |---|---|
-| [`packages/vibe-cms`](./packages/vibe-cms) | The engine, `v` schema builder, query API, handler, HTTP client, `useContent`, the editor (React, Tailwind, shadcn/ui on Base UI), the panel shell, Vite plugin, Astro integration and CLI |
+| [`packages/vibe-cms`](./packages/vibe-cms) | The engine, `v` schema builder, query API, handler, HTTP client, `useContent`, the editor (React, Tailwind, shadcn/ui on Base UI), the panel shell, Vite plugin, CLI and the guides |
 | [`packages/rich-text`](./packages/rich-text) | `richText()` field preset: a schema built from primitives, a Tiptap widget, and an HTML renderer |
 | [`apps/panel`](./apps/panel) | The agency panel: OIDC sign-in, the shared site list, the one-time-code handoff. A Worker with D1 |
+| [`packages/blocks`](./packages/blocks) | Pages built from blocks, with Astro, React and HTML renderers |
+| [`examples/schemas`](./examples/schemas) | Content types, one topic per file, and the queries that read them |
+| [`examples/plugins`](./examples/plugins) | One small plugin per feature: hooks, routes, editor pages and slots, widgets, cron, media, Durable Objects |
+| [`examples/worker`](./examples/worker), [`examples/astro`](./examples/astro) | Minimal sites: a plain Worker with Vite, and Astro on Cloudflare |
+| [`examples/client`](./examples/client) | Reading content from outside the Worker: `createClient`, drafts, raw queries, `useContent` |
 | [`examples/blog`](./examples/blog) | An Astro site deployed with Alchemy (0.94), using rich text, images, i18n, a singleton, a `mount` widget and a plugin with a Durable Object |
 
 ## Try it
