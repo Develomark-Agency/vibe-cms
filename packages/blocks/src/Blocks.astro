@@ -9,6 +9,7 @@
 import type { AnyBlock } from "./define.ts";
 import type { AstroComponents } from "./astro.ts";
 import { renderBlock, type RenderContext } from "./html.ts";
+import { inPreview } from "./preview.ts";
 
 interface Props<B extends AnyBlock = AnyBlock> extends RenderContext {
   blocks: readonly B[] | null | undefined,
@@ -17,8 +18,16 @@ interface Props<B extends AnyBlock = AnyBlock> extends RenderContext {
 
 const { blocks, components, linkTo } = Astro.props;
 const map = components as Record<string, any>;
+// In an editor's draft preview, comments mark where each block starts, so the editor can point at one.
+const marked = inPreview();
 ---
-{(blocks ?? []).map(block => {
+{(blocks ?? []).map((block, i) => {
   const Component = map[block.type];
-  return Component ? <Component {...block} /> : <Fragment set:html={renderBlock(block, { linkTo })} />;
+  return (
+    <>
+      {marked && <Fragment set:html={`<!--vibe-block:${i}-->`} />}
+      {Component ? <Component {...block} /> : <Fragment set:html={renderBlock(block, { linkTo })} />}
+    </>
+  );
 })}
+{marked && <Fragment set:html="<!--/vibe-blocks-->" />}

@@ -351,6 +351,67 @@ describe("auth", () => {
   });
 });
 
+describe("draft preview", () => {
+  /** The site's own handler, wrapped by vibe(): renders the post's live title, from drafts when previewing. */
+  function site() {
+    return t.vibe({
+      fetch: async () => {
+        const found = await t.vibe.client(t.env).query(post).findFirst({ where: eq(post.slug, "hello") });
+        return new Response(`<html><body><h1>${found?.title ?? "none"}</h1></body></html>`, { headers: { "content-type": "text/html" } });
+      }
+    });
+  }
+
+  async function previewCookie(path = "/posts/hello") {
+    const { status, body } = await t.api("/api/preview", { method: "POST" });
+    expect(status).toBe(200);
+    const response = await t.vibe.handle(new Request(`https://site.test/_vibe/preview?code=${body.code}&path=${encodeURIComponent(path)}`), t.env, ctx);
+    return response;
+  }
+
+  test("the editor's code becomes a preview cookie, once, and only lands on this site's paths", async () => {
+    const response = await previewCookie();
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://site.test/posts/hello");
+    expect(response.headers.get("set-cookie")).toMatch(/^vibe_preview=[\w.-]+; Path=\/; HttpOnly; Max-Age=\d+; SameSite=None; Secure; Partitioned$/);
+
+    const offsite = await previewCookie("//evil.test/x");
+    expect(offsite.headers.get("location")).toBe("https://site.test/");
+
+    t.setToken("");
+    expect((await t.api("/api/preview", { method: "POST" })).status).toBe(401);
+  });
+
+  test("site requests with the cookie read drafts, aren't cached, and load the preview script", async () => {
+    const created = await createPost({ title: "Hello", slug: "hello" });
+    await t.api(`/api/documents/post/${created.id}`, { method: "PUT", json: { data: { ...created.draft, title: "Draft title" } } });
+    const cookie = (await previewCookie()).headers.get("set-cookie")!.split(";")[0]!;
+    const worker = site();
+
+    const live = await worker.fetch(new Request("https://site.test/posts/hello"), t.env, ctx);
+    expect(await live.text()).toContain("<h1>Hello</h1>");
+    expect(live.headers.get("cache-control")).toBeNull();
+
+    const preview = await worker.fetch(new Request("https://site.test/posts/hello", { headers: { cookie } }), t.env, ctx);
+    const html = await preview.text();
+    expect(html).toContain("<h1>Draft title</h1>");
+    expect(html).toContain("<script src=\"/_vibe/preview.js\" defer></script></body>");
+    expect(preview.headers.get("cache-control")).toBe("no-store");
+
+    // A forged or expired cookie is just a normal visit.
+    const forged = await worker.fetch(new Request("https://site.test/posts/hello", { headers: { cookie: "vibe_preview=nope" } }), t.env, ctx);
+    expect(await forged.text()).toContain("<h1>Hello</h1>");
+
+    const script = await t.vibe.handle(new Request("https://site.test/_vibe/preview.js"), t.env, ctx);
+    expect(script.headers.get("content-type")).toContain("javascript");
+    const source = await script.text();
+    expect(() => new Function(source)).not.toThrow();
+
+    const exit = await t.vibe.handle(new Request("https://site.test/_vibe/preview/exit?path=/posts/hello"), t.env, ctx);
+    expect(exit.headers.get("set-cookie")).toContain("vibe_preview=; Path=/; HttpOnly; Max-Age=0");
+  });
+});
+
 describe("folders", () => {
   async function upload(name: string, folder?: string) {
     const form = new FormData();

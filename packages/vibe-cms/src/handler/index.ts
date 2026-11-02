@@ -1,14 +1,17 @@
 import { serializeConfig, type AnyConfig } from "../config.ts";
 import type { PluginDescriptor } from "../descriptor.ts";
 import { createQueryClient, type QueryClient } from "../query/index.ts";
-import { handleRequest } from "./api.ts";
+import { handleRequest, readCookie, siteId } from "./api.ts";
+import { can, verifySession } from "./auth.ts";
 import { migrate, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { PluginHost } from "./plugins.ts";
+import { decoratePreview, PREVIEW_COOKIE, previewScope, type PreviewScope } from "./preview.ts";
 
 export type * from "./platform.ts";
 export { Engine, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
+export { isPreview } from "./preview.ts";
 
 export interface CoreBindings {
   /** D1 database holding content, versions and the media library index. */
@@ -73,7 +76,10 @@ export interface VibeHandler<C extends AnyConfig, E> {
   scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void>,
   /** Returns true when the batch belonged to a CMS or plugin queue. */
   queue(batch: MessageBatch, env: E, ctx: ExecutionContext): Promise<boolean>,
-  /** In-process, typed reads of published content for your site's code. No HTTP, no token. See `vibe-cms docs queries`. */
+  /**
+   * In-process, typed reads of published content for your site's code. No HTTP, no token. During an
+   * editor's draft preview it reads drafts instead, of the types that editor can read. See `vibe-cms docs queries`.
+   */
   client(env: E): QueryClient<C>,
   /** The site's name, accent and icon as editors set them in the editor's Site settings (asset URLs are root-relative). */
   site(env: E): Promise<SiteSettings>,
@@ -195,8 +201,18 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   function client(env: E): QueryClient<C> {
     return createQueryClient<C>(async queries => {
       const engine = new Engine(await state(env), { origin: "", session: null, trusted: true });
-      return engine.execute(queries);
+      const preview = previewScope.getStore();
+      if(!preview) return engine.execute(queries);
+      return engine.execute(queries.map(query => (can(config, preview.session, { action: "read", type: query.type }) ? { ...query, drafts: true } : query)));
     });
+  }
+
+  /** A preview cookie's session, if it's still valid. */
+  async function previewSession(request: Request, env: E): Promise<PreviewScope | null> {
+    const token = readCookie(request, PREVIEW_COOKIE);
+    if(!token) return null;
+    const session = await verifySession((await state(env)).db, token, siteId(config, new URL(request.url)));
+    return session ? { session } : null;
   }
 
   async function site(env: E): Promise<SiteSettings> {
@@ -207,8 +223,10 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     return {
       async fetch(request, env, ctx) {
         if(match(request)) return handle(request, env, ctx);
-        if(handlers.fetch) return handlers.fetch(request, env, ctx);
-        return new Response("Not found", { status: 404 });
+        if(!handlers.fetch) return new Response("Not found", { status: 404 });
+        const preview = await previewSession(request, env);
+        if(!preview) return handlers.fetch(request, env, ctx);
+        return previewScope.run(preview, async () => decoratePreview(await handlers.fetch!(request, env, ctx), prefix));
       },
       async scheduled(event, env, ctx) {
         await Promise.all([scheduled(event, env, ctx), handlers.scheduled?.(event, env, ctx)]);

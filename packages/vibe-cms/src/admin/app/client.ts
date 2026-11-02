@@ -8,6 +8,7 @@ import { createQueryClient } from "../../query/index.ts";
 import type { SiteSettings } from "../../handler/engine.ts";
 import type { Session } from "../../server/index.ts";
 import type { AdminClient } from "../index.ts";
+import { notifyPreview } from "./preview.ts";
 
 export interface SiteInfo extends SerializedConfig {
   prefix: string,
@@ -93,6 +94,9 @@ export async function requestBlob(prefix: string, path: string): Promise<Blob> {
   return response.blob();
 }
 
+/** The read-only core actions (`readOnly` in their annotations), by name, so the editor doesn't load their definitions. */
+const READ_ONLY_ACTION = /\.(list|get|references|versions?)$/;
+
 export function createAdminClient(prefix: string, types: string[], navigate: (path: string) => void): AdminClient {
   function api<T>(path: string, init?: RequestInit & { json?: unknown }) {
     return request<T>(prefix, path, init);
@@ -100,7 +104,10 @@ export function createAdminClient(prefix: string, types: string[], navigate: (pa
   // `request` throws `ApiError` on failure, so the editor catches rather than matching results.
   const actions = createThrowingActionClient<CoreActions>(async (name, input) => {
     const { body, contentType } = encodeInput(input);
-    return Result.ok(await api(`/actions/${name}`, { method: "POST", body, headers: contentType ? { "content-type": contentType } : {} }));
+    const result = await api(`/actions/${name}`, { method: "POST", body, headers: contentType ? { "content-type": contentType } : {} });
+    // Anything that changed content (a save, not only a publish) refreshes open previews.
+    if(!READ_ONLY_ACTION.test(name)) notifyPreview();
+    return Result.ok(result);
   });
   const plugins = new Proxy({} as AdminClient["plugins"], {
     get: (_, name: string) => new Proxy({}, {

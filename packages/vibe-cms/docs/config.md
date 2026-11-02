@@ -46,7 +46,7 @@ The config object is also how site code reaches content types: `config.schemas.p
 ```ts
 // examples/schemas/src/collections.ts
   collections: {
-    // `title` names the text field shown in lists; `preview` builds the "View on site" link.
+    // `title` names the text field shown in lists; `preview` is where the draft preview opens it.
     article: { label: "Articles", icon: "newspaper", title: "headline", preview: "/articles/{slug}" },
     faq: { label: "FAQ", icon: "message-square", title: "question" },
     // One document only: the editor opens it directly instead of listing documents.
@@ -59,7 +59,7 @@ The config object is also how site code reaches content types: `config.schemas.p
 | `label` | Name in the editor's navigation. Defaults to the content type's name. |
 | `icon` | An icon from the editor's set (`newspaper`, `user`, `home`, `layout`, `settings`, …; the type lists them all). |
 | `title` | Text field used as the document title in lists. Defaults to the first text field. |
-| `preview` | The document's URL on the site, for "View on site". `{field}` placeholders come from the document; `{id}` and `{locale}` also work. Slashes in values are kept, so `"{path}"` works for path fields. |
+| `preview` | The document's URL on the site, where the editor's draft preview opens it (`vibe-cms docs preview`). `{field}` placeholders come from the document; `{id}` and `{locale}` also work. Slashes in values are kept, so `"{path}"` works for path fields. |
 | `singleton` | Exactly one document of this type, e.g. a homepage or footer content. Read it with `findFirst()`. |
 
 ## Site settings: name, accent and icon

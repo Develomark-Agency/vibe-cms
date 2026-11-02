@@ -8,5 +8,5 @@
       "vibe-cms/*": ["./src/*"]
     }
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "scripts"]
 }

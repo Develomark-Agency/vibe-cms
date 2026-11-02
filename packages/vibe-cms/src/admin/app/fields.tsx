@@ -1,5 +1,5 @@
-import { ChevronDownIcon, ChevronUpIcon, ChevronsDownUpIcon, ChevronsUpDownIcon, CopyIcon, GripVerticalIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDownIcon, ChevronUpIcon, ChevronsDownUpIcon, ChevronsUpDownIcon, CopyIcon, GripVerticalIcon, LocateFixedIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { IMPL, loadLazy, type WidgetDescriptor } from "../../descriptor.ts";
 import type {
   AnySchema,
@@ -30,6 +30,7 @@ import type { FieldDescriptor, WidgetContext, WidgetImpl } from "../index.ts";
 import { humanize, useAdmin } from "./context.tsx";
 import { setDragChip } from "./drag-chip.ts";
 import { navIcons } from "./icons.ts";
+import { focusPreviewBlock, getPreview, subscribePreview } from "./preview.ts";
 import { AssetControl, RefControl } from "./pickers.tsx";
 import { Segmented } from "./segmented.tsx";
 
@@ -584,6 +585,8 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
   const variants = item.type === "union" ? (item as UnionSchema).options : null;
   const atMax = s.max !== undefined && items.length >= s.max;
   const simple = ["ref", "asset", "text", "number", "date", "enum"].includes(item.type);
+  // A document's top-level blocks are what the site's <Blocks> renders, in this order.
+  const previewing = useSyncExternalStore(subscribePreview, () => getPreview().ready) && variants !== null && path.length === 1;
 
   function add(next: JsonValue | undefined) {
     insert(items.length);
@@ -748,6 +751,11 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                   {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
                   {hasIssues && <span className="size-1.5 shrink-0 rounded-full bg-destructive" />}
                 </button>
+                {previewing && (
+                  <Button variant="ghost" size="icon-xs" aria-label="Show in preview" title="Show in preview (as last saved)" onClick={() => focusPreviewBlock(i)}>
+                    <LocateFixedIcon />
+                  </Button>
+                )}
                 {controls}
               </div>
               {!isCollapsed && (

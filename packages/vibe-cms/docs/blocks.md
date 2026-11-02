@@ -34,7 +34,7 @@ Use blocks in two ways:
 ```
 
 - `blocks([...], { label, description, min, max })` is a field: an array of a union told apart by each block's `type`. The editor gives it drag-to-reorder, insertion points and a searchable add menu.
-- `pageSchema({ blocks })` is a whole content type: `title`, `path` (`format: "path"`, indexed, unique per locale), an optional search `description`, and `blocks` with the built-in blocks plus yours. Give its collection `preview: "{path}"`.
+- `pageSchema({ blocks })` is a whole content type: `title`, `path` (`format: "path"`, indexed, unique per locale), an optional search `description`, and `blocks` with the built-in blocks plus yours. Give its collection `preview: "{path}"`, so the editor's draft preview opens the page (`vibe-cms docs preview`).
 
 Built-in blocks: Hero, Text (rich text), Image, Gallery, Call to action, Quote, Video, FAQ and Divider. They render as plain HTML in every adapter unless you pass your own component for their type; `@vibe-cms/blocks/styles.css` styles them neutrally.
 

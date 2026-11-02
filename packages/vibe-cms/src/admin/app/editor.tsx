@@ -6,6 +6,7 @@ import {
   CloudUploadIcon,
   EyeIcon,
   EyeOffIcon,
+  ExternalLinkIcon,
   HistoryIcon,
   LanguagesIcon,
   MoreHorizontalIcon,
@@ -55,6 +56,7 @@ import {
   useAdmin
 } from "./context.tsx";
 import { Field, FormValueContext } from "./fields.tsx";
+import { showPreview } from "./preview.ts";
 import { Link, navigate, setNavigationBlocker } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
@@ -303,7 +305,9 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const slotProps: DocumentSlotProps = { type, id, locale, value, status, cms };
   const actions = plugins.slots["document.actions"]!.filter(a => !a.types || a.types.includes(type));
   const panels = plugins.slots["document.sidebar"]!.filter(p => !p.types || p.types.includes(type));
-  const previewUrl = settings.preview && status && id ? fillPreview(settings.preview, doc.data?.published ?? value, id, locale) : null;
+  // The preview shows the saved draft; "View live page" the published one.
+  const previewUrl = settings.preview && status && id ? fillPreview(settings.preview, doc.data?.draft ?? value, id, locale) : null;
+  const liveUrl = settings.preview && doc.data?.published && id ? fillPreview(settings.preview, doc.data.published, id, locale) : null;
   const readOnly = !canWriteLocale;
 
   return (
@@ -325,8 +329,8 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
           <div className="flex items-center gap-1.5">
             {previewUrl && (
               <Tooltip>
-                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" nativeButton={false} render={<a href={previewUrl} target="_blank" rel="noreferrer" />} aria-label="View on site"><EyeIcon /></Button>} />
-                <TooltipContent>View on site</TooltipContent>
+                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Preview" onClick={() => void showPreview(cms, previewUrl)}><EyeIcon /></Button>} />
+                <TooltipContent>Preview saved draft</TooltipContent>
               </Tooltip>
             )}
             {id !== null && (
@@ -362,6 +366,9 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                   )}
                   {permissions.publish && !readOnly && status && status !== "draft" && (
                     <DropdownMenuItem onClick={() => void action("unpublish")}><EyeOffIcon /> Unpublish</DropdownMenuItem>
+                  )}
+                  {liveUrl && (
+                    <DropdownMenuItem render={<a href={liveUrl} target="_blank" rel="noreferrer" />}><ExternalLinkIcon /> View live page</DropdownMenuItem>
                   )}
                   {dirty && (
                     <DropdownMenuItem onClick={() => setValue(baseline)}><RotateCcwIcon /> Discard changes</DropdownMenuItem>

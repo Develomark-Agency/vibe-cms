@@ -11,6 +11,7 @@ import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import { handleMcp } from "./mcp.ts";
 import type { ExecutionContext, Fetcher } from "./platform.ts";
 import { matchRoute } from "./plugins.ts";
+import { previewCookie, previewScriptResponse, safePath } from "./preview.ts";
 
 export interface ApiContext {
   state: EngineState,
@@ -28,11 +29,11 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(data), { ...init, headers });
 }
 
-function siteId(config: AnyConfig, url: URL): string {
+export function siteId(config: AnyConfig, url: URL): string {
   return config.id ?? url.hostname;
 }
 
-function readCookie(request: Request, name: string): string | undefined {
+export function readCookie(request: Request, name: string): string | undefined {
   const header = request.headers.get("cookie") ?? "";
   for(const part of header.split(/;\s*/)) {
     const [key, ...rest] = part.split("=");
@@ -88,6 +89,11 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
   const method = request.method.toUpperCase();
   try {
     if(path === "/admin" || path.startsWith("/admin/")) return await serveAdmin(request, api, url);
+    if(path === "/preview.js" && method === "GET") return previewScriptResponse(prefix);
+    if(path === "/preview" && method === "GET") return await startPreview(api, url);
+    if(path === "/preview/exit" && method === "GET") {
+      return redirect(url, safePath(url.searchParams.get("path")), previewCookie("", 0, url.protocol === "https:"));
+    }
     const session = await readSession(request, api, url);
     const engine = new Engine(api.state, { origin: url.origin, session, trusted: false, ctx: api.ctx });
 
@@ -206,6 +212,12 @@ async function editorRoute(
     return json({ code: await createCode(db, next), expiresIn: 30 });
   }
 
+  if(route === "/preview" && method === "POST") {
+    // A one-time code the preview window trades for its cookie at `GET {prefix}/preview`.
+    if(!session) throw new HttpError(401, "Sign in required");
+    return json({ code: await createCode(db, session), expiresIn: 30 });
+  }
+
   if((m = /^\/trash\/([\w-]+)\/file$/.exec(route)) && method === "GET") return engine.trashFile(m[1]!);
 
   for(const entry of restRoutes) {
@@ -321,6 +333,21 @@ async function pluginRoute(request: Request, api: ApiContext, name: string, path
     if(params) return handler(request, { params, session });
   }
   return json({ error: "Not found" }, { status: 404 });
+}
+
+function redirect(url: URL, path: string, cookie: string): Response {
+  return new Response(null, { status: 302, headers: { location: new URL(path, url.origin).href, "set-cookie": cookie, "cache-control": "no-store" } });
+}
+
+/** `GET {prefix}/preview?code=…&path=/…`: trades the editor's code for a preview cookie, then opens the page. */
+async function startPreview(api: ApiContext, url: URL): Promise<Response> {
+  const { config, db } = api.state;
+  const code = url.searchParams.get("code");
+  if(!code) throw new HttpError(400, "Expected a code");
+  const session = await consumeCode(db, code);
+  const { token, expiresAt } = await issueSession(db, session, siteId(config, url), url.origin);
+  const cookie = previewCookie(token, expiresAt - Math.floor(Date.now() / 1000), url.protocol === "https:");
+  return redirect(url, safePath(url.searchParams.get("path")), cookie);
 }
 
 /** The editor is static assets; deep links fall back to its index.html. */

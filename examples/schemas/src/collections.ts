@@ -19,7 +19,7 @@ export default defineConfig({
     })
   },
   collections: {
-    // `title` names the text field shown in lists; `preview` builds the "View on site" link.
+    // `title` names the text field shown in lists; `preview` is where the draft preview opens it.
     article: { label: "Articles", icon: "newspaper", title: "headline", preview: "/articles/{slug}" },
     faq: { label: "FAQ", icon: "message-square", title: "question" },
     // One document only: the editor opens it directly instead of listing documents.

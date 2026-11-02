@@ -60,7 +60,7 @@ export interface CollectionSettings<S = ObjectSchema<any>> {
   /** Icon in the editor navigation. */
   icon?: IconName,
   /**
-   * The document's URL on the site, for the editor's "View on site" button.
+   * The document's URL on the site, where the editor's draft preview opens it.
    * `{field}` placeholders are filled from the document; `{id}` and `{locale}` also work.
    */
   preview?: string

@@ -1,0 +1,1102 @@
+[
+  {
+    "name": "Moto G4",
+    "maker": "Other",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 10 Pro XL",
+    "maker": "Google",
+    "width": 448,
+    "height": 921,
+    "screen": {
+      "width": 448,
+      "height": 997
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 10 Pro",
+    "maker": "Google",
+    "width": 427,
+    "height": 876,
+    "screen": {
+      "width": 427,
+      "height": 952
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 10",
+    "maker": "Google",
+    "width": 360,
+    "height": 732,
+    "screen": {
+      "width": 360,
+      "height": 808
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 9 Pro XL",
+    "maker": "Google",
+    "width": 448,
+    "height": 921,
+    "screen": {
+      "width": 448,
+      "height": 997
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 9 Pro",
+    "maker": "Google",
+    "width": 427,
+    "height": 876,
+    "screen": {
+      "width": 427,
+      "height": 952
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 9",
+    "maker": "Google",
+    "width": 360,
+    "height": 732,
+    "screen": {
+      "width": 360,
+      "height": 808
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 8a",
+    "maker": "Google",
+    "width": 412,
+    "height": 839,
+    "screen": {
+      "width": 412,
+      "height": 915
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Pixel 8 Pro",
+    "maker": "Google",
+    "width": 448,
+    "height": 921,
+    "screen": {
+      "width": 448,
+      "height": 997
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 8",
+    "maker": "Google",
+    "width": 412,
+    "height": 839,
+    "screen": {
+      "width": 412,
+      "height": 915
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Pixel 7a",
+    "maker": "Google",
+    "width": 412,
+    "height": 839,
+    "screen": {
+      "width": 412,
+      "height": 915
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Pixel 7 Pro",
+    "maker": "Google",
+    "width": 412,
+    "height": 816,
+    "screen": {
+      "width": 412,
+      "height": 892
+    },
+    "scale": 3.5
+  },
+  {
+    "name": "Pixel 7",
+    "maker": "Google",
+    "width": 412,
+    "height": 839,
+    "screen": {
+      "width": 412,
+      "height": 915
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Pixel 6a",
+    "maker": "Google",
+    "width": 412,
+    "height": 839,
+    "screen": {
+      "width": 412,
+      "height": 915
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Pixel 6 Pro",
+    "maker": "Google",
+    "width": 412,
+    "height": 816,
+    "screen": {
+      "width": 412,
+      "height": 892
+    },
+    "scale": 3.5
+  },
+  {
+    "name": "Pixel 6",
+    "maker": "Google",
+    "width": 412,
+    "height": 839,
+    "screen": {
+      "width": 412,
+      "height": 915
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Pixel 5",
+    "maker": "Google",
+    "width": 393,
+    "height": 727,
+    "screen": {
+      "width": 393,
+      "height": 851
+    },
+    "scale": 2.75
+  },
+  {
+    "name": "Pixel 4a (5G)",
+    "maker": "Google",
+    "width": 412,
+    "height": 765,
+    "screen": {
+      "width": 412,
+      "height": 892
+    },
+    "scale": 2.63
+  },
+  {
+    "name": "Pixel 4",
+    "maker": "Google",
+    "width": 353,
+    "height": 745,
+    "screen": {
+      "width": 353,
+      "height": 745
+    },
+    "scale": 3
+  },
+  {
+    "name": "Pixel 3",
+    "maker": "Google",
+    "width": 393,
+    "height": 786,
+    "screen": {
+      "width": 393,
+      "height": 786
+    },
+    "scale": 2.75
+  },
+  {
+    "name": "Pixel 2 XL",
+    "maker": "Google",
+    "width": 411,
+    "height": 823,
+    "screen": {
+      "width": 411,
+      "height": 823
+    },
+    "scale": 3.5
+  },
+  {
+    "name": "Pixel 2",
+    "maker": "Google",
+    "width": 411,
+    "height": 731,
+    "screen": {
+      "width": 411,
+      "height": 731
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Nokia N9",
+    "maker": "Other",
+    "width": 480,
+    "height": 854,
+    "screen": {
+      "width": 480,
+      "height": 854
+    },
+    "scale": 1
+  },
+  {
+    "name": "Nokia Lumia 520",
+    "maker": "Other",
+    "width": 320,
+    "height": 533,
+    "screen": {
+      "width": 320,
+      "height": 533
+    },
+    "scale": 1.5
+  },
+  {
+    "name": "Nexus 7",
+    "maker": "Google",
+    "width": 600,
+    "height": 960,
+    "screen": {
+      "width": 600,
+      "height": 960
+    },
+    "scale": 2
+  },
+  {
+    "name": "Nexus 6P",
+    "maker": "Google",
+    "width": 412,
+    "height": 732,
+    "screen": {
+      "width": 412,
+      "height": 732
+    },
+    "scale": 3.5
+  },
+  {
+    "name": "Nexus 6",
+    "maker": "Google",
+    "width": 412,
+    "height": 732,
+    "screen": {
+      "width": 412,
+      "height": 732
+    },
+    "scale": 3.5
+  },
+  {
+    "name": "Nexus 5X",
+    "maker": "Google",
+    "width": 412,
+    "height": 732,
+    "screen": {
+      "width": 412,
+      "height": 732
+    },
+    "scale": 2.625
+  },
+  {
+    "name": "Nexus 5",
+    "maker": "Google",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 3
+  },
+  {
+    "name": "Nexus 4",
+    "maker": "Google",
+    "width": 384,
+    "height": 640,
+    "screen": {
+      "width": 384,
+      "height": 640
+    },
+    "scale": 2
+  },
+  {
+    "name": "Nexus 10",
+    "maker": "Google",
+    "width": 800,
+    "height": 1280,
+    "screen": {
+      "width": 800,
+      "height": 1280
+    },
+    "scale": 2
+  },
+  {
+    "name": "Microsoft Lumia 950",
+    "maker": "Other",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 4
+  },
+  {
+    "name": "Microsoft Lumia 550",
+    "maker": "Other",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 2
+  },
+  {
+    "name": "LG Optimus L70",
+    "maker": "Other",
+    "width": 384,
+    "height": 640,
+    "screen": {
+      "width": 384,
+      "height": 640
+    },
+    "scale": 1.25
+  },
+  {
+    "name": "Kindle Fire HDX",
+    "maker": "Other",
+    "width": 800,
+    "height": 1280,
+    "screen": {
+      "width": 800,
+      "height": 1280
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPhone 17e",
+    "maker": "Apple",
+    "width": 390,
+    "height": 651,
+    "screen": {
+      "width": 390,
+      "height": 844
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 17 Pro Max",
+    "maker": "Apple",
+    "width": 440,
+    "height": 763,
+    "screen": {
+      "width": 440,
+      "height": 956
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 17 Pro",
+    "maker": "Apple",
+    "width": 402,
+    "height": 681,
+    "screen": {
+      "width": 402,
+      "height": 874
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone Air",
+    "maker": "Apple",
+    "width": 420,
+    "height": 719,
+    "screen": {
+      "width": 420,
+      "height": 912
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 17",
+    "maker": "Apple",
+    "width": 402,
+    "height": 681,
+    "screen": {
+      "width": 402,
+      "height": 874
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 16e",
+    "maker": "Apple",
+    "width": 390,
+    "height": 651,
+    "screen": {
+      "width": 390,
+      "height": 844
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 16 Pro Max",
+    "maker": "Apple",
+    "width": 440,
+    "height": 763,
+    "screen": {
+      "width": 440,
+      "height": 956
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 16 Pro",
+    "maker": "Apple",
+    "width": 402,
+    "height": 681,
+    "screen": {
+      "width": 402,
+      "height": 874
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 16 Plus",
+    "maker": "Apple",
+    "width": 430,
+    "height": 739,
+    "screen": {
+      "width": 430,
+      "height": 932
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 16",
+    "maker": "Apple",
+    "width": 393,
+    "height": 659,
+    "screen": {
+      "width": 393,
+      "height": 852
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 15 Pro Max",
+    "maker": "Apple",
+    "width": 430,
+    "height": 739,
+    "screen": {
+      "width": 430,
+      "height": 932
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 15 Pro",
+    "maker": "Apple",
+    "width": 393,
+    "height": 659,
+    "screen": {
+      "width": 393,
+      "height": 852
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 15 Plus",
+    "maker": "Apple",
+    "width": 430,
+    "height": 739,
+    "screen": {
+      "width": 430,
+      "height": 932
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 15",
+    "maker": "Apple",
+    "width": 393,
+    "height": 659,
+    "screen": {
+      "width": 393,
+      "height": 852
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 14 Pro Max",
+    "maker": "Apple",
+    "width": 430,
+    "height": 740,
+    "screen": {
+      "width": 430,
+      "height": 932
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 14 Pro",
+    "maker": "Apple",
+    "width": 393,
+    "height": 660,
+    "screen": {
+      "width": 393,
+      "height": 852
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 14 Plus",
+    "maker": "Apple",
+    "width": 428,
+    "height": 746,
+    "screen": {
+      "width": 428,
+      "height": 926
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 14",
+    "maker": "Apple",
+    "width": 390,
+    "height": 664,
+    "screen": {
+      "width": 390,
+      "height": 844
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 13 Mini",
+    "maker": "Apple",
+    "width": 375,
+    "height": 629,
+    "screen": {
+      "width": 375,
+      "height": 812
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 13 Pro Max",
+    "maker": "Apple",
+    "width": 428,
+    "height": 746,
+    "screen": {
+      "width": 428,
+      "height": 926
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 13 Pro",
+    "maker": "Apple",
+    "width": 390,
+    "height": 664,
+    "screen": {
+      "width": 390,
+      "height": 844
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 13",
+    "maker": "Apple",
+    "width": 390,
+    "height": 664,
+    "screen": {
+      "width": 390,
+      "height": 844
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 12 Mini",
+    "maker": "Apple",
+    "width": 375,
+    "height": 629,
+    "screen": {
+      "width": 375,
+      "height": 812
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 12 Pro Max",
+    "maker": "Apple",
+    "width": 428,
+    "height": 746,
+    "screen": {
+      "width": 428,
+      "height": 926
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 12 Pro",
+    "maker": "Apple",
+    "width": 390,
+    "height": 664,
+    "screen": {
+      "width": 390,
+      "height": 844
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 12",
+    "maker": "Apple",
+    "width": 390,
+    "height": 664,
+    "screen": {
+      "width": 390,
+      "height": 844
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 11 Pro Max",
+    "maker": "Apple",
+    "width": 414,
+    "height": 715,
+    "screen": {
+      "width": 414,
+      "height": 896
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 11 Pro",
+    "maker": "Apple",
+    "width": 375,
+    "height": 635,
+    "screen": {
+      "width": 375,
+      "height": 812
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 11",
+    "maker": "Apple",
+    "width": 414,
+    "height": 715,
+    "screen": {
+      "width": 414,
+      "height": 896
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPhone XR",
+    "maker": "Apple",
+    "width": 414,
+    "height": 896,
+    "screen": {
+      "width": 414,
+      "height": 896
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone X",
+    "maker": "Apple",
+    "width": 375,
+    "height": 812,
+    "screen": {
+      "width": 375,
+      "height": 812
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone SE (3rd gen)",
+    "maker": "Apple",
+    "width": 375,
+    "height": 667,
+    "screen": {
+      "width": 375,
+      "height": 667
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPhone SE",
+    "maker": "Apple",
+    "width": 320,
+    "height": 568,
+    "screen": {
+      "width": 320,
+      "height": 568
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPhone 8 Plus",
+    "maker": "Apple",
+    "width": 414,
+    "height": 736,
+    "screen": {
+      "width": 414,
+      "height": 736
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 8",
+    "maker": "Apple",
+    "width": 375,
+    "height": 667,
+    "screen": {
+      "width": 375,
+      "height": 667
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPhone 7 Plus",
+    "maker": "Apple",
+    "width": 414,
+    "height": 736,
+    "screen": {
+      "width": 414,
+      "height": 736
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 7",
+    "maker": "Apple",
+    "width": 375,
+    "height": 667,
+    "screen": {
+      "width": 375,
+      "height": 667
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPhone 6 Plus",
+    "maker": "Apple",
+    "width": 414,
+    "height": 736,
+    "screen": {
+      "width": 414,
+      "height": 736
+    },
+    "scale": 3
+  },
+  {
+    "name": "iPhone 6",
+    "maker": "Apple",
+    "width": 375,
+    "height": 667,
+    "screen": {
+      "width": 375,
+      "height": 667
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPad Pro 11",
+    "maker": "Apple",
+    "width": 834,
+    "height": 1194,
+    "screen": {
+      "width": 834,
+      "height": 1194
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPad Mini",
+    "maker": "Apple",
+    "width": 768,
+    "height": 1024,
+    "screen": {
+      "width": 768,
+      "height": 1024
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPad (gen 11)",
+    "maker": "Apple",
+    "width": 656,
+    "height": 944,
+    "screen": {
+      "width": 656,
+      "height": 944
+    },
+    "scale": 2.5
+  },
+  {
+    "name": "iPad (gen 7)",
+    "maker": "Apple",
+    "width": 810,
+    "height": 1080,
+    "screen": {
+      "width": 810,
+      "height": 1080
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPad (gen 6)",
+    "maker": "Apple",
+    "width": 768,
+    "height": 1024,
+    "screen": {
+      "width": 768,
+      "height": 1024
+    },
+    "scale": 2
+  },
+  {
+    "name": "iPad (gen 5)",
+    "maker": "Apple",
+    "width": 768,
+    "height": 1024,
+    "screen": {
+      "width": 768,
+      "height": 1024
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Z Flip 7 Cover",
+    "maker": "Samsung",
+    "width": 474,
+    "height": 448,
+    "screen": {
+      "width": 474,
+      "height": 524
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Z Flip 7",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 764,
+    "screen": {
+      "width": 360,
+      "height": 840
+    },
+    "scale": 3
+  },
+  {
+    "name": "Galaxy Z Flip 6 Cover",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 298,
+    "screen": {
+      "width": 360,
+      "height": 374
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Z Flip 6",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 804,
+    "screen": {
+      "width": 360,
+      "height": 880
+    },
+    "scale": 3
+  },
+  {
+    "name": "Galaxy Z Fold 7 Cover",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 764,
+    "screen": {
+      "width": 360,
+      "height": 840
+    },
+    "scale": 3
+  },
+  {
+    "name": "Galaxy Z Fold 7",
+    "maker": "Samsung",
+    "width": 984,
+    "height": 1016,
+    "screen": {
+      "width": 984,
+      "height": 1092
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Z Fold 6 Cover",
+    "maker": "Samsung",
+    "width": 484,
+    "height": 1112,
+    "screen": {
+      "width": 484,
+      "height": 1188
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Z Fold 6",
+    "maker": "Samsung",
+    "width": 928,
+    "height": 1004,
+    "screen": {
+      "width": 928,
+      "height": 1080
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Tab S9",
+    "maker": "Samsung",
+    "width": 640,
+    "height": 1024,
+    "screen": {
+      "width": 640,
+      "height": 1024
+    },
+    "scale": 2.5
+  },
+  {
+    "name": "Galaxy Tab S4",
+    "maker": "Samsung",
+    "width": 712,
+    "height": 1138,
+    "screen": {
+      "width": 712,
+      "height": 1138
+    },
+    "scale": 2.25
+  },
+  {
+    "name": "Galaxy A55",
+    "maker": "Samsung",
+    "width": 480,
+    "height": 1040,
+    "screen": {
+      "width": 480,
+      "height": 1040
+    },
+    "scale": 2.25
+  },
+  {
+    "name": "Galaxy S24",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 780,
+    "screen": {
+      "width": 360,
+      "height": 780
+    },
+    "scale": 3
+  },
+  {
+    "name": "Galaxy S9+",
+    "maker": "Samsung",
+    "width": 320,
+    "height": 658,
+    "screen": {
+      "width": 320,
+      "height": 658
+    },
+    "scale": 4.5
+  },
+  {
+    "name": "Galaxy S8",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 740,
+    "screen": {
+      "width": 360,
+      "height": 740
+    },
+    "scale": 3
+  },
+  {
+    "name": "Galaxy S5",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 3
+  },
+  {
+    "name": "Galaxy S III",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Note II",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 2
+  },
+  {
+    "name": "Galaxy Note 3",
+    "maker": "Samsung",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 3
+  },
+  {
+    "name": "BlackBerry Z30",
+    "maker": "Other",
+    "width": 360,
+    "height": 640,
+    "screen": {
+      "width": 360,
+      "height": 640
+    },
+    "scale": 2
+  },
+  {
+    "name": "Blackberry PlayBook",
+    "maker": "Other",
+    "width": 600,
+    "height": 1024,
+    "screen": {
+      "width": 600,
+      "height": 1024
+    },
+    "scale": 1
+  }
+]

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon, AppWindowIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
 import type { AnyConfig } from "../../config.ts";
@@ -39,6 +39,8 @@ import { Dashboard, DocumentRoute, ListPage } from "./pages.tsx";
 import { SiteMark, SiteSettingsPage } from "./settings.tsx";
 import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
+import { closePreview, getPreview, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
+import { PreviewWindow } from "./preview-window.tsx";
 import { embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 
 const queryClient = new QueryClient({
@@ -147,6 +149,7 @@ function Shell({ config, info, session, prefix, onSignOut }: {
   onSignOut(): void
 }) {
   const cms = useMemo(() => createAdminClient(prefix, Object.keys(config.schemas), path => navigate(path)), [prefix]);
+  setPreviewPrefix(prefix);
   const [plugins, setPlugins] = useState<Required<AdminPlugin> | null>(null);
   const site = useQuery({ queryKey: ["site"], queryFn: () => cms.actions.site.get(), initialData: info.settings, staleTime: Infinity }).data;
   const panelAccent = useSyncExternalStore(subscribePanelAccent, getPanelAccent);
@@ -185,6 +188,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   const { path } = useLocation();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useTheme();
+  const previewOpen = useSyncExternalStore(subscribePreview, () => getPreview().open);
   useNavigationSync();
 
   useEffect(() => {
@@ -274,6 +278,11 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
               <SidebarMenu>
                 <SidebarMenuItem>
                   <NavButton active={active("/")} to="/" tooltip="Dashboard"><HomeIcon /> <span>Dashboard</span></NavButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton tooltip="Preview" isActive={previewOpen} aria-pressed={previewOpen} onClick={() => (previewOpen ? closePreview() : void showPreview(cms))}>
+                    <AppWindowIcon /> <span>Preview</span>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
@@ -418,6 +427,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
         </div>
       </SidebarInset>
       <ErrorBoundary resetKey={paletteOpen}><Palette open={paletteOpen} onOpenChange={setPaletteOpen} /></ErrorBoundary>
+      <ErrorBoundary resetKey={previewOpen}><PreviewWindow /></ErrorBoundary>
       <Toaster position="bottom-right" />
     </SidebarProvider>
   );
@@ -503,6 +513,12 @@ function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boo
             {(session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete)) && (
               <CommandItem onSelect={() => go("/trash")}><Trash2Icon /> Trash</CommandItem>
             )}
+          </CommandGroup>
+          <CommandGroup heading="Site">
+            <CommandItem onSelect={() => {
+              onOpenChange(false);
+              void showPreview(cms);
+            }}><AppWindowIcon /> Preview drafts</CommandItem>
           </CommandGroup>
           <CommandGroup heading="Create">
             {types.filter(t => session.permissions.types[t]?.write && !collectionSettings(config, t).singleton).map(type => (
