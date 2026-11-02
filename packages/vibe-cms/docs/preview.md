@@ -30,10 +30,11 @@ In preview, `<Blocks>` from `@vibe-cms/blocks/astro` marks where each block star
 ## Where it opens
 
 - **Floating window**: drag it by its title bar and it settles into the nearest corner. Resize it from any edge or corner. It always stays on screen.
+  - **Follow the editor** (in its **⋯** menu, with Reload and Open in a new window) makes it show each document's page as you move around the editor, if the document has one (a `preview` URL), as last saved. Pages without one leave it where it is. The setting is remembered per browser.
   - Push it past the bottom-right corner and it tucks away, showing only its top-left, like a macOS Quick Note. Hovering leans it out a little. Click it or drag it out to bring it back. Opening the preview from the editor, or **Show in preview** on a block, brings it back too.
-  - **Freeform**: the page fills the window at the chosen zoom (100%, 75% or 50%). Switching to Freeform keeps the current zoom, so nothing jumps.
-  - **Fixed**: the page's viewport keeps one size at any window size. Pick a ratio (16:9, 16:10, 4:3, 3:2, 1:1, a 9:19.5 phone, or your own `W : H`), or a real device under **Devices** (searchable, recent devices first): an iPhone 17 Pro is 402 × 681, its browser viewport. **Rotate** swaps the sides. The zoom is **Fit to window**, or a set zoom that sizes the window to the page.
-  - The title bar shows the zoom; its menu shows the page's size.
+  - **Freeform**: the page fills the window at the chosen zoom. Switching to Freeform keeps the current zoom, so nothing jumps.
+  - **Fixed**: the page's viewport keeps one size at any window size. Pick a ratio (16:9, 16:10, 4:3, 3:2, 1:1, a 9:19.5 phone, or your own `W : H`), or a real device under **Devices** (searchable, recent devices first): an iPhone 17 Pro is 402 × 681, its browser viewport. **Rotate** swaps the sides. The zoom is **Fit** (to the window), or a set zoom that sizes the window to the page, as far as the screen allows.
+  - The title bar shows the zoom. Click it for the page's size, a slider (25 to 200%), a field for any zoom from 10 to 400%, and 50%, 75% and 100% (plus Fit, for fixed shapes).
   - Shape, size, zoom and corner are remembered per browser.
 
   Device sizes come from Playwright's device list (`scripts/devices.ts` writes `src/admin/app/devices.json`; `bun run devices` after bumping `playwright-core`, which a test checks). The preview matches a device's viewport, not its user agent, pixel density or touch input: test those on the device.

@@ -14,10 +14,24 @@ export interface PreviewState {
   /** The window's page announced itself since it was last pointed somewhere. */
   ready: boolean,
   /** Bumped whenever the editor wants the window seen (opened, pointed at a page or a block), so a tucked one comes out. */
-  reveals: number
+  reveals: number,
+  /** Follows the editor: opening a document with a page on the site shows that page. Remembered per browser. */
+  synced: boolean
 }
 
-let state: PreviewState = { open: false, src: null, path: null, ready: false, reveals: 0 };
+const SYNC_KEY = "vibe-cms:preview-sync";
+
+function loadSynced(): boolean {
+  try {
+    return localStorage.getItem(SYNC_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+let state: PreviewState = { open: false, src: null, path: null, ready: false, reveals: 0, synced: typeof window !== "undefined" && loadSynced() };
+/** The site page of the document open in the editor, if it has one. */
+let editorPage: string | null = null;
 const listeners = new Set<() => void>();
 /** Pop-outs, and the floating window's frame, so saves reach them across storage partitions too. */
 const windows = new Set<MessageEventSource>();
@@ -54,15 +68,36 @@ async function handoff(path: string): Promise<string> {
   return `${prefix}/preview?code=${encodeURIComponent(code)}&path=${encodeURIComponent(path)}`;
 }
 
+/** Points the open window at `path`: in place once it's signed in, else through a new handoff. */
+async function navigate(path: string) {
+  if(path === state.path) return;
+  if(signedIn && frame) frame.postMessage({ type: "vibe:preview-navigate", path }, location.origin);
+  else set({ ready: false, src: await handoff(path) });
+}
+
 /** Opens the floating preview, at `path` when given, else where it was (or the home page). */
 export async function openPreview(path?: string) {
-  const target = path ?? state.path ?? "/";
-  if(state.open && signedIn && frame) {
-    if(path && path !== state.path) frame.postMessage({ type: "vibe:preview-navigate", path }, location.origin);
+  const target = path ?? (state.synced ? editorPage : null) ?? state.path ?? "/";
+  if(state.open) {
+    if(path) await navigate(path);
     set({ reveals: state.reveals + 1 });
     return;
   }
-  set({ open: true, ready: false, src: signedIn ? target : await handoff(target), reveals: state.reveals + 1 });
+  set({ open: true, ready: false, src: signedIn && frame ? target : await handoff(target), reveals: state.reveals + 1 });
+}
+
+/** The editor opened a document with a page on the site (or left it: null). A synced preview follows, without coming out of its corner. */
+export function setEditorPage(path: string | null) {
+  editorPage = path;
+  if(path && state.synced && state.open) void navigate(path).catch(() => {});
+}
+
+export function setPreviewSynced(synced: boolean) {
+  try {
+    localStorage.setItem(SYNC_KEY, synced ? "1" : "0");
+  } catch {}
+  set({ synced });
+  if(synced && editorPage && state.open) void navigate(editorPage).catch(() => {});
 }
 
 /** `openPreview`, telling the user when it can't. */

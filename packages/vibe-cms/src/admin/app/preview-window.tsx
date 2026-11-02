@@ -1,16 +1,23 @@
 import { animate, motion, useDragControls, useMotionValue, type PanInfo } from "motion/react";
-import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, RotateCwIcon, RotateCwSquareIcon, ScalingIcon, SmartphoneIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, LinkIcon, MoreHorizontalIcon, RotateCwIcon, RotateCwSquareIcon, ScalingIcon, SmartphoneIcon, XIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "../components/ui/button.tsx";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../components/ui/command.tsx";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from "../components/ui/dropdown-menu.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
 import { DEVICES, matchesDevice, type Device } from "./devices.ts";
-import { closePreview, getPreview, popOutPreview, reloadPreview, setPreviewFrame, subscribePreview } from "./preview.ts";
+import { closePreview, getPreview, popOutPreview, reloadPreview, setPreviewFrame, setPreviewSynced, subscribePreview } from "./preview.ts";
 
 /** The big three newest first, as Playwright lists them; everyone else by name. */
 const GROUPS = (["Apple", "Google", "Samsung", "Other"] as const).map(maker => {
@@ -40,7 +47,10 @@ const PRESETS: Array<Shape & { label: string }> = [
   { label: "Phone", w: 9, h: 19.5, width: 390 }
 ];
 
-const ZOOMS = [1, 0.75, 0.5];
+const ZOOMS = [0.5, 0.75, 1];
+/** The slider's range; the field takes a little more either way. */
+const ZOOM_SLIDER = { min: 0.25, max: 2 };
+const ZOOM_FIELD = { min: 0.1, max: 4 };
 
 type Corner = "tl" | "tr" | "bl" | "br";
 
@@ -370,13 +380,12 @@ export function PreviewWindow() {
     setLayout(current => (zoom === "fit" ? { ...current, zoom, ...size } : { ...current, zoom }));
   }
 
-  // A set zoom the screen can't fit shows what it really is.
-  const zoomLabel = percent(scale);
-
   return (
     <motion.div
       role="dialog"
       aria-label="Draft preview"
+      // Page transitions leave a hole here rather than draw their snapshots over it.
+      data-above-transitions=""
       drag
       dragListener={false}
       dragControls={controls}
@@ -420,31 +429,19 @@ export function PreviewWindow() {
             <TooltipContent>Rotate</TooltipContent>
           </Tooltip>
         )}
+        <ZoomControl scale={scale} zoom={layout.zoom} fixed={shape !== null} page={page} onChange={setZoom} />
+        {/* Always a menu, so the bar fits at a phone's width; reloading is rarely needed, since saves reload it. */}
         <DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger render={
-              <DropdownMenuTrigger render={
-                <Button variant="ghost" size="xs" className="px-1.5 font-mono text-[11px] tabular-nums text-muted-foreground" aria-label={`Zoom: ${zoomLabel}`}>{zoomLabel}</Button>
-              } />
-            } />
-            <TooltipContent>{page.width} × {page.height} at {zoomLabel}</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="end" className="w-40">
-            <p className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{page.width} × {page.height}</p>
-            <DropdownMenuRadioGroup value={String(layout.zoom)} onValueChange={value => setZoom(value === "fit" ? "fit" : Number(value))}>
-              {shape && <DropdownMenuRadioItem value="fit">Fit to window</DropdownMenuRadioItem>}
-              {ZOOMS.map(zoom => <DropdownMenuRadioItem key={zoom} value={String(zoom)}>{percent(zoom)}</DropdownMenuRadioItem>)}
-            </DropdownMenuRadioGroup>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label="More"><MoreHorizontalIcon /></Button>} />
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuCheckboxItem checked={preview.synced} onCheckedChange={setPreviewSynced}>
+              <LinkIcon /> Follow the editor
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={reloadPreview}><RotateCwIcon /> Reload</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void popOutPreview()}><ExternalLinkIcon /> Open in a new window</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Tooltip>
-          <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Reload" onClick={reloadPreview}><RotateCwIcon /></Button>} />
-          <TooltipContent>Reload</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Open in a new window" onClick={() => void popOutPreview()}><ExternalLinkIcon /></Button>} />
-          <TooltipContent>Open in a new window</TooltipContent>
-        </Tooltip>
         <Button variant="ghost" size="icon-xs" aria-label="Close preview" onClick={closePreview}><XIcon /></Button>
       </div>
       <div ref={bodyRef} className="relative min-h-0 flex-1 overflow-hidden rounded-b-[14px] bg-muted/40">
@@ -495,6 +492,89 @@ export function PreviewWindow() {
         <div key={edge} aria-hidden className={cn("absolute z-10 touch-none", className)} onPointerDown={event => resize(event, edge)} />
       ))}
     </motion.div>
+  );
+}
+
+/**
+ * The zoom: the page's size, a slider and a field for any zoom, and the usual ones. A popover, not
+ * a menu, since a menu takes typing (type-to-select) and arrow keys for itself.
+ */
+function ZoomControl({ scale, zoom, fixed, page, onChange }: {
+  scale: number,
+  zoom: number | "fit",
+  fixed: boolean,
+  page: Size,
+  onChange(zoom: number | "fit"): void
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const label = percent(scale);
+  // The field shows the zoom in effect (a set zoom the screen can't fit is less) until it's typed in.
+  useEffect(() => setText(String(Math.round(scale * 100))), [scale, open]);
+
+  function commit() {
+    const value = Number(text.replace("%", "").trim()) / 100;
+    if(Number.isFinite(value) && value >= ZOOM_FIELD.min && value <= ZOOM_FIELD.max) onChange(value);
+    else setText(String(Math.round(scale * 100)));
+  }
+
+  const chip = "h-6 flex-1 rounded-[7px] text-xs text-muted-foreground transition-colors hover:text-foreground";
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger render={
+          <PopoverTrigger render={
+            <Button variant="ghost" size="xs" className="px-1.5 font-mono text-[11px] tabular-nums text-muted-foreground" aria-label={`Zoom: ${label}`}>{label}</Button>
+          } />
+        } />
+        <TooltipContent>{page.width} × {page.height} at {label}</TooltipContent>
+      </Tooltip>
+      <PopoverContent align="end" className="w-60 gap-3 p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium">Zoom</span>
+          <span className="font-mono text-[11px] text-muted-foreground">{page.width} × {page.height}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            aria-label="Zoom"
+            min={ZOOM_SLIDER.min * 100}
+            max={ZOOM_SLIDER.max * 100}
+            step={1}
+            value={Math.min(Math.max(Math.round(scale * 100), ZOOM_SLIDER.min * 100), ZOOM_SLIDER.max * 100)}
+            onChange={event => onChange(Number(event.target.value) / 100)}
+            className="h-1.5 min-w-0 flex-1 cursor-pointer accent-primary"
+          />
+          <form
+            className="relative"
+            onSubmit={event => {
+              event.preventDefault();
+              commit();
+            }}
+          >
+            <Input
+              aria-label="Zoom percent"
+              inputMode="numeric"
+              value={text}
+              onChange={event => setText(event.target.value)}
+              onBlur={commit}
+              className="h-7 w-16 pr-5 pl-2 text-right font-mono text-xs tabular-nums"
+            />
+            <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+          </form>
+        </div>
+        <div className="flex gap-0.5 rounded-[9px] well p-0.5">
+          {fixed && (
+            <button type="button" aria-pressed={zoom === "fit"} onClick={() => onChange("fit")} className={cn(chip, zoom === "fit" && "raised text-foreground")}>Fit</button>
+          )}
+          {ZOOMS.map(value => (
+            <button key={value} type="button" aria-pressed={zoom === value} onClick={() => onChange(value)} className={cn(chip, zoom === value && "raised text-foreground")}>
+              {percent(value)}
+            </button>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

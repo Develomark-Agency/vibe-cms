@@ -63,6 +63,17 @@ function direction(from: string, to: string): "forward" | "back" | "lateral" {
 
 let transitions = 0;
 
+/** A mask the size of the window, open everywhere except over these elements (their rounded boxes). */
+function maskOut(elements: HTMLElement[]): string {
+  const holes = elements.map(el => {
+    const r = el.getBoundingClientRect();
+    const radius = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+    return `<rect x="${r.left}" y="${r.top}" width="${r.width}" height="${r.height}" rx="${radius}" fill="black"/>`;
+  });
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${innerWidth}" height="${innerHeight}"><rect width="100%" height="100%" fill="white"/>${holes.join("")}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
 /** Page header pieces (`data-shared`) that sibling pages have in common, by name. */
 function sharedPieces() {
   return new Map([...document.querySelectorAll<HTMLElement>("[data-shared]")].map(el => [el.dataset.shared!, el]));
@@ -97,6 +108,9 @@ function emitWithTransition(scrollTop = 0, animate = true) {
     const s = getComputedStyle(panel);
     html.style.setProperty("--panel-clip", `inset(${r.top}px ${innerWidth - r.right}px ${innerHeight - r.bottom}px ${r.left}px round ${s.borderTopLeftRadius} ${s.borderTopRightRadius} ${s.borderBottomRightRadius} ${s.borderBottomLeftRadius})`);
   }
+  // Floating windows (the draft preview) stay above the pages: the snapshots get a hole where each one is.
+  const above = [...document.querySelectorAll<HTMLElement>("[data-above-transitions]")];
+  if(above.length) html.style.setProperty("--transition-mask", maskOut(above));
   // Header pieces stay in place across sibling pages, when both are scrolled alike (otherwise they'd fly between
   // the two positions); the ones whose text differs hand over rather than cross-fade.
   if(nav === "lateral" && (panel?.scrollTop ?? 0) === scrollTop) html.dataset.holdHeader = "";
@@ -121,6 +135,7 @@ function emitWithTransition(scrollTop = 0, animate = true) {
       delete html.dataset.capture;
       delete html.dataset.holdHeader;
       html.style.removeProperty("--panel-clip");
+      html.style.removeProperty("--transition-mask");
     }
   });
 }

@@ -56,7 +56,7 @@ import {
   useAdmin
 } from "./context.tsx";
 import { Field, FormValueContext } from "./fields.tsx";
-import { showPreview } from "./preview.ts";
+import { setEditorPage, showPreview } from "./preview.ts";
 import { Link, navigate, setNavigationBlocker } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
@@ -276,6 +276,14 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [save, canWriteLocale]);
+
+  // This document's page on the site, as last saved, for a preview that follows the editor.
+  const savedDraft = doc.data?.exists ? doc.data.draft : null;
+  const sitePage = settings.preview && id && savedDraft ? fillPreview(settings.preview, savedDraft, id, locale) : null;
+  useEffect(() => {
+    setEditorPage(sitePage);
+    return () => setEditorPage(null);
+  }, [sitePage]);
 
   if(id !== null && doc.isError) {
     return (

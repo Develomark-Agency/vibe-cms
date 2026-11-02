@@ -246,6 +246,8 @@
 
 ::view-transition {
   clip-path: var(--panel-clip, none);
+  /* Holes over floating windows (`data-above-transitions`, see router.tsx), so the live window shows through. */
+  mask: var(--transition-mask, none) 0 0 / 100% 100% no-repeat luminance;
 }
 
 ::view-transition-group(*) {
