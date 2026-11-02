@@ -18,7 +18,9 @@ import {
   SunIcon,
   Trash2Icon
 } from "lucide-react";
-import { StrictMode, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { AnimatePresence, LayoutGroup, motion, MotionConfig, useMotionValue, useSpring } from "motion/react";
+import { StrictMode, useEffect, useMemo, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { Button } from "../admin/components/ui/button.tsx";
@@ -96,7 +98,7 @@ function useCloseOnFrameFocus(open: boolean, close: () => void) {
   }, [open]);
 }
 
-function sortSites(sites: PanelSite[]): PanelSite[] {
+function sortSites<T extends PanelSite>(sites: T[]): T[] {
   return [...sites].sort((a, b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name));
 }
 
@@ -114,19 +116,90 @@ function PanelMark({ branding, className }: { branding: PanelBranding, className
 }
 
 /** Names, accents and icons change on the sites themselves; the stored list is only the fallback. */
-function useLiveSites(sites: PanelSite[] | undefined): PanelSite[] | undefined {
+type LiveSite = PanelSite & {
+  /** Why the site's descriptor couldn't be read: not answering at all, or answering but not as vibe-cms. */
+  problem?: { kind: "offline" | "invalid", message: string },
+  /** A check of the site is in flight. */
+  checking?: boolean
+};
+
+function siteProblem(error: unknown): LiveSite["problem"] {
+  return { kind: error instanceof PanelError && error.status === 502 ? "offline" : "invalid", message: (error as Error).message };
+}
+
+// A long list would open a connection per site at once; check a few at a time, with a breath between.
+const CHECKS_AT_ONCE = 6;
+let checksRunning = 0;
+const checkQueue: (() => void)[] = [];
+
+function throttledCheck<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      checksRunning++;
+      task().then(resolve, reject).finally(() => setTimeout(() => {
+        checksRunning--;
+        checkQueue.shift()?.();
+      }, 100));
+    };
+    if(checksRunning < CHECKS_AT_ONCE) run();
+    else checkQueue.push(run);
+  });
+}
+
+function useLiveSites(sites: PanelSite[] | undefined): LiveSite[] | undefined {
   const descriptors = useQueries({
     queries: (sites ?? []).map(site => ({
       queryKey: ["descriptor", site.id],
-      queryFn: () => fetchDescriptor(site.url),
+      queryFn: () => throttledCheck(() => fetchDescriptor(site.url)),
+      // Sites are checked once when the list loads. A site that's down isn't polled (that adds up
+      // with hundreds of sites); hovering its card checks it again (see useRecheck).
       staleTime: 60_000,
       retry: false
     }))
   });
   return sites?.map((site, i) => {
-    const live = descriptors[i]?.data;
-    return live ? { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null } : site;
+    const { data: live, error, isFetching } = descriptors[i] ?? {};
+    if(live) return { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null };
+    if(error) return { ...site, problem: siteProblem(error), checking: isFetching };
+    return site;
   });
+}
+
+/** Checks a site that's down again once the pointer settles on it; repeat hovers inside a few seconds share one check. */
+function useRecheck() {
+  const queryClient = useQueryClient();
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return {
+    start(site: LiveSite) {
+      clearTimeout(timer.current);
+      if(!site.problem) return;
+      timer.current = setTimeout(() => {
+        const queryKey = ["descriptor", site.id];
+        const state = queryClient.getQueryState(queryKey);
+        if(state?.fetchStatus === "fetching" || Date.now() - (state?.errorUpdatedAt ?? 0) < 3_000) return;
+        void queryClient.refetchQueries({ queryKey, exact: true });
+      }, 250);
+    },
+    cancel() {
+      clearTimeout(timer.current);
+    }
+  };
+}
+
+/** Healthy sites first, so the ones that can't be opened right now don't crowd the top. */
+function healthyFirst<T extends LiveSite>(sites: T[]): T[] {
+  return [...sites].sort((a, b) => Number(!!a.problem) - Number(!!b.problem));
+}
+
+function ProblemBadge({ site }: { site: LiveSite }) {
+  if(!site.problem) return null;
+  return (
+    <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-destructive">
+      <span className="size-1.5 rounded-full bg-current" />
+      {site.problem.kind === "offline" ? "Not running" : "Not vibe-cms"}
+    </span>
+  );
 }
 
 function useBranding(backend: PanelBackend): PanelBranding {
@@ -318,7 +391,8 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
                   go(`/s/${encodeURIComponent(s.id)}/`);
                 }}>
                   <SiteMark site={s} className="size-5" />
-                  <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                  <span className={cn("min-w-0 flex-1 truncate", s.problem && "text-muted-foreground")}>{s.name}</span>
+                  <ProblemBadge site={s} />
                   {s.favorite && <StarIcon className="fill-amber-400 text-amber-400" />}
                 </CommandItem>
               ))}
@@ -341,7 +415,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
   );
 }
 
-function SiteSwitcher({ sites, current, onAdd }: { sites: PanelSite[], current: PanelSite | null, onAdd(): void }) {
+function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: LiveSite | null, onAdd(): void }) {
   const [open, setOpen] = useState(false);
   useCloseOnFrameFocus(open, () => setOpen(false));
   return (
@@ -365,7 +439,8 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: PanelSite[], current: 
                   go(`/s/${encodeURIComponent(site.id)}/`);
                 }}>
                   <SiteMark site={site} className="size-5" />
-                  <span className="min-w-0 flex-1 truncate">{site.name}</span>
+                  <span className={cn("min-w-0 flex-1 truncate", site.problem && "text-muted-foreground")}>{site.name}</span>
+                  <ProblemBadge site={site} />
                   {site.favorite && <StarIcon className="fill-amber-400 text-amber-400" />}
                 </CommandItem>
               ))}
@@ -389,97 +464,310 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: PanelSite[], current: 
 
 function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
   backend: PanelBackend,
-  sites: PanelSite[] | undefined,
+  sites: LiveSite[] | undefined,
   loading: boolean,
   onAdd(): void,
   onOpenExternally(site: PanelSite): void
 }) {
-  const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
+  const portal = usePortalHover();
   if(loading) return <Delayed><div className="flex h-full items-center justify-center"><Spinner /></div></Delayed>;
-  const list = sortSites(sites ?? []).filter(s => `${s.name} ${s.url}`.toLowerCase().includes(filter.toLowerCase()));
+  const hosted = backend.mode === "hosted";
+  const all = sortSites(sites ?? []);
+  const list = all.filter(s => `${s.name} ${s.url}`.toLowerCase().includes(filter.toLowerCase()));
+  const starred = healthyFirst(list.filter(s => s.favorite));
+  const others = healthyFirst(list.filter(s => !s.favorite));
+  const starredCount = all.filter(s => s.favorite).length;
   return (
-    <div className="h-full overflow-y-auto">
-      <section>
-        <div className="mx-auto flex max-w-5xl flex-wrap items-end justify-between gap-3 px-4 pt-12 pb-2 md:px-8">
-          <div className="space-y-2">
-            <p className="eyebrow">{backend.mode === "hosted" ? "Agency" : "Local"} · {sites?.length ?? 0} {sites?.length === 1 ? "site" : "sites"}</p>
-            <h1 className="text-3xl font-medium tracking-[-0.03em]">Sites</h1>
-            <p className="text-sm text-muted-foreground">
-              {backend.mode === "hosted" ? "Shared with everyone using this panel. Access to each site is decided by the site." : "Development sites on this machine."}
-            </p>
-          </div>
-          <div className="flex gap-2">
-            {(sites?.length ?? 0) > 6 && <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter" className="w-48" />}
-            <Button onClick={onAdd}><PlusIcon /> Add site</Button>
-          </div>
+    <div className="h-full overflow-y-auto md:grid md:grid-cols-[minmax(18rem,22rem)_1fr] md:overflow-hidden">
+      <aside className="flex flex-col gap-8 border-b px-4 pt-12 pb-8 md:h-full md:overflow-y-auto md:border-r md:border-b-0 md:px-10">
+        <div className="space-y-3">
+          <p className="eyebrow">{hosted ? "Agency workspace" : "Local workspace"}</p>
+          <h1 className="text-4xl font-medium tracking-[-0.03em]">Sites</h1>
+          <p className="text-sm text-muted-foreground">
+            {hosted ? "Every site this panel manages. Each site decides who can edit it." : "Development sites on this machine, all in one place."}
+          </p>
         </div>
-      </section>
-      <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-8 md:px-8">
-        {sites?.length === 0 ? (
-          <Empty className="rounded-[16px] well">
-            <EmptyHeader>
-              <EmptyMedia variant="icon"><GlobeIcon /></EmptyMedia>
-              <EmptyTitle>No sites yet</EmptyTitle>
-              <EmptyDescription>Add a site by its URL. It needs vibe-cms and has to trust the same identity provider as this panel.</EmptyDescription>
-            </EmptyHeader>
-            <EmptyContent><Button onClick={onAdd}><PlusIcon /> Add your first site</Button></EmptyContent>
-          </Empty>
-        ) : (
-          <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {list.map((site, i) => (
-              <div key={site.id} style={{ "--i": i } as CSSProperties} className="group/card relative flex items-center gap-3 rounded-[18px] elevated p-2.5 transition-[box-shadow,scale] duration-200 ease-out hover:shadow-(--shadow-raised-hover) has-[button:active]:scale-[0.985]">
-                <SiteMark site={site} className="size-11 rounded-[8px] text-sm" />
-                <button className="min-w-0 flex-1 text-left after:absolute after:inset-0" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
-                  <span className="block truncate font-medium">{site.name}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{new URL(site.url).host}</span>
-                </button>
-                {/* Same 44px square and 8px corner as the mark: both sit 10px inside the 18px card. */}
-                <div className="relative z-10 flex items-center">
-                  <Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label={site.favorite ? "Unfavorite" : "Favorite"} onClick={async () => {
-                    await backend.setFavorite(site.id, !site.favorite);
-                    void queryClient.invalidateQueries({ queryKey: ["sites"] });
-                  }}>
-                    <StarIcon className={cn(site.favorite ? "fill-amber-400 text-amber-400" : "opacity-0 group-hover/card:opacity-100")} />
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => onOpenExternally(site)}><ExternalLinkIcon /> Open in new tab</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem variant="destructive" onClick={async () => {
-                        try {
-                          await backend.removeSite(site.id);
-                          void queryClient.invalidateQueries({ queryKey: ["sites"] });
-                        } catch (error) {
-                          toast.error((error as Error).message);
-                        }
-                      }}><Trash2Icon /> Remove from list</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-            ))}
+        <dl className="flex gap-8 border-t pt-6">
+          <div>
+            <dd className="text-2xl font-medium tabular-nums">{all.length}</dd>
+            <dt className="text-xs text-muted-foreground">{all.length === 1 ? "Site" : "All sites"}</dt>
           </div>
-        )}
+          <div>
+            <dd className="text-2xl font-medium tabular-nums">{starredCount}</dd>
+            <dt className="text-xs text-muted-foreground">Starred</dt>
+          </div>
+        </dl>
+        <AddSiteForm backend={backend} />
+        <p className="mt-auto text-xs text-muted-foreground">
+          {hosted ? "Sites need vibe-cms and must trust this panel's identity provider." : "This list is stored in this browser only."}
+        </p>
+      </aside>
+      <div className="overflow-x-clip md:h-full md:overflow-y-auto">
+        <div className="mx-auto flex max-w-5xl relative flex-col gap-8 px-4 pt-12 pb-12 md:px-10">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="space-y-1">
+              <h2 className="text-xl font-medium tracking-[-0.02em]">Your sites</h2>
+              <p className="text-sm text-muted-foreground">Open a site to edit its content.</p>
+            </div>
+            {all.length > 0 && <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search sites…" className="w-full sm:w-64" aria-label="Search sites" />}
+          </div>
+          {all.length === 0 ? (
+            <Empty className="rounded-[16px] well">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><GlobeIcon /></EmptyMedia>
+                <EmptyTitle>No sites yet</EmptyTitle>
+                <EmptyDescription>
+                  {hosted ? "Add a site by its URL. It needs vibe-cms and has to trust the same identity provider as this panel." : "Start a site's dev server, then add its address, like localhost:4321."}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent><Button onClick={onAdd}><PlusIcon /> Add your first site</Button></EmptyContent>
+            </Empty>
+          ) : list.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">No sites match “{filter}”.</p>
+          ) : (
+            // One layout group, so a card that's starred flies from its grid to the other one.
+            <MotionConfig reducedMotion="user"><LayoutGroup>
+              <AnimatePresence initial={false} mode="popLayout">
+                {starred.length > 0 && <SiteGroup key="starred" title="Starred" sites={starred} backend={backend} portal={portal} onOpenExternally={onOpenExternally} />}
+                {starred.length > 0 && others.length > 0 && <motion.hr key="divider" layout {...fade} />}
+                {others.length > 0 && <SiteGroup key="others" title={starred.length ? "Other sites" : "All sites"} sites={others} backend={backend} portal={portal} onOpenExternally={onOpenExternally} offset={starred.length} />}
+              </AnimatePresence>
+            </LayoutGroup></MotionConfig>
+          )}
+        </div>
       </div>
+      <SitePortal state={portal} />
     </div>
   );
 }
 
-function AddSiteDialog({ backend, open, onOpenChange }: { backend: PanelBackend, open: boolean, onOpenChange(open: boolean): void }) {
+// Hover preview: one floating window shared by every card, so moving between sites
+// swaps the page inside it instead of tearing it down. Pages stay loaded once seen.
+const PORTAL = { width: 268, height: 168, scale: 268 / 1280, gap: 20 };
+
+type PortalHover = ReturnType<typeof usePortalHover>;
+
+function usePortalHover() {
+  const [site, setSite] = useState<LiveSite | null>(null);
+  const leave = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const place = (e: { clientX: number, clientY: number }) => {
+    // Right of and below the cursor, flipped when that would leave the viewport.
+    const right = e.clientX + PORTAL.gap + PORTAL.width > window.innerWidth;
+    const below = e.clientY + PORTAL.gap + PORTAL.height > window.innerHeight;
+    x.set(right ? e.clientX - PORTAL.gap - PORTAL.width : e.clientX + PORTAL.gap);
+    y.set(below ? Math.max(8, e.clientY - PORTAL.gap - PORTAL.height) : e.clientY + PORTAL.gap);
+  };
+  return {
+    site, x, y,
+    enter(next: LiveSite, e: React.PointerEvent) {
+      if(e.pointerType !== "mouse") return;
+      clearTimeout(leave.current);
+      if(!site) place(e);
+      setSite(next);
+    },
+    move(e: React.PointerEvent) {
+      if(e.pointerType === "mouse") place(e);
+    },
+    // A short grace period, so crossing the gap between cards doesn't blink the window.
+    leave() {
+      clearTimeout(leave.current);
+      leave.current = setTimeout(() => setSite(null), 120);
+    }
+  };
+}
+
+function SitePortal({ state }: { state: PortalHover }) {
+  const springy = { stiffness: 400, damping: 40, mass: 0.6 };
+  const x = useSpring(state.x, springy);
+  const y = useSpring(state.y, springy);
+  const [loaded, setLoaded] = useState<LiveSite[]>([]);
+  const site = state.site;
+  if(site && !loaded.some(s => s.id === site.id)) setLoaded([...loaded.slice(-4), site]);
+  // Jump to the cursor rather than gliding in from wherever it was last hidden.
+  const visible = useRef(false);
+  if(site && !visible.current) {
+    x.jump(state.x.get());
+    y.jump(state.y.get());
+  }
+  visible.current = !!site;
+  return createPortal(
+    <AnimatePresence>
+      {site && (
+        <motion.div
+          aria-hidden
+          className="pointer-events-none fixed top-0 left-0 z-50 overflow-hidden rounded-[14px] bg-background shadow-2xl ring-1 ring-foreground/10"
+          style={{ x, y, width: PORTAL.width, height: PORTAL.height }}
+          initial={{ opacity: 0, scale: 0.92 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.92 }}
+          transition={spring}
+        >
+          {loaded.map(s => (
+            <iframe
+              key={s.id}
+              src={s.url}
+              title={`${s.name} preview`}
+              tabIndex={-1}
+              loading="eager"
+              className="absolute top-0 left-0 origin-top-left border-0 transition-opacity duration-150"
+              style={{
+                width: PORTAL.width / PORTAL.scale,
+                height: PORTAL.height / PORTAL.scale,
+                transform: `scale(${PORTAL.scale})`,
+                opacity: s.id === site.id ? 1 : 0
+              }}
+            />
+          ))}
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body
+  );
+}
+
+const spring = { type: "spring", duration: 0.4, bounce: 0.12 } as const;
+const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: spring };
+
+function SiteGroup({ title, sites, backend, portal, onOpenExternally, offset = 0, ref }: {
+  title: string,
+  sites: LiveSite[],
+  backend: PanelBackend,
+  portal: PortalHover,
+  onOpenExternally(site: PanelSite): void,
+  offset?: number,
+  ref?: Ref<HTMLElement>
+}) {
   const queryClient = useQueryClient();
-  const [url, setUrl] = useState("");
-  const add = useMutation({
+  const recheck = useRecheck();
+  // Cards rise in one after another when the page opens; later arrivals come in at once.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+  }, []);
+  return (
+    <motion.section ref={ref} layout="position" className="grid gap-3" {...fade}>
+      <h3 className="flex items-baseline gap-2 text-sm font-medium">{title} <span className="font-normal text-muted-foreground tabular-nums">{sites.length}</span></h3>
+      <div className="relative grid gap-3 lg:grid-cols-2">
+        <AnimatePresence mode="popLayout">
+          {sites.map((site, i) => (
+            <motion.div
+              key={site.id}
+              layoutId={site.id}
+              layout
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ ...spring, delay: mounted.current ? 0 : Math.min(i + offset, 12) * 0.03, layout: spring }}
+              onPointerEnter={e => {
+                recheck.start(site);
+                if(!site.problem) portal.enter(site, e);
+              }}
+              onPointerMove={portal.move}
+              onPointerLeave={() => {
+                recheck.cancel();
+                portal.leave();
+              }}
+              className="group/card relative flex items-center gap-3 rounded-[18px] elevated p-2.5 transition-shadow duration-200 ease-out hover:shadow-(--shadow-raised-hover)"
+            >
+              <SiteMark site={site} className={cn("size-11 rounded-[8px] text-sm transition-[filter,opacity]", site.problem && "opacity-30 grayscale")} />
+              <motion.button whileTap={{ scale: 0.985 }} className="min-w-0 flex-1 text-left after:absolute after:inset-0" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
+                <span className={cn("block truncate font-medium", site.problem && "text-muted-foreground")}>{site.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  {site.problem && (
+                    <Tooltip>
+                      <TooltipTrigger render={
+                        <span className="relative z-10 inline-flex shrink-0 items-center gap-1.5 font-medium text-destructive">
+                          <span className="size-1.5 rounded-full bg-current" />
+                          {site.checking ? "Checking…" : site.problem.kind === "offline" ? "Not running" : "Not a vibe-cms site"}
+                        </span>
+                      } />
+                      <TooltipContent>{site.problem.message}</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {site.problem && <span aria-hidden>·</span>}
+                  <span className="truncate">{new URL(site.url).host}</span>
+                </span>
+              </motion.button>
+              {/* Same 44px square and 8px corner as the mark: both sit 10px inside the 18px card. */}
+              <div className="relative z-10 flex items-center">
+                <Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label={site.favorite ? "Unstar" : "Star"} onClick={async () => {
+                  await backend.setFavorite(site.id, !site.favorite);
+                  void queryClient.invalidateQueries({ queryKey: ["sites"] });
+                }}>
+                  <StarIcon className={cn(site.favorite ? "fill-amber-400 text-amber-400" : "opacity-0 group-hover/card:opacity-100")} />
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => onOpenExternally(site)}><ExternalLinkIcon /> Open in new tab</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onClick={async () => {
+                      try {
+                        await backend.removeSite(site.id);
+                        void queryClient.invalidateQueries({ queryKey: ["sites"] });
+                      } catch (error) {
+                        toast.error((error as Error).message);
+                      }
+                    }}><Trash2Icon /> Remove from list</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    </motion.section>
+  );
+}
+
+function useAddSite(backend: PanelBackend, url: string, onAdded: () => void) {
+  const queryClient = useQueryClient();
+  return useMutation({
     mutationFn: () => backend.addSite(url.trim()),
     onSuccess: site => {
       void queryClient.invalidateQueries({ queryKey: ["sites"] });
-      onOpenChange(false);
-      setUrl("");
+      onAdded();
       toast.success(`Added ${site.name}`);
       go(`/s/${encodeURIComponent(site.id)}/`);
     }
+  });
+}
+
+/** The sidebar's inline version of the add dialog. */
+function AddSiteForm({ backend }: { backend: PanelBackend }) {
+  const [url, setUrl] = useState("");
+  const add = useAddSite(backend, url, () => setUrl(""));
+  const hosted = backend.mode === "hosted";
+  return (
+    <form onSubmit={e => {
+      e.preventDefault();
+      add.mutate();
+    }} className="grid gap-3">
+      <div className="space-y-1">
+        <h2 className="text-sm font-medium">Add a site</h2>
+        <p className="text-sm text-muted-foreground">{hosted ? "Paste the address of a site running vibe-cms." : "Enter the address of a running dev server."}</p>
+      </div>
+      <div className="flex gap-2">
+        <Input value={url} onChange={e => {
+          setUrl(e.target.value);
+          if(add.isError) add.reset();
+        }} placeholder={hosted ? "client-site.com" : "localhost:4321"} aria-label="Site URL" className="min-w-0 flex-1" />
+        <Button type="submit" disabled={!url.trim() || add.isPending}>{add.isPending && <Spinner />} Add</Button>
+      </div>
+      {add.isError && <p className="text-sm text-destructive">{(add.error as Error).message}</p>}
+    </form>
+  );
+}
+
+function AddSiteDialog({ backend, open, onOpenChange }: { backend: PanelBackend, open: boolean, onOpenChange(open: boolean): void }) {
+  const [url, setUrl] = useState("");
+  const add = useAddSite(backend, url, () => {
+    onOpenChange(false);
+    setUrl("");
   });
   return (
     <Dialog open={open} onOpenChange={next => {
@@ -569,15 +857,22 @@ function AgentsDialog({ backend, open, onOpenChange }: { backend: PanelBackend, 
 function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
   backend: PanelBackend,
   branding: PanelBranding,
-  site: PanelSite,
+  site: LiveSite,
   initialPath: string,
   onShortcut(): void
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const queryClient = useQueryClient();
   const origin = new URL(site.admin).origin;
-  const [state, setState] = useState<"loading" | "ready" | "denied" | "unreachable">("loading");
+  const host = new URL(site.url).host;
+  // A site the list already saw answering is framed at once; anything else is checked first, so a
+  // site that's down shows as down within a second instead of after the editor's handshake times out.
+  const knownUp = () => !!queryClient.getQueryState(["descriptor", site.id])?.data && !site.problem;
+  const [state, setState] = useState<"connecting" | "trouble" | "loading" | "ready" | "denied" | "unreachable">(() => knownUp() ? "loading" : site.problem ? "trouble" : "connecting");
   const [error, setError] = useState<string | null>(null);
+  // Bumped by Retry: checks again from the start and reloads the frame.
+  const [attempt, setAttempt] = useState(0);
+  const framed = state === "loading" || state === "ready" || state === "denied" || (state === "unreachable" && error === null);
   // The src is fixed per site; later navigation happens inside the editor and is mirrored here.
   const src = useMemo(() => `${site.admin}${initialPath.startsWith("/") ? initialPath : `/${initialPath}`}`, [site.id]);
 
@@ -592,14 +887,55 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
   useEffect(() => subscribeTheme(sendAppearance), [site.id, branding.accent]);
   useEffect(sendAppearance, [branding.accent]);
 
+  // Check the site with backoff (about half a minute in all) before framing it.
   useEffect(() => {
+    if(state !== "connecting" && state !== "trouble") return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function check(failures: number) {
+      try {
+        const descriptor = await fetchDescriptor(site.url);
+        if(cancelled) return;
+        queryClient.setQueryData(["descriptor", site.id], descriptor);
+        setState("loading");
+      } catch (e) {
+        if(cancelled) return;
+        const problem = siteProblem(e)!;
+        if(problem.kind !== "offline" || failures >= CHECK_BACKOFF.length) {
+          setError(problem.kind === "offline" ? `${host} isn't responding. Check that the site is running, then try again.` : problem.message);
+          setState("unreachable");
+          return;
+        }
+        // One miss can be a server mid-restart; after two, say so while we keep trying.
+        if(failures >= 1) setState("trouble");
+        timer = setTimeout(() => check(failures + 1), CHECK_BACKOFF[failures]);
+      }
+    }
+    void check(0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [site.id, attempt]);
+
+  useEffect(() => {
+    if(state !== "loading") return;
     const timeout = setTimeout(() => setState(s => (s === "loading" ? "unreachable" : s)), 20_000);
+    return () => clearTimeout(timeout);
+  }, [state === "loading", attempt]);
+
+  function retry() {
+    setError(null);
+    setState(knownUp() ? "loading" : "connecting");
+    setAttempt(a => a + 1);
+  }
+
+  useEffect(() => {
     async function onMessage(event: MessageEvent) {
       if(event.origin !== origin || event.source !== frame.current?.contentWindow) return;
       const message = event.data as EditorMessage;
       switch(message?.type) {
         case "vibe:ready":
-          clearTimeout(timeout);
           sendAppearance();
           setState("ready");
           break;
@@ -638,17 +974,34 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
       }
     }
     window.addEventListener("message", onMessage);
-    return () => {
-      clearTimeout(timeout);
-      window.removeEventListener("message", onMessage);
-    };
+    return () => window.removeEventListener("message", onMessage);
   }, [site.id]);
 
   return (
     <div className="absolute inset-0">
-      <iframe ref={frame} src={src} title={`${site.name} editor`} className={cn("size-full border-0 bg-background transition-opacity duration-300 ease-out", state === "ready" ? "opacity-100" : "opacity-0", state === "denied" && "invisible")} allow="clipboard-write" />
-      {state === "loading" && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background"><Delayed><Spinner className="size-5" /></Delayed></div>
+      {framed && <iframe key={attempt} ref={frame} src={src} title={`${site.name} editor`} className={cn("size-full border-0 bg-background transition-opacity duration-300 ease-out", state === "ready" ? "opacity-100" : "opacity-0", state === "denied" && "invisible")} allow="clipboard-write" />}
+      {(state === "connecting" || state === "loading" || state === "trouble") && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background p-6">
+          <Delayed ms={state === "trouble" ? 0 : 300}>
+            <div className="rise-in flex max-w-sm flex-col items-center gap-3 text-center">
+              <SiteMark site={site} className="size-12 rounded-[10px] text-base" />
+              <h2 className="font-semibold">{site.name}</h2>
+              {state === "trouble" ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Having trouble connecting to {host}. {backend.mode === "local" ? "Check that its dev server is running" : "Check that the site is online"}; this page opens it as soon as it answers.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => go("/")}>Back to sites</Button>
+                    <Button variant="ghost" onClick={retry}>Try now</Button>
+                  </div>
+                </>
+              ) : (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-3.5" /> Connecting to {host}…</p>
+              )}
+            </div>
+          </Delayed>
+        </div>
       )}
       {(state === "denied" || state === "unreachable") && (
         <div className="absolute inset-0 flex items-center justify-center bg-background p-6">
@@ -658,13 +1011,19 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
             <p className="text-sm text-muted-foreground">
               {state === "denied" ? `${site.name} doesn't give your account any role. Ask an administrator of the site to add you.` : error ?? "The site's editor didn't respond."}
             </p>
-            <Button variant="outline" onClick={() => go("/")}>Back to sites</Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => go("/")}>Back to sites</Button>
+              {state === "unreachable" && <Button onClick={retry}>Try again</Button>}
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 }
+
+/** Waits between checks of a site that isn't answering: about 30s in all before giving up. */
+const CHECK_BACKOFF = [1_000, 2_000, 4_000, 8_000, 15_000];
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false } } });
 
