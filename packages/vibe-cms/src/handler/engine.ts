@@ -17,10 +17,21 @@ import { findReferences, isAssetValue, isRecord, pickUnionOption, schemaAt, shap
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
 import { can, require } from "./auth.ts";
+import { detectFavicon, type SiteFetch } from "./favicon.ts";
 import { all, first, getMeta, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "./db.ts";
 import type { D1, ExecutionContext, R2 } from "./platform.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
-import { jsonPath, SqlBuilder } from "./sql.ts";
+import { ftsQuery, jsonPath, searchWords, SqlBuilder } from "./sql.ts";
+
+/** Where a search hit the body, words between \u0001 and \u0002. */
+const SNIPPET = "snippet(vibe_search, 4, char(1), char(2), '…', 12)";
+
+/** A search hit's body excerpt, or null when its title already shows every word matched. */
+function bodyExcerpt(row: { title: string | null, excerpt: string | null }, query: string): string | null {
+  const titleWords = searchWords(row.title ?? "");
+  const inTitle = searchWords(query).every(word => titleWords.some(t => t.startsWith(word)));
+  return inTitle || !row.excerpt?.includes("\u0001") ? null : row.excerpt;
+}
 import { MAX_TEXT_EDIT_BYTES, textKind } from "../text-files.ts";
 
 export interface EngineState {
@@ -29,7 +40,11 @@ export interface EngineState {
   storage: R2 | undefined,
   plugins: PluginHost,
   schemaHash: string,
-  prefix: string
+  prefix: string,
+  /** Random, made on first boot and kept in the database: the site's identity to panels and in session tokens. */
+  siteId: string,
+  /** The site's own pages, for finding its favicon. */
+  siteFetch?: SiteFetch
 }
 
 export interface RequestScope {
@@ -43,12 +58,17 @@ export interface RequestScope {
 
 export type Doc = DocumentData & { id: string, $meta: DocumentMeta };
 
-/** How the site presents itself in the editor and the panel. Code sets the defaults; editors can change them. */
+/** How the site presents itself in the editor and the panel, as editors set it on the Site page. */
 export interface SiteSettings {
+  id: string,
+  /** The saved name, else the host name. */
   name: string,
   /** `#rrggbb`, or null for the neutral default. */
   accent: string | null,
-  icon: { id: string, url: string } | null
+  /** The icon chosen on the Site page. */
+  icon: { id: string, url: string } | null,
+  /** The site's own favicon, found on its home page. Shown when no icon is chosen. */
+  favicon: string | null
 }
 
 export interface SiteSettingsPatch {
@@ -64,7 +84,20 @@ interface StoredSite {
   icon?: string
 }
 
+/** What the CMS has seen of the site from its requests, refreshed daily. */
+interface DetectedSite {
+  host: string,
+  /** Root-relative when it's on the site itself. */
+  favicon: string | null,
+  checked: number
+}
+
 const SITE_KEY = "site";
+const DETECTED_KEY = "site_detected";
+const DETECT_EVERY = 24 * 60 * 60 * 1000;
+// Sooner when there was none, so a favicon added in development shows up.
+const DETECT_NONE_EVERY = 5 * 60 * 1000;
+const detecting = new WeakMap<D1, Promise<DetectedSite | null>>();
 
 /** How long deleted items stay in the trash unless the config says otherwise. */
 export const DEFAULT_TRASH_DAYS = 30;
@@ -481,15 +514,67 @@ export class Engine {
     };
   }
 
-  /** Lists documents for the editor: drafts, with status. */
+  /**
+   * Lists documents for the editor: drafts, with status. With `search`, only full-text matches, plus
+   * `all` (the unfiltered count) and an excerpt for each match the title doesn't explain.
+   */
   async listDocuments(type: string, args: { locale?: string, search?: string, limit?: number, offset?: number, orderBy?: Order[], status?: string }) {
     require(this.config, this.scope.session, { action: "read", type });
-    const conditions: Condition[] = [];
-    if(args.search) conditions.push({ op: "search", value: args.search });
-    const where: Condition = { op: "and", conditions };
-    const docs = await this.find(type, { where, locale: args.locale, limit: args.limit ?? 50, offset: args.offset, orderBy: args.orderBy }, true);
+    const searching = searchWords(args.search ?? "").length > 0;
+    const where: Condition = { op: "and", conditions: searching ? [{ op: "fulltext", value: args.search! }] : [] };
+    const limit = args.limit ?? 50;
+    let docs;
+    if(searching && !args.orderBy?.length) {
+      // Best matches first: rank in the index, then load that page. A document counts in the locale
+      // shown or, untranslated, the default one, as `find` falls back.
+      const offset = Math.max(args.offset ?? 0, 0);
+      const ranked = await all<{ id: string }>(this.db,
+        `SELECT id FROM vibe_search WHERE vibe_search MATCH ? AND type = ? AND locale IN (?, ?)
+          ORDER BY bm25(vibe_search, 0, 0, 0, 10, 1), id LIMIT ?`,
+        // At most two rows per document, so twice the page covers it.
+        [ftsQuery(args.search!), type, this.locale(args.locale), this.defaultLocale, (offset + limit) * 2]);
+      const ids = [...new Set(ranked.map(row => row.id))].slice(offset, offset + limit);
+      const found = ids.length ? await this.find(type, { where: { op: "in", path: ["id"], values: ids }, locale: args.locale, limit }, true) : [];
+      docs = ids.flatMap(id => found.filter(doc => doc.id === id));
+    } else {
+      docs = await this.find(type, { where, locale: args.locale, limit, offset: args.offset, orderBy: args.orderBy }, true);
+    }
     const total = await this.count(type, { where, locale: args.locale }, true);
-    return { docs, total };
+    if(!searching) return { docs, total, all: total, excerpts: {} };
+    const unfiltered = await this.count(type, { locale: args.locale }, true);
+    const excerpts: Record<string, string> = {};
+    if(docs.length) {
+      const rows = await all<{ id: string, title: string | null, excerpt: string | null }>(this.db,
+        `SELECT id, title, ${SNIPPET} AS excerpt FROM vibe_search
+          WHERE vibe_search MATCH ? AND id IN (${docs.map(() => "?").join(", ")}) AND locale IN (?, ?)
+          ORDER BY locale = ? DESC`,
+        [ftsQuery(args.search!), ...docs.map(doc => doc.id), this.locale(args.locale), this.defaultLocale, this.locale(args.locale)]);
+      for(const row of rows) {
+        const excerpt = bodyExcerpt(row, args.search!);
+        if(excerpt && !(row.id in excerpts)) excerpts[row.id] = excerpt;
+      }
+    }
+    return { docs, total, all: unfiltered, excerpts };
+  }
+
+  /**
+   * Full-text search over every content type the session can read, in one locale, best matches first.
+   * Each word matches as a prefix, so results follow typing. Titles weigh more than body text; the
+   * excerpt shows where the body matched, between \u0001 and \u0002, when the title didn't.
+   */
+  async searchDocuments(args: { query: string, locale?: string, limit?: number }) {
+    const locale = this.locale(args.locale);
+    if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
+    const types = Object.keys(this.config.schemas).filter(type => (this.scope.trusted && !this.scope.session) || can(this.config, this.scope.session, { action: "read", type }));
+    if(!types.length || !searchWords(args.query).length) return { results: [] };
+    const rows = await all<{ id: string, type: string, title: string | null, excerpt: string | null }>(this.db,
+      `SELECT id, type, title, ${SNIPPET} AS excerpt FROM vibe_search
+        WHERE vibe_search MATCH ? AND locale = ? AND type IN (${types.map(() => "?").join(", ")})
+        ORDER BY bm25(vibe_search, 0, 0, 0, 10, 1) LIMIT ?`,
+      [ftsQuery(args.query), locale, ...types, Math.min(Math.max(args.limit ?? 20, 1), 50)]);
+    return {
+      results: rows.map(row => ({ id: row.id, type: row.type, title: row.title, excerpt: bodyExcerpt(row, args.query) }))
+    };
   }
 
   async save(input: {
@@ -1210,26 +1295,59 @@ export class Engine {
     return isRecord(parsed) ? parsed as StoredSite : {};
   }
 
+  private async detectedSite(): Promise<DetectedSite | null> {
+    const raw = await getMeta(this.db, DETECTED_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return isRecord(parsed) ? parsed as unknown as DetectedSite : null;
+  }
+
+  /**
+   * Looks at the site from a request's origin: its host and favicon. The first look waits; later
+   * ones refresh in the background once a day. In-process callers (no origin) only read what's stored,
+   * which also keeps the site's own pages from triggering a look while they render.
+   */
+  private async detect(): Promise<DetectedSite | null> {
+    const stored = await this.detectedSite();
+    const { origin } = this.scope;
+    const { siteFetch } = this.state;
+    if(!origin || !siteFetch) return stored;
+    const host = new URL(origin).hostname;
+    if(stored && stored.host === host && Date.now() - stored.checked < (stored.favicon ? DETECT_EVERY : DETECT_NONE_EVERY)) return stored;
+    let pending = detecting.get(this.db);
+    if(!pending) {
+      pending = detectFavicon(origin, siteFetch).then(async favicon => {
+        const next: DetectedSite = { host, favicon, checked: Date.now() };
+        await run(this.db, "INSERT INTO vibe_meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [DETECTED_KEY, JSON.stringify(next)]);
+        return next;
+      }).catch(() => stored).finally(() => detecting.delete(this.db));
+      detecting.set(this.db, pending);
+    }
+    if(!stored) return pending;
+    this.scope.ctx?.waitUntil(pending);
+    return stored;
+  }
+
   /** Public: the panel shows sites by these before anyone signs in. */
-  async site(fallbackName: string): Promise<SiteSettings> {
-    const stored = await this.storedSite();
+  async site(): Promise<SiteSettings> {
+    const [stored, detected] = await Promise.all([this.storedSite(), this.detect()]);
     const row = stored.icon ? await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [stored.icon]) : null;
+    const favicon = detected?.favicon ?? null;
     return {
-      name: stored.name ?? this.config.name ?? fallbackName,
+      id: this.state.siteId,
+      name: stored.name ?? detected?.host ?? (this.scope.origin ? new URL(this.scope.origin).hostname : "Untitled site"),
       accent: stored.accent ?? null,
-      icon: row ? { id: row.id, url: this.assetUrl(row) } : null
+      icon: row ? { id: row.id, url: this.assetUrl(row) } : null,
+      favicon: favicon?.startsWith("/") ? `${this.scope.origin}${favicon}` : favicon
     };
   }
 
-  async updateSite(patch: SiteSettingsPatch, fallbackName: string): Promise<SiteSettings> {
+  async updateSite(patch: SiteSettingsPatch): Promise<SiteSettings> {
     if(!this.scope.trusted || this.scope.session) require(this.config, this.scope.session, { action: "write", scope: "site" });
     const next = await this.storedSite();
     if(patch.name !== undefined) {
       const name = patch.name.trim();
       if(!name || name.length > 80) throw new HttpError(400, "The name needs 1-80 characters");
-      // Matching the default (the code's name, else the host) means "no override", so changing the config later still shows through.
-      if(name === (this.config.name ?? fallbackName)) delete next.name;
-      else next.name = name;
+      next.name = name;
     }
     if(patch.accent !== undefined) {
       if(patch.accent === null) delete next.accent;
@@ -1250,7 +1368,7 @@ export class Engine {
       SITE_KEY,
       JSON.stringify(next)
     ]);
-    return this.site(fallbackName);
+    return this.site();
   }
 
   async serveAsset(file: string, request: Request): Promise<Response> {

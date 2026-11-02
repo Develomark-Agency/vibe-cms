@@ -1,3 +1,4 @@
+import { field } from "vibe-cms/preview";
 import type { Block, InlineNode, Mark, RichTextDoc, RichTextOutput } from "./schema.ts";
 
 export interface RenderOptions {
@@ -28,22 +29,27 @@ function inline(nodes: InlineNode[], options: RenderOptions): string {
   }).join("");
 }
 
-/** Renders a rich text document as HTML. Images need the query's resolved asset (with `url`). */
+/**
+ * Renders a rich text document as HTML. Images need the query's resolved asset (with `url`). In an
+ * editor's draft preview, each paragraph, heading, list and image says which field it's from, for the
+ * preview's picker (`vibe-cms docs preview`).
+ */
 export function renderRichText(doc: RichTextDoc | RichTextOutput | null | undefined, options: RenderOptions = {}): string {
-  return ((doc ?? []) as Block[]).map((node: Block) => {
+  return ((doc ?? []) as Block[]).map((node: Block, i) => {
+    const at = doc ? field.attribute(doc as Block[], i) : "";
     switch(node.kind) {
-      case "p": return `<p>${inline(node.children, options)}</p>`;
-      case "h": return `<h${node.level}>${inline(node.children, options)}</h${node.level}>`;
-      case "quote": return `<blockquote>${inline(node.children, options)}</blockquote>`;
+      case "p": return `<p${at}>${inline(node.children, options)}</p>`;
+      case "h": return `<h${node.level}${at}>${inline(node.children, options)}</h${node.level}>`;
+      case "quote": return `<blockquote${at}>${inline(node.children, options)}</blockquote>`;
       case "list": {
         const tag = node.ordered ? "ol" : "ul";
-        return `<${tag}>${node.items.map(item => `<li>${inline(item, options)}</li>`).join("")}</${tag}>`;
+        return `<${tag}${at}>${node.items.map(item => `<li>${inline(item, options)}</li>`).join("")}</${tag}>`;
       }
       case "image": {
         const asset = node.asset as typeof node.asset & { url?: string, width?: number, height?: number };
         if(!asset.url) return "";
         const size = asset.width && asset.height ? ` width="${asset.width}" height="${asset.height}"` : "";
-        return `<figure><img src="${escape(asset.url)}" alt="${escape(asset.alt ?? "")}"${size} loading="lazy"></figure>`;
+        return `<figure${at}><img src="${escape(asset.url)}" alt="${escape(asset.alt ?? "")}"${size} loading="lazy"></figure>`;
       }
       default: return "";
     }

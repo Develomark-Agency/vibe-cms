@@ -12,7 +12,6 @@ import { Rating } from "./src/widgets/rating.ts";
 import { Slider } from "./src/widgets/slider.ts";
 
 export default defineConfig({
-  name: "Plugins example",
   // Transforming hooks run in this order; each sees the previous one's changes.
   plugins: [
     SlugsPlugin(),

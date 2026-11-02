@@ -2,7 +2,6 @@ import { defineConfig } from "vibe-cms";
 import v from "vibe-cms/schema";
 
 export default defineConfig({
-  name: "Astro example",
   collections: {
     post: { title: "title", preview: "/posts/{slug}" }
   },

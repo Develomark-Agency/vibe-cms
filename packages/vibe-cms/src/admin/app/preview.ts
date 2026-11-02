@@ -27,7 +27,7 @@ function loadSynced(): boolean {
   try {
     return localStorage.getItem(SYNC_KEY) === "1";
   } catch {
-    return false;
+    return true;
   }
 }
 

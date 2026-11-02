@@ -51,7 +51,7 @@ const schemaGet = defineAction({
 const documentsList = defineAction({
   name: "documents.list",
   title: "List documents",
-  description: "Documents of one type, drafts included, newest first unless sorted. `search` matches indexed text.",
+  description: "Documents of one type, drafts included, newest first unless sorted. `search` is full-text (each word matches as a prefix); with it, `total` counts matches, `all` counts the type, and `excerpts` maps document IDs to where the body matched.",
   input: z.object({
     type,
     locale,
@@ -67,6 +67,19 @@ const documentsList = defineAction({
       : undefined;
     return attempt(() => engine.listDocuments(input.type, { locale: input.locale, search: input.search, limit: input.limit ?? 50, offset: input.offset ?? 0, orderBy }));
   }
+});
+
+const documentsSearch = defineAction({
+  name: "documents.search",
+  title: "Search documents",
+  description: "Full-text search across every content type you can read, drafts included, best matches first. Words match as prefixes; titles rank above body text.",
+  input: z.object({
+    query: z.string().min(1).max(200),
+    locale,
+    limit: z.number().int().min(1).max(50).optional()
+  }),
+  annotations: { readOnly: true },
+  run: ({ engine }, input) => attempt(() => engine.searchDocuments(input))
 });
 
 const documentsGet = defineAction({
@@ -352,7 +365,7 @@ const siteGet = defineAction({
   description: "The site's name, accent colour and icon.",
   input: z.object({}),
   annotations: { readOnly: true },
-  run: ({ engine, host }) => attempt(() => engine.site(host))
+  run: ({ engine }) => attempt(() => engine.site())
 });
 
 const siteUpdate = defineAction({
@@ -365,7 +378,7 @@ const siteUpdate = defineAction({
     icon: z.string().nullable().optional().describe("Asset ID of an image")
   }),
   annotations: { idempotent: true },
-  run: ({ engine, host }, input) => attempt(() => engine.updateSite(input, host))
+  run: ({ engine }, input) => attempt(() => engine.updateSite(input))
 });
 
 /** Every built-in action, by name. Surfaces are generated from this list. */
@@ -373,6 +386,7 @@ export const coreActions = {
   [schemaList.name]: schemaList,
   [schemaGet.name]: schemaGet,
   [documentsList.name]: documentsList,
+  [documentsSearch.name]: documentsSearch,
   [documentsGet.name]: documentsGet,
   [documentsCreate.name]: documentsCreate,
   [documentsUpdate.name]: documentsUpdate,

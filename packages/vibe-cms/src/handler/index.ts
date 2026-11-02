@@ -1,9 +1,9 @@
-import { serializeConfig, type AnyConfig } from "../config.ts";
+import { collectionInfo, serializeConfig, type AnyConfig, type CollectionMarker } from "../config.ts";
 import type { PluginDescriptor } from "../descriptor.ts";
 import { createQueryClient, type QueryClient } from "../query/index.ts";
-import { handleRequest, readCookie, siteId } from "./api.ts";
+import { handleRequest, readCookie } from "./api.ts";
 import { can, verifySession } from "./auth.ts";
-import { migrate, sha256 } from "./db.ts";
+import { getOrCreateMeta, migrate, newId, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { PluginHost } from "./plugins.ts";
@@ -81,7 +81,7 @@ export interface VibeHandler<C extends AnyConfig, E> {
    * editor's draft preview it reads drafts instead, of the types that editor can read. See `vibe-cms docs queries`.
    */
   client(env: E): QueryClient<C>,
-  /** The site's name, accent and icon as editors set them in the editor's Site settings (asset URLs are root-relative). */
+  /** The site's ID, name, accent and icon as editors set them on the editor's Site page, and its detected favicon (URLs are root-relative). */
   site(env: E): Promise<SiteSettings>,
   /** The config it was created with. */
   config: C
@@ -126,7 +126,11 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   const prefix = (config.prefix ?? "/_vibe").replace(/\/$/, "");
   const dev = options.dev ?? readDevFlag();
   const states = new WeakMap<object, Promise<EngineState>>();
+  // Each collection's schema, for telling which collection an expanded reference in a preview's results is from.
+  const schemas = Object.fromEntries(Object.entries(config.schemas).map(([name, collection]) => [name, collectionInfo(collection as CollectionMarker).schema]));
   const schemaHash = sha256(JSON.stringify(serializeConfig(config).schemas)).then(h => h.slice(0, 16));
+  // The site's own fetch handler, once `vibe(handlers)` wraps it: lets the CMS read the site's pages in-process.
+  let siteHandler: WorkerHandlers<E>["fetch"];
 
   function state(env: E): Promise<EngineState> {
     const key = (env ?? {}) as object;
@@ -148,7 +152,9 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       db: bindings.db,
       storage: bindings.storage,
       schemaHash: await schemaHash,
-      prefix
+      prefix,
+      siteId: await getOrCreateMeta(bindings.db, "site_id", () => newId("site")),
+      siteFetch: (request: Request) => fetchSite(request, env)
     };
     const plugins = await PluginHost.load((config.plugins ?? []) as PluginDescriptor[], plugin => ({
       bindings: bindings[plugin.name],
@@ -159,6 +165,24 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     }));
     const full: EngineState = { ...partial, plugins };
     return full;
+  }
+
+  /**
+   * Static files from the assets binding, pages from the site's handler. Anything they don't have goes
+   * over the network, which is how a dev server's own static files (Vite's `public/`) are reached.
+   */
+  async function fetchSite(request: Request, env: E): Promise<Response> {
+    const assets = (options.bindings(env) as CoreBindings).assets ?? (env as { ASSETS?: Fetcher } | undefined)?.ASSETS;
+    const local = [
+      assets && new URL(request.url).pathname !== "/" ? () => assets.fetch(request.clone()) : null,
+      siteHandler ? () => siteHandler!(request.clone(), env, { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext) : null
+    ];
+    for(const attempt of local) {
+      const response = attempt ? await Promise.resolve().then(attempt).catch(() => null) : null;
+      if(response?.ok) return response;
+      await response?.body?.cancel();
+    }
+    return fetch(request);
   }
 
   function match(request: Request): boolean {
@@ -204,7 +228,7 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       const preview = previewScope.getStore();
       if(!preview) return engine.execute(queries);
       const results = await engine.execute(queries.map(query => (can(config, preview.session, { action: "read", type: query.type }) ? { ...query, drafts: true } : query)));
-      if(preview.pick) recordSources(preview.pick.sources, queries.map(query => query.type), results);
+      recordSources(schemas, preview.sources, queries.map(query => query.type), results);
       return results;
     });
   }
@@ -213,16 +237,18 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   async function previewSession(request: Request, env: E): Promise<(PreviewScope & { token: string }) | null> {
     const token = readCookie(request, PREVIEW_COOKIE);
     if(!token || !wantsPreview(request)) return null;
-    const session = await verifySession((await state(env)).db, token, siteId(config, new URL(request.url)));
+    const { db, siteId } = await state(env);
+    const session = await verifySession(db, token, siteId);
     if(!session) return null;
-    return { session, token, ...(request.headers.get(PICK_HEADER) === "1" ? { pick: { sources: new WeakMap() } } : {}) };
+    return { session, token, sources: new WeakMap(), ...(request.headers.get(PICK_HEADER) === "1" ? { pick: true } : {}) };
   }
 
   async function site(env: E): Promise<SiteSettings> {
-    return new Engine(await state(env), { origin: "", session: null, trusted: true }).site(config.id ?? "site");
+    return new Engine(await state(env), { origin: "", session: null, trusted: true }).site();
   }
 
   function vibe(handlers: WorkerHandlers<E> = {}): WorkerExport<E> {
+    siteHandler = handlers.fetch;
     return {
       async fetch(request, env, ctx) {
         if(match(request)) return handle(request, env, ctx);

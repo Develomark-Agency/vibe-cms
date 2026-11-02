@@ -17,7 +17,8 @@ export interface PickSource {
 }
 
 interface Scope {
-  pick?: { sources: WeakMap<object, PickSource> }
+  sources?: WeakMap<object, PickSource>,
+  pick?: boolean
 }
 
 function scope(): Scope | undefined {
@@ -30,12 +31,12 @@ function scope(): Scope | undefined {
  * on screen): `<Blocks>` then renders each block's variants, for the picker to tell where each field shows.
  */
 export function inPickRender(): boolean {
-  return scope()?.pick !== undefined;
+  return scope()?.pick === true;
 }
 
 /** Which document (and field) a list of blocks came from, if it came straight from a query. */
 export function pickSource(value: object): PickSource | null {
-  return scope()?.pick?.sources.get(value) ?? null;
+  return scope()?.sources?.get(value) ?? null;
 }
 
 /** Most variants a block gets; past this, fields are changed a list or an object at a time. */

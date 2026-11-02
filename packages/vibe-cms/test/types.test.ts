@@ -3,6 +3,7 @@ import { defineConfig, definePlugin, defineWidget, type Infer, type InferOutput 
 import { createHandler } from "../src/handler/index.ts";
 import { defineServer } from "../src/server/index.ts";
 import { image } from "../src/media/index.ts";
+import { field } from "../src/preview/index.ts";
 import v from "../src/schema/index.ts";
 import type { D1 } from "../src/handler/platform.ts";
 
@@ -155,4 +156,33 @@ test("action clients are typed from the action definitions", async () => {
   const results = createActionClient<Actions>(async () => Result.ok({ folders: [] }));
   const folders = await results.folders.list();
   if(folders.isErr()) assertType<Equal<typeof folders.error._tag, import("../src/actions/errors.ts").ActionErrorTag>>(true);
+});
+
+test("field() paths are checked against the value", () => {
+  type Post = { id: string, title: string, cover?: { url: string, alt?: string } | null, faq: Array<{ question: string, answer: string, links: Array<{ href: string }> }>, tags: string[], $meta: { locale: string } };
+  const post: Post = { id: "p", title: "Hi", cover: null, faq: [{ question: "Q", answer: "A", links: [] }], tags: ["x"], $meta: { locale: "en" } };
+  field(post);
+  field(post, "title");
+  field(post, "faq", 0, "answer");
+  field(post, "faq", 0, "links", 0, "href");
+  field(post, "cover", "url");
+  field(post.cover, "alt");
+  field(post, "tags", 0);
+  // @ts-expect-error not a field
+  field(post, "titel");
+  // @ts-expect-error not a field of an item
+  field(post, "faq", 0, "nope");
+  // @ts-expect-error strings have no fields
+  field(post, "title", "x");
+  // @ts-expect-error $meta isn't content
+  field(post, "$meta");
+  for(const [item, attr] of field.entries(post.faq)) {
+    assertType<Equal<typeof item, Post["faq"][number]>>(true);
+    attr("links", 0, "href");
+    // @ts-expect-error not a field of an item
+    attr("nope");
+  }
+  // Outside a preview: nothing to mark.
+  expect(field(post, "title")).toBeUndefined();
+  expect(field.entries(post.tags).map(([, attr, i]) => [attr(), i])).toEqual([[undefined, 0]]);
 });

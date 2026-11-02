@@ -69,10 +69,13 @@ function show(element: HTMLElement) {
   element.addEventListener("animationend", () => element.removeAttribute("data-revealed"), { once: true });
 }
 
-/** What the preview's picker reports: the block's document when the site got it from a query, the block, and the field in it. */
+/**
+ * What the preview's picker reports: the document and where in it (a block list's, or a `field()`
+ * mark's whole path, with no index), then the block's index and the field in the block.
+ */
 export interface PreviewPick {
   source: { type: string, id: string, locale: string, path: Path } | null,
-  index: number,
+  index: number | null,
   field: Path
 }
 
@@ -89,7 +92,7 @@ export function openPick(config: AnyConfig, readable: string[], editorPath: stri
     const locale = pick.source.locale && pick.source.locale !== config.defaultLocale ? `?locale=${encodeURIComponent(pick.source.locale)}` : "";
     if(open?.type !== type || open.id !== id) navigate(`/content/${type}/${id}${locale}`);
   } else {
-    if(!open || !readable.includes(open.type!)) return;
+    if(pick.index === null || !open || !readable.includes(open.type!)) return;
     ({ type, id } = open as { type: string, id: string });
     // The document's first list of blocks: a top-level array of a union.
     const shape = collectionSchema(config, type).shape;
@@ -104,5 +107,5 @@ export function openPick(config: AnyConfig, readable: string[], editorPath: stri
   // Leaving unsaved changes is the editor's call (it asks); if it stayed, there's nothing to show.
   const now = match("/content/:type/:id", location.pathname.replace(/^.*?\/content\//, "/content/"));
   if(now?.type !== type || now.id !== id) return;
-  revealField([...list, pick.index, ...pick.field]);
+  revealField([...list, ...(pick.index === null ? [] : [pick.index]), ...pick.field]);
 }

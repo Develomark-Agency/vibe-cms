@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckIcon, ImageIcon, RotateCcwIcon } from "lucide-react";
+import { CheckIcon, ImageIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { SiteSettings, SiteSettingsPatch } from "../../handler/engine.ts";
+import { SiteMark } from "../components/site-mark.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Label } from "../components/ui/label.tsx";
@@ -15,20 +16,8 @@ import { setAccent } from "./theme.ts";
 
 const SWATCHES = ["#e11d48", "#c026d3", "#7c3aed", "#2563eb", "#0891b2", "#059669", "#65a30d", "#ca8a04", "#57534e"];
 
-/** The site's icon, or its initial on the accent. Callers set size and radius. */
-export function SiteMark({ site, className }: { site: Pick<SiteSettings, "name" | "icon">, className?: string }) {
-  if(site.icon) {
-    return <img src={site.icon.url} alt="" className={cn("aspect-square shrink-0 object-cover shadow-(--shadow-raised)", className)} />;
-  }
-  return (
-    <div className={cn("flex aspect-square shrink-0 items-center justify-center raised-brand font-semibold", className)}>
-      {site.name.trim().charAt(0).toUpperCase() || "?"}
-    </div>
-  );
-}
-
 export function SiteSettingsPage() {
-  const { cms, config, site, session } = useAdmin();
+  const { cms, site, session } = useAdmin();
   const queryClient = useQueryClient();
   const [name, setName] = useState(site.name);
   const [accent, setAccentDraft] = useState<string | null>(site.accent);
@@ -81,11 +70,6 @@ export function SiteSettingsPage() {
         <div className="flex flex-col gap-2">
           <Label htmlFor="site-name">Name</Label>
           <Input id="site-name" value={name} maxLength={80} onChange={event => setName(event.target.value)} />
-          {config.name && name.trim() !== config.name && (
-            <button type="button" onClick={() => setName(config.name!)} className="flex w-fit items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-              <RotateCcwIcon className="size-3" /> Use the name from code: {config.name}
-            </button>
-          )}
         </div>
 
         <div className="flex flex-col gap-2">
@@ -120,7 +104,7 @@ export function SiteSettingsPage() {
         <div className="flex flex-col gap-2">
           <Label>Icon</Label>
           <div className="flex items-center gap-4">
-            <SiteMark site={{ name: name || site.name, icon }} className="size-14 rounded-[14px] text-xl" />
+            <SiteMark name={name || site.name} icon={icon?.url ?? site.favicon} className="size-14 rounded-[14px] text-xl" />
             {session.permissions.media.read ? (
               <div className="flex gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={() => setLibraryOpen(true)}><ImageIcon /> {icon ? "Change" : "Choose"}</Button>
@@ -130,7 +114,9 @@ export function SiteSettingsPage() {
               <p className="text-sm text-muted-foreground">Choosing an icon needs access to the media library.</p>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">A square image. Also used as the browser tab icon.</p>
+          <p className="text-xs text-muted-foreground">
+            A square image. Also used as the browser tab icon.{!icon && site.favicon && " Until you choose one, the site's own favicon is used."}
+          </p>
         </div>
       </section>
 

@@ -1,10 +1,13 @@
 import { createContext, useContext } from "react";
 import type { AnyConfig, Collection, CollectionSettings } from "../../config.ts";
-import type { AnySchema, ObjectSchema, OptionalSchema } from "../../schema/types.ts";
+import type { ObjectSchema } from "../../schema/types.ts";
 import type { AdminClient, AdminPlugin } from "../index.ts";
 import type { DocumentData } from "../../schema/types.ts";
 import type { SiteSettings } from "../../handler/engine.ts";
 import type { SessionState, SiteInfo } from "./client.ts";
+import { titleField } from "../../title.ts";
+
+export { titleField };
 
 export interface AdminContextValue {
   config: AnyConfig,
@@ -56,21 +59,6 @@ export function collectionLabel(config: AnyConfig, type: string, plural = true):
   if(settings.label) return settings.label;
   const label = humanize(type);
   return plural && !settings.singleton ? pluralize(label) : label;
-}
-
-function unwrap(schema: AnySchema): AnySchema {
-  return schema.type === "optional" ? (schema as OptionalSchema).inner : schema;
-}
-
-/** The field shown as a document's title: configured, or the first text field. */
-export function titleField(config: AnyConfig, type: string): string | undefined {
-  const settings = collectionSettings(config, type);
-  if(settings.title) return settings.title;
-  const shape = collectionSchema(config, type).shape;
-  for(const preferred of ["title", "name", "label", "heading"]) {
-    if(shape[preferred] && unwrap(shape[preferred]).type === "text") return preferred;
-  }
-  return Object.entries(shape).find(([, schema]) => unwrap(schema).type === "text")?.[0];
 }
 
 export function documentTitle(config: AnyConfig, type: string, doc: DocumentData | null | undefined): string {

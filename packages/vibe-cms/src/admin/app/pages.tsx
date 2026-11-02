@@ -11,6 +11,7 @@ import { cn } from "../lib/utils.ts";
 import { Delayed, useArrival } from "./delayed.tsx";
 import { collectionLabel, collectionSettings, documentTitle, formatDate, formatRelative, localeName, titleField, useAdmin } from "./context.tsx";
 import { EditorPage } from "./editor.tsx";
+import { Marked, markTitle } from "./marked.tsx";
 import { Link, navigate, useLocation } from "./router.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 
@@ -31,12 +32,17 @@ export function useDebounced<T>(value: T, ms = 200): T {
 }
 
 export function ListPage({ type }: { type: string }) {
-  const { cms, config, locale, session, plugins } = useAdmin();
+  const { cms, config, locale, session, plugins, site } = useAdmin();
   const { search: params } = useLocation();
   const [search, setSearch] = useState("");
   const query = useDebounced(search);
   const page = Number(params.get("page") ?? 0);
-  const sort = params.get("sort") ?? "-$updatedAt";
+  // A search ranks best matches first until a column is picked for it; clearing the search restores the table's sort.
+  const [searchSort, setSearchSort] = useState<string | null>(null);
+  useEffect(() => {
+    if(!query.trim()) setSearchSort(null);
+  }, [query]);
+  const sort = query.trim() ? searchSort ?? "" : params.get("sort") ?? "-$updatedAt";
   const settings = collectionSettings(config, type);
   const label = collectionLabel(config, type);
   const titleKey = titleField(config, type);
@@ -51,8 +57,8 @@ export function ListPage({ type }: { type: string }) {
   const arrival = useArrival(!list.isLoading);
 
   useEffect(() => {
-    document.title = `${label} · ${config.name ?? "Editor"}`;
-  }, [label]);
+    document.title = `${label} · ${site.name}`;
+  }, [label, site.name]);
 
   // Singletons open their one document directly.
   useEffect(() => {
@@ -71,7 +77,9 @@ export function ListPage({ type }: { type: string }) {
   }
 
   function sortBy(field: string) {
-    setParam("sort", sort === `-${field}` ? field : `-${field}`);
+    const next = sort === `-${field}` ? field : `-${field}`;
+    if(query.trim()) setSearchSort(next);
+    else setParam("sort", next);
   }
 
   function SortHead({ field, children, className }: { field: string, children: string, className?: string }) {
@@ -87,6 +95,9 @@ export function ListPage({ type }: { type: string }) {
   }
 
   const total = list.data?.total ?? 0;
+  const all = list.data?.all ?? 0;
+  // The search the shown rows answer, which lags typing while the next page loads.
+  const matched = list.isPlaceholderData ? "" : query.trim();
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 md:px-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -94,7 +105,9 @@ export function ListPage({ type }: { type: string }) {
           <p className="eyebrow" data-shared="eyebrow">Content{config.locales!.length > 1 ? ` · ${localeName(locale)}` : ""}</p>
           <h1 className="text-2xl font-medium tracking-[-0.025em]" data-shared="title">{label}</h1>
           <p className="text-sm text-muted-foreground" data-shared="summary">
-            {list.data ? `${total} ${total === 1 ? "document" : "documents"}` : " "}
+            {!list.data ? " " : query.trim()
+              ? `${total} of ${all} ${all === 1 ? "document" : "documents"}`
+              : `${total} ${total === 1 ? "document" : "documents"}`}
           </p>
         </div>
         <div className="flex items-center gap-2" data-shared="actions">
@@ -142,7 +155,10 @@ export function ListPage({ type }: { type: string }) {
               {list.data!.docs.map((doc, i) => (
                 <TableRow key={doc.id} style={staggerIndex(i)} className="cursor-pointer" onClick={() => navigate(`/content/${type}/${doc.id}`)}>
                   <TableCell className="max-w-0 pl-4 font-medium">
-                    <Link to={`/content/${type}/${doc.id}`} className="block truncate" onClick={e => e.stopPropagation()}>{documentTitle(config, type, doc)}</Link>
+                    <Link to={`/content/${type}/${doc.id}`} className="block truncate" onClick={e => e.stopPropagation()}>
+                      {matched ? <Marked text={markTitle(documentTitle(config, type, doc), matched)} /> : documentTitle(config, type, doc)}
+                    </Link>
+                    {matched && list.data!.excerpts[doc.id] && <span className="block truncate text-xs font-normal text-muted-foreground"><Marked text={list.data!.excerpts[doc.id]!} /></span>}
                     {doc.$meta.locale !== locale && <span className="text-xs font-normal text-muted-foreground">Not translated · showing {localeName(doc.$meta.locale)}</span>}
                   </TableCell>
                   <TableCell className="w-48">

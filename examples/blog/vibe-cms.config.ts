@@ -9,8 +9,6 @@ import { ColorPicker } from "./src/widgets/color-picker.ts";
 import { Features, Pricing, Testimonial } from "./src/blocks/definitions.ts";
 
 export default defineConfig({
-  id: "example-blog",
-  name: "Vibe Blog",
   locales: ["en", "fr"],
   defaultLocale: "en",
   plugins: [ViewsPlugin({ types: ["post"] })],

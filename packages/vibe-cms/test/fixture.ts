@@ -13,8 +13,6 @@ export const AuditPlugin = definePlugin()((options: { tag: string }) => ({
 }));
 
 export const config = defineConfig({
-  id: "test-site",
-  name: "Test site",
   locales: ["en", "fr"],
   auth: oidc({ issuer: "https://issuer.test", clientId: "panel" }),
   plugins: [AuditPlugin({ tag: "t" })],

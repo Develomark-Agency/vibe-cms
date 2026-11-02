@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import v, { validate } from "vibe-cms/schema";
 import { defineBlock, normalizePath, pageSchema, type BlockProps } from "../src/index.ts";
 import { html, raw, renderBlock, renderBlocks, url } from "../src/html.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { pickVariants } from "../src/preview.ts";
 import { Blocks } from "../src/react.tsx";
 
@@ -130,5 +131,37 @@ describe("picker variants", () => {
     expect(variants[3]!.path).toEqual(["items", 3]);
     expect(variants[3]!.block.items[3]).not.toEqual(block.items[3]);
     expect(variants[3]!.block.items[4]).toEqual(block.items[4]);
+  });
+});
+
+describe("picker marks", () => {
+  test("built-in blocks mark their fields in a preview, and only there", () => {
+    const block = { type: "faq" as const, heading: "Questions", items: [{ question: "Why?", answer: "Because" }] };
+    const source = { type: "page", id: "p1", locale: "en" };
+    const sources = new WeakMap<object, typeof source & { path: Array<string | number> }>([
+      [block, { ...source, path: ["blocks", 2] }],
+      [block.items, { ...source, path: ["blocks", 2, "items"] }]
+    ]);
+    function attr(path: Array<string | number>) {
+      return `data-vibe-field="${JSON.stringify({ ...source, path }).replace(/"/g, "&#34;")}"`;
+    }
+    // The preview scope as vibe-cms's handler keeps it, on a global symbol.
+    const scope = ((globalThis as Record<symbol, unknown>)[Symbol.for("vibe-cms.preview")] ??= new AsyncLocalStorage()) as AsyncLocalStorage<unknown>;
+    const marked = scope.run({ sources }, () => renderBlock(block));
+    expect(marked).toContain(`<h2 ${attr(["blocks", 2, "heading"])}>Questions</h2>`);
+    expect(marked).toContain(`<summary ${attr(["blocks", 2, "items", 0, "question"])}>Why?</summary>`);
+    expect(renderBlock(block)).not.toContain("data-vibe-field");
+  });
+
+  test("rich text marks each paragraph, heading, list and image with its place in the field", () => {
+    const body = [
+      { kind: "h" as const, level: 2, children: [{ kind: "text" as const, text: "Hi" }] },
+      { kind: "p" as const, children: [{ kind: "text" as const, text: "There" }] }
+    ];
+    const sources = new WeakMap([[body, { type: "post", id: "p1", locale: "en", path: ["body"] }]]);
+    const scope = ((globalThis as Record<symbol, unknown>)[Symbol.for("vibe-cms.preview")] ??= new AsyncLocalStorage()) as AsyncLocalStorage<unknown>;
+    const out = scope.run({ sources }, () => renderBlock({ type: "text", body }));
+    expect(out).toContain(`<p data-vibe-field="${JSON.stringify({ type: "post", id: "p1", locale: "en", path: ["body", 1] }).replace(/"/g, "&quot;")}">There</p>`);
+    expect(renderBlock({ type: "text", body })).not.toContain("data-vibe-field");
   });
 });

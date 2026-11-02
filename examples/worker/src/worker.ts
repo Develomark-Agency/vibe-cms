@@ -1,3 +1,4 @@
+import { field } from "vibe-cms/preview";
 import { eq } from "vibe-cms/query";
 import { post, vibe } from "./cms.ts";
 
@@ -9,14 +10,15 @@ export default vibe({
 
     if(pathname === "/") {
       const posts = await cms.query(post).findMany({ limit: 20 });
-      const items = posts.map(p => `<li><a href="/posts/${p.slug}">${escape(p.title)}</a></li>`).join("");
+      const items = posts.map(p => `<li${field.attribute(p, "title")}><a href="/posts/${p.slug}">${escape(p.title)}</a></li>`).join("");
       return html(`<h1>Posts</h1><ul>${items}</ul><p><a href="/_vibe/admin/">Editor</a></p>`);
     }
 
     const slug = /^\/posts\/([\w-]+)$/.exec(pathname)?.[1];
     if(slug) {
       const entry = await cms.query(post).findFirst({ where: eq(post.slug, slug) });
-      if(entry) return html(`<h1>${escape(entry.title)}</h1><p>${escape(entry.body)}</p>`);
+      // field.attribute marks what each element shows, for the editor's draft preview; it's "" outside it.
+      if(entry) return html(`<h1${field.attribute(entry, "title")}>${escape(entry.title)}</h1><p${field.attribute(entry, "body")}>${escape(entry.body)}</p>`);
     }
 
     return new Response("Not found", { status: 404 });

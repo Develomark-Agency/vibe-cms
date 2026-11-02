@@ -92,17 +92,21 @@ export { post };
 ```astro
 ---
 // examples/astro/src/pages/posts/[slug].astro
+import { field } from "vibe-cms/preview";
 import { eq } from "vibe-cms/query";
 import { cms, post } from "../../content.ts";
 
 const entry = await cms.query(post).findFirst({ where: eq(post.slug, Astro.params.slug!) });
 if(!entry) return new Response("Not found", { status: 404 });
 ---
-<h1>{entry.title}</h1>
-<p>{entry.body}</p>
+{/* data-vibe-field: clicking these in the editor's draft preview opens the field. Nothing outside it. */}
+<h1 data-vibe-field={field(entry, "title")}>{entry.title}</h1>
+<p data-vibe-field={field(entry, "body")}>{entry.body}</p>
 ```
 
 Results are typed from the config: `entry.title` is a `string`. Filters, ordering, references and locales: `vibe-cms docs queries`. For pages built from blocks, see `vibe-cms docs blocks`; for rich text, `vibe-cms docs rich-text`.
+
+`data-vibe-field={field(entry, "title")}` lets editors click the title in the draft preview to edit it; outside the preview it adds nothing. Blocks and rich text mark themselves. See `vibe-cms docs preview`.
 
 ## Types
 

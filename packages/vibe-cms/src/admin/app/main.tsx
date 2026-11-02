@@ -1,14 +1,15 @@
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
 import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon, AppWindowIcon } from "lucide-react";
-import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType } from "react";
+import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import Fuse from "fuse.js";
 import type { AnyConfig } from "../../config.ts";
 import { collectDescriptors, IMPL, loadLazy } from "../../descriptor.ts";
 import type { AdminPlugin, AdminPluginFactory, AdminClient } from "../index.ts";
 import { Button } from "../components/ui/button.tsx";
-import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "../components/ui/command.tsx";
+import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "../components/ui/command.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
 import { Kbd } from "../components/ui/kbd.tsx";
 import {
@@ -35,8 +36,10 @@ import { ErrorBoundary } from "./error-boundary.tsx";
 import { setAccent, setFavicon, startTheme, useTheme, type Theme } from "./theme.ts";
 import { Delayed } from "./delayed.tsx";
 import { MediaPage } from "./media.tsx";
-import { Dashboard, DocumentRoute, ListPage } from "./pages.tsx";
-import { SiteMark, SiteSettingsPage } from "./settings.tsx";
+import { Dashboard, DocumentRoute, ListPage, useDebounced } from "./pages.tsx";
+import { Marked, markTitle } from "./marked.tsx";
+import { SiteMark } from "../components/site-mark.tsx";
+import { SiteSettingsPage } from "./settings.tsx";
 import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
@@ -157,8 +160,8 @@ function Shell({ config, info, session, prefix, onSignOut }: {
 
   useEffect(() => {
     setAccent(site.accent ?? panelAccent);
-    setFavicon(site.icon?.url ?? null);
-  }, [site.accent, site.icon?.url, panelAccent]);
+    setFavicon(site.icon?.url ?? site.favicon);
+  }, [site.accent, site.icon?.url, site.favicon, panelAccent]);
   const { search } = useLocation();
   const locale = search.get("locale") && config.locales!.includes(search.get("locale")!) ? search.get("locale")! : config.defaultLocale!;
 
@@ -260,7 +263,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip={site.name}>
-                <SiteMark site={site} className="size-8 rounded-[10px] text-sm" />
+                <SiteMark name={site.name} icon={site.icon?.url ?? site.favicon} className="size-8 rounded-[10px] text-sm" />
                 <div className="grid flex-1 text-left leading-tight">
                   <span className="truncate text-sm font-semibold">{site.name}</span>
                   <span className="truncate text-xs text-muted-foreground">{location.host}</span>
@@ -476,79 +479,93 @@ function PluginPage({ children }: { children: React.ReactNode }) {
   return <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8">{children}</div>;
 }
 
+interface PaletteCommand {
+  id: string,
+  group: "Go to" | "Site" | "Create" | "Commands",
+  label: string,
+  icon?: ReactNode,
+  run(): void
+}
+
 function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boolean): void }) {
-  const { config, session, plugins, cms } = useAdmin();
+  const { config, session, plugins, cms, locale } = useAdmin();
   const [search, setSearch] = useState("");
   const types = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
-  const results = useQuery({
-    queryKey: ["palette", search],
-    enabled: open && search.length > 1,
-    queryFn: async () => (await Promise.all(types.map(async type => {
-      const { docs } = await cms.documents.list(type, { search, limit: 5 });
-      return docs.map(doc => ({ type, doc }));
-    }))).flat()
+  const query = search.trim();
+  const debounced = useDebounced(query, 120);
+  // Ranked on the server (SQLite FTS5); the previous results stay up while the next ones load.
+  const found = useQuery({
+    queryKey: ["palette", locale, debounced],
+    enabled: open && debounced.length > 0,
+    queryFn: () => cms.actions.documents.search({ query: debounced, locale, limit: 12 }),
+    placeholderData: keepPreviousData,
+    staleTime: 10_000
   });
+  useEffect(() => {
+    if(!open) setSearch("");
+  }, [open]);
   function go(to: string) {
     onOpenChange(false);
     navigate(to);
   }
+  const commands: PaletteCommand[] = [
+    { id: "dashboard", group: "Go to", label: "Dashboard", icon: <HomeIcon />, run: () => go("/") },
+    ...types.map((type): PaletteCommand => ({ id: `go-${type}`, group: "Go to", label: collectionLabel(config, type), icon: <Icon name={collectionSettings(config, type).icon} />, run: () => go(`/content/${type}`) })),
+    ...(session.permissions.media.read ? [{ id: "media", group: "Go to", label: "Media", icon: <ImageIcon />, run: () => go("/media") } satisfies PaletteCommand] : []),
+    ...(session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete) ? [{ id: "trash", group: "Go to", label: "Trash", icon: <Trash2Icon />, run: () => go("/trash") } satisfies PaletteCommand] : []),
+    { id: "preview", group: "Site", label: "Preview drafts", icon: <AppWindowIcon />, run: () => {
+      onOpenChange(false);
+      void showPreview(cms);
+    } },
+    ...types.filter(t => session.permissions.types[t]?.write && !collectionSettings(config, t).singleton).map((type): PaletteCommand => ({
+      id: `new-${type}`, group: "Create", label: `New ${collectionLabel(config, type, false).toLowerCase()}`, icon: <PlusIcon />, run: () => go(`/content/${type}/new`)
+    })),
+    ...plugins.commands.map((command): PaletteCommand => ({ id: `command-${command.id}`, group: "Commands", label: command.label, run: async () => {
+      onOpenChange(false);
+      try {
+        await command.run();
+      } catch (error) {
+        cms.toast((error as Error).message, { type: "error" });
+      }
+    } }))
+  ];
+  const matchedCommands = query ? new Fuse(commands, { keys: ["label"], threshold: 0.3, ignoreLocation: true }).search(query).map(r => r.item) : commands;
+  const documents = query ? found.data?.results ?? [] : [];
+  const searching = query.length > 0 && (query !== debounced || found.isFetching);
+  const groups = query
+    ? [matchedCommands.filter(c => c.group === "Go to"), "documents", matchedCommands.filter(c => c.group !== "Go to")] as const
+    : [...(["Go to", "Site", "Create", "Commands"] as const).map(group => commands.filter(c => c.group === group))];
+  const nothing = query && !searching && !documents.length && !matchedCommands.length;
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
-      {/* shadcn's CommandDialog doesn't provide the cmdk context itself. */}
-      <Command>
+      {/* shadcn's CommandDialog doesn't provide the cmdk context itself. Ranking is ours, so cmdk only keeps the order. */}
+      <Command shouldFilter={false}>
         <CommandInput placeholder="Search documents or jump to…" value={search} onValueChange={setSearch} />
         <CommandList>
-          <CommandEmpty>{results.isFetching ? "Searching…" : "No results."}</CommandEmpty>
-          {results.data && results.data.length > 0 && (
-            <CommandGroup heading="Documents">
-              {results.data.map(({ type, doc }) => (
-                <CommandItem key={doc.id} value={`doc-${doc.id}-${search}`} onSelect={() => go(`/content/${type}/${doc.id}`)}>
-                  <FileTextIcon />
-                  <span className="truncate">{documentTitle(config, type, doc)}</span>
-                  <CommandShortcut>{collectionLabel(config, type, false)}</CommandShortcut>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
-          <CommandGroup heading="Go to">
-            <CommandItem onSelect={() => go("/")}><HomeIcon /> Dashboard</CommandItem>
-            {types.map(type => (
-              <CommandItem key={type} onSelect={() => go(`/content/${type}`)}>
-                <Icon name={collectionSettings(config, type).icon} /> {collectionLabel(config, type)}
-              </CommandItem>
-            ))}
-            {session.permissions.media.read && <CommandItem onSelect={() => go("/media")}><ImageIcon /> Media</CommandItem>}
-            {(session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete)) && (
-              <CommandItem onSelect={() => go("/trash")}><Trash2Icon /> Trash</CommandItem>
-            )}
-          </CommandGroup>
-          <CommandGroup heading="Site">
-            <CommandItem onSelect={() => {
-              onOpenChange(false);
-              void showPreview(cms);
-            }}><AppWindowIcon /> Preview drafts</CommandItem>
-          </CommandGroup>
-          <CommandGroup heading="Create">
-            {types.filter(t => session.permissions.types[t]?.write && !collectionSettings(config, t).singleton).map(type => (
-              <CommandItem key={type} onSelect={() => go(`/content/${type}/new`)}>
-                <PlusIcon /> New {collectionLabel(config, type, false).toLowerCase()}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-          {plugins.commands.length > 0 && (
-            <CommandGroup heading="Commands">
-              {plugins.commands.map(command => (
-                <CommandItem key={command.id} onSelect={async () => {
-                  onOpenChange(false);
-                  try {
-                    await command.run();
-                  } catch (error) {
-                    cms.toast((error as Error).message, { type: "error" });
-                  }
-                }}>{command.label}</CommandItem>
-              ))}
-            </CommandGroup>
-          )}
+          {nothing && <div className="py-6 text-center text-sm text-muted-foreground">{found.isError ? "Search isn’t available right now." : `No results for “${query}”.`}</div>}
+          {groups.map((group, i) => {
+            if(group === "documents") return (documents.length > 0 || searching) && (
+              <CommandGroup key="documents" heading={<span className="flex items-center gap-2">Documents {searching && <Spinner className="size-3" />}</span>}>
+                {documents.map(doc => (
+                  <CommandItem key={`${doc.type}/${doc.id}`} value={`doc-${doc.type}-${doc.id}`} onSelect={() => go(`/content/${doc.type}/${doc.id}`)}>
+                    <FileTextIcon className={doc.excerpt ? "mt-0.5 self-start" : undefined} />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate"><Marked text={doc.title ? markTitle(doc.title, debounced) : "Untitled"} /></span>
+                      {doc.excerpt && <span className="truncate text-xs text-muted-foreground"><Marked text={doc.excerpt} /></span>}
+                    </span>
+                    <CommandShortcut className={doc.excerpt ? "self-start" : undefined}>{collectionLabel(config, doc.type, false)}</CommandShortcut>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            );
+            return group.length > 0 && (
+              <CommandGroup key={i} heading={query && group[0]!.group !== "Go to" ? "Actions" : group[0]!.group}>
+                {group.map(command => (
+                  <CommandItem key={command.id} value={command.id} onSelect={command.run}>{command.icon} {command.label}</CommandItem>
+                ))}
+              </CommandGroup>
+            );
+          })}
         </CommandList>
       </Command>
     </CommandDialog>

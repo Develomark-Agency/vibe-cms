@@ -1,4 +1,5 @@
 ---
+import { field } from "vibe-cms/preview";
 import { desc } from "vibe-cms/query";
 import Base from "../layouts/Base.astro";
 import { cms, localeFrom, post } from "../content.ts";
@@ -18,12 +19,12 @@ const posts = await cms.query(post).findMany({
   )}
   {posts.map(entry => (
     <article>
-      <h2><a href={`/posts/${entry.slug}${locale ? `?lang=${locale}` : ""}`}>{entry.title}</a></h2>
+      <h2 data-vibe-field={field(entry, "title")}><a href={`/posts/${entry.slug}${locale ? `?lang=${locale}` : ""}`}>{entry.title}</a></h2>
       <p>
-        <small>{new Date(entry.publishedAt).toLocaleDateString("en", { dateStyle: "long", timeZone: "UTC" })}{entry.author && ` · ${entry.author.name}`}</small>
+        <small><time data-vibe-field={field(entry, "publishedAt")}>{new Date(entry.publishedAt).toLocaleDateString("en", { dateStyle: "long", timeZone: "UTC" })}</time>{entry.author && <> · <span data-vibe-field={field(entry.author, "name")}>{entry.author.name}</span></>}</small>
       </p>
-      {entry.excerpt && <p>{entry.excerpt}</p>}
-      {entry.tags.map(tag => <span class="tag">{tag}</span>)}
+      {entry.excerpt && <p data-vibe-field={field(entry, "excerpt")}>{entry.excerpt}</p>}
+      {entry.tags.map((tag, i) => <span class="tag" data-vibe-field={field(entry, "tags", i)}>{tag}</span>)}
     </article>
   ))}
 </Base>

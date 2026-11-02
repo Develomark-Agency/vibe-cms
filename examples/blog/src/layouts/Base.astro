@@ -38,7 +38,7 @@ const { title, description, wide } = Astro.props;
     <div class:list={["wrap", { wide }]}>
       <header class="site">
         <a href="/">{site.title}</a>
-        {site.tagline && <p>{site.tagline}</p>}
+        {site.tagline && <p data-vibe-field={site.taglineField}>{site.tagline}</p>}
       </header>
       <slot />
     </div>

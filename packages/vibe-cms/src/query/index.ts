@@ -20,7 +20,9 @@ export type Condition =
   | { op: "null" | "notNull", path: string[] }
   | { op: "and" | "or", conditions: Condition[] }
   | { op: "not", condition: Condition }
-  | { op: "search", value: string };
+  | { op: "search", value: string }
+  /** Full-text match against the search index, best for editor search. Working copies (drafts) only. */
+  | { op: "fulltext", value: string };
 
 /** A sort key, from `asc()` / `desc()`. */
 export interface Order {

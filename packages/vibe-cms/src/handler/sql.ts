@@ -27,6 +27,17 @@ function bindable(value: unknown, path: readonly string[]): unknown {
   return value;
 }
 
+/** The words of a search, lowercased, as the index tokenizes them. */
+export function searchWords(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** An FTS5 query where every word must match as a prefix: `"furn"* "pad"*`. Never empty. */
+export function ftsQuery(text: string): string {
+  const words = searchWords(text);
+  return words.length ? words.map(word => `"${word}"*`).join(" ") : `""`;
+}
+
 export class SqlBuilder {
   readonly params: unknown[] = [];
 
@@ -80,6 +91,10 @@ export class SqlBuilder {
       }
       case "not":
         return `NOT (${this.where(condition.condition)})`;
+      case "fulltext":
+        // The index holds working copies, so it can't filter published content without revealing drafts.
+        if(this.dataColumn !== "c.draft") throw new HttpError(400, "Full-text search covers drafts only");
+        return `c.id IN (SELECT id FROM vibe_search WHERE vibe_search MATCH ${this.param(ftsQuery(condition.value))})`;
       case "search":
         return `${this.dataColumn} LIKE ${this.param(`%${condition.value.replace(/[%_]/g, "")}%`)}`;
       default:

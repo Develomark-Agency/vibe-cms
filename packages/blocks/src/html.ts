@@ -1,4 +1,5 @@
 import { renderRichText, type RenderOptions } from "@vibe-cms/rich-text/render";
+import { field } from "vibe-cms/preview";
 import type { BlockProps, AnyBlock } from "./define.ts";
 import { isBuiltInType, type BuiltInBlock, type BuiltInType } from "./builtins.ts";
 
@@ -56,14 +57,19 @@ export type HtmlComponent<B> = (block: B, context: RenderContext) => SafeHtml | 
 
 type Of<T extends BuiltInType> = BlockProps<Extract<BuiltInBlock, { type: T }>>;
 
+/** ` data-vibe-field="…"` for a `field()` mark, in a draft preview; nothing otherwise. */
+function mark(value: string | undefined): SafeHtml {
+  return raw(value === undefined ? "" : ` data-vibe-field="${escape(value)}"`);
+}
+
 function buttons(list: Of<"hero">["buttons"]): SafeHtml {
   if(list.length === 0) return html``;
-  return html`<div class="vb-buttons">${list.map(b => html`<a class="vb-button vb-button--${b.style}" href="${url(b.href)}">${b.label}</a>`)}</div>`;
+  return html`<div class="vb-buttons">${field.entries(list).map(([b, attr]) => html`<a class="vb-button vb-button--${b.style}" href="${url(b.href)}"${mark(attr("label"))}>${b.label}</a>`)}</div>`;
 }
 
 function img(image: { url: string, alt?: string, width?: number, height?: number, focal?: { x: number, y: number } | null }, sizes?: string): SafeHtml {
   const position = image.focal ? ` style="object-position: ${image.focal.x * 100}% ${image.focal.y * 100}%"` : "";
-  return html`<img src="${url(image.url)}" alt="${image.alt ?? ""}"${raw(image.width ? ` width="${image.width}"` : "")}${raw(image.height ? ` height="${image.height}"` : "")}${raw(sizes ? ` sizes="${escape(sizes)}"` : "")} loading="lazy" decoding="async"${raw(position)}>`;
+  return html`<img src="${url(image.url)}" alt="${image.alt ?? ""}"${raw(image.width ? ` width="${image.width}"` : "")}${raw(image.height ? ` height="${image.height}"` : "")}${raw(sizes ? ` sizes="${escape(sizes)}"` : "")} loading="lazy" decoding="async"${raw(position)}${mark(field(image))}>`;
 }
 
 /** YouTube and Vimeo links become privacy-friendly embeds; anything else plays in a <video>. */
@@ -83,36 +89,36 @@ function embedUrl(link: string): string | null {
 export const builtInRenderers: { [T in BuiltInType]: HtmlComponent<Of<T>> } = {
   hero: b => html`<section class="vb-block vb-hero vb-hero--${b.align}">
   <div class="vb-hero__content">
-    ${b.eyebrow && html`<p class="vb-eyebrow">${b.eyebrow}</p>`}
-    <h1>${b.heading}</h1>
-    ${b.text && html`<p class="vb-lead">${b.text}</p>`}
+    ${b.eyebrow && html`<p class="vb-eyebrow"${mark(field(b, "eyebrow"))}>${b.eyebrow}</p>`}
+    <h1${mark(field(b, "heading"))}>${b.heading}</h1>
+    ${b.text && html`<p class="vb-lead"${mark(field(b, "text"))}>${b.text}</p>`}
     ${buttons(b.buttons)}
   </div>
   ${b.image && html`<div class="vb-hero__media">${img(b.image, "(min-width: 60rem) 50vw, 100vw")}</div>`}
 </section>`,
-  text: (b, context) => html`<div class="vb-block vb-text">${raw(renderRichText(b.body, { linkTo: context.linkTo }))}</div>`,
-  image: b => html`<figure class="vb-block vb-image vb-image--${b.width}">${img(b.image)}${b.caption && html`<figcaption>${b.caption}</figcaption>`}</figure>`,
+  text: (b, context) => html`<div class="vb-block vb-text"${mark(field(b, "body"))}>${raw(renderRichText(b.body, { linkTo: context.linkTo }))}</div>`,
+  image: b => html`<figure class="vb-block vb-image vb-image--${b.width}">${img(b.image)}${b.caption && html`<figcaption${mark(field(b, "caption"))}>${b.caption}</figcaption>`}</figure>`,
   gallery: b => html`<div class="vb-block vb-gallery vb-gallery--${b.columns}">${b.images.map(image => html`<figure>${img(image, `(min-width: 60rem) ${Math.round(100 / Number(b.columns))}vw, 50vw`)}</figure>`)}</div>`,
   cta: b => html`<section class="vb-block vb-cta">
-  <h2>${b.heading}</h2>
-  ${b.text && html`<p>${b.text}</p>`}
+  <h2${mark(field(b, "heading"))}>${b.heading}</h2>
+  ${b.text && html`<p${mark(field(b, "text"))}>${b.text}</p>`}
   ${buttons(b.buttons)}
 </section>`,
   quote: b => html`<figure class="vb-block vb-quote">
-  <blockquote><p>${b.quote}</p></blockquote>
-  ${b.attribution && html`<figcaption>${b.attribution}${b.role && html`<span>, ${b.role}</span>`}</figcaption>`}
+  <blockquote${mark(field(b, "quote"))}><p>${b.quote}</p></blockquote>
+  ${b.attribution && html`<figcaption${mark(field(b, "attribution"))}>${b.attribution}${b.role && html`<span${mark(field(b, "role"))}>, ${b.role}</span>`}</figcaption>`}
 </figure>`,
   video: b => {
     const embed = embedUrl(b.url);
     const player = embed
-      ? html`<div class="vb-video__frame"><iframe src="${embed}" title="${b.caption ?? "Video"}" loading="lazy" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`
-      : html`<video src="${url(b.url)}" controls preload="metadata"></video>`;
-    return html`<figure class="vb-block vb-video">${player}${b.caption && html`<figcaption>${b.caption}</figcaption>`}</figure>`;
+      ? html`<div class="vb-video__frame"${mark(field(b, "url"))}><iframe src="${embed}" title="${b.caption ?? "Video"}" loading="lazy" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`
+      : html`<video src="${url(b.url)}" controls preload="metadata"${mark(field(b, "url"))}></video>`;
+    return html`<figure class="vb-block vb-video">${player}${b.caption && html`<figcaption${mark(field(b, "caption"))}>${b.caption}</figcaption>`}</figure>`;
   },
   // <details> opens and closes without any JavaScript.
   faq: b => html`<section class="vb-block vb-faq">
-  ${b.heading && html`<h2>${b.heading}</h2>`}
-  ${b.items.map(item => html`<details><summary>${item.question}</summary><p>${item.answer}</p></details>`)}
+  ${b.heading && html`<h2${mark(field(b, "heading"))}>${b.heading}</h2>`}
+  ${field.entries(b.items).map(([item, attr]) => html`<details${mark(attr())}><summary${mark(attr("question"))}>${item.question}</summary><p${mark(attr("answer"))}>${item.answer}</p></details>`)}
 </section>`,
   divider: b => (b.style === "line" ? html`<hr class="vb-block vb-divider">` : html`<div class="vb-block vb-spacer" aria-hidden="true"></div>`)
 };

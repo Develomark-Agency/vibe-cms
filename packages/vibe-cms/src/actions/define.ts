@@ -6,9 +6,7 @@ import { fromHttpError, InvalidInput, type ActionError } from "./errors.ts";
 
 /** What an action runs against: the engine for this request's session. */
 export interface ActionContext {
-  engine: Engine,
-  /** The request's hostname, the site's name when neither the code nor an editor set one. */
-  host: string
+  engine: Engine
 }
 
 /** Hints for surfaces that show or gate actions, matching MCP's tool annotations. */

@@ -68,13 +68,6 @@ export interface CollectionSettings<S = ObjectSchema<any>> {
 
 /** What `defineConfig` takes. See `vibe-cms docs config`. */
 export interface ConfigInput {
-  /** Stable site ID published in `/.well-known/vibe-cms`. Defaults to the host name. */
-  id?: string,
-  /**
-   * The site's default name, in the editor, the panel and `vibe.site(env)`. A name saved on the
-   * editor's Site page overrides it; saving this name there again clears the override.
-   */
-  name?: string,
   /** Content types: name → `v.object({…})`. `config.schemas.<name>` is then the collection you query. */
   schemas: Record<string, ObjectSchema<any>>,
   /** Editor settings per content type. */
@@ -301,8 +294,6 @@ export function serializeConfig(config: AnyConfig) {
     schemas[name] = collection["~collection"].schema;
   }
   return JSON.parse(JSON.stringify({
-    id: config.id,
-    name: config.name,
     locales: config.locales,
     defaultLocale: config.defaultLocale,
     collections: config.collections ?? {},
@@ -313,8 +304,6 @@ export function serializeConfig(config: AnyConfig) {
 
 /** The config as JSON, as the editor receives it. */
 export interface SerializedConfig {
-  id?: string,
-  name?: string,
   locales: string[],
   defaultLocale: string,
   collections: Record<string, CollectionSettings>,

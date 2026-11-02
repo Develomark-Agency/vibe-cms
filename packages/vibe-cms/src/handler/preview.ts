@@ -1,19 +1,22 @@
 // @ts-ignore: sites needn't have node's types; Workers provide the module under `nodejs_compat`, which vibe-cms requires.
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { AnySchema } from "../schema/types.ts";
 import type { Session } from "../server/index.ts";
 
 /**
  * Draft preview: the editor opens the site with a `vibe_preview` cookie, and every request carrying a
  * valid one renders inside this scope, where `vibe.client(env)` reads drafts. One store per isolate,
- * on a global symbol, so `@vibe-cms/blocks` can check it without importing node APIs into browser bundles.
+ * on a global symbol, so `@vibe-cms/blocks` and `field()` can check it without importing node APIs into browser bundles.
  */
 export interface PreviewScope {
   session: Session,
+  /** Where each array and object in this render's query results came from, for `field()` and `<Blocks>`. */
+  sources: WeakMap<object, PickSource>,
   /**
-   * The preview script's background render for the editor's picker (the `x-vibe-pick` header): never the
-   * page on screen. `<Blocks>` adds each block's variants, and `sources` says which document each list came from.
+   * The preview script's background render for the editor's picker (the `x-vibe-pick` header), never
+   * the page on screen: `<Blocks>` adds each block's variants.
    */
-  pick?: { sources: WeakMap<object, PickSource> }
+  pick?: boolean
 }
 
 /** Where a value in a query result lives: its document, and its path in the document's fields. */
@@ -26,22 +29,52 @@ export interface PickSource {
 
 export const PICK_HEADER = "x-vibe-pick";
 
+type Schema = AnySchema & { inner?: AnySchema, item?: AnySchema, shape?: Record<string, AnySchema>, options?: readonly AnySchema[], to?: string };
+
+/** The collection an expanded reference at `path` in a `type` document points to: a ref field's `to`, or a reverse `with` (`posts`). */
+function referenced(schemas: Record<string, AnySchema>, type: string, path: Array<string | number>): string | null {
+  let schema = schemas[type] as Schema | undefined;
+  for(const key of path) {
+    while(schema?.type === "optional") schema = schema.inner as Schema;
+    if(!schema) return null;
+    if(typeof key === "number") schema = schema.type === "array" ? schema.item as Schema : undefined;
+    else if(schema.type === "union") schema = schema.options!.map(option => (option as Schema).shape?.[key]).find(Boolean) as Schema | undefined;
+    else if(schema.type === "object") {
+      const field = schema.shape![key] as Schema | undefined;
+      if(!field && key.endsWith("s") && schemas[key.slice(0, -1)] && key === path.at(-1)) return key.slice(0, -1);
+      schema = field;
+    } else return null;
+  }
+  while(schema?.type === "optional") schema = schema.inner as Schema;
+  return schema?.type === "ref" && schema.to ? schema.to : null;
+}
+
 /**
- * Remembers where each array and object in query results came from, for `<Blocks>` to tell the picker.
- * Only documents at the top of a result: expanded references don't say their type.
+ * Remembers where each array and object in query results came from. Expanded references count as their
+ * own documents, when the schema says which collection they're from.
  */
-export function recordSources(sources: WeakMap<object, PickSource>, types: string[], results: unknown[]) {
+export function recordSources(schemas: Record<string, AnySchema>, sources: WeakMap<object, PickSource>, types: string[], results: unknown[]) {
+  type Doc = { id?: unknown, $meta?: { locale?: string } };
+  function document(doc: Doc, type: string) {
+    walk(doc, { type, id: doc.id as string, locale: doc.$meta?.locale ?? "" }, []);
+  }
   function walk(value: unknown, source: Omit<PickSource, "path">, path: Array<string | number>) {
     if(typeof value !== "object" || value === null) return;
-    if(path.length > 0 && !Array.isArray(value) && "$meta" in value) return;
+    if(path.length > 0 && !Array.isArray(value) && "$meta" in value) {
+      const doc = value as Doc;
+      // The last key naming the collection, for the list of a reverse `with` (`posts`, then an index).
+      const at = typeof path.at(-1) === "number" ? path.slice(0, -1) : path;
+      const type = referenced(schemas, source.type, at);
+      if(type && typeof doc.id === "string") document(doc, type);
+      return;
+    }
     sources.set(value, { ...source, path });
     if(Array.isArray(value)) value.forEach((item, i) => walk(item, source, [...path, i]));
     else for(const [key, item] of Object.entries(value)) if(key !== "$meta") walk(item, source, [...path, key]);
   }
   results.forEach((result, i) => {
-    for(const doc of (Array.isArray(result) ? result : [result]) as Array<{ id?: unknown, $meta?: { locale?: string } } | null>) {
-      if(typeof doc !== "object" || doc === null || typeof doc.id !== "string") continue;
-      walk(doc, { type: types[i]!, id: doc.id, locale: doc.$meta?.locale ?? "" }, []);
+    for(const doc of (Array.isArray(result) ? result : [result]) as Array<Doc | null>) {
+      if(typeof doc === "object" && doc !== null && typeof doc.id === "string") document(doc, types[i]!);
     }
   });
 }
@@ -311,8 +344,11 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
   function sameAttributes(a, b) {
     // Islands carry their props and a fresh id in attributes; what they render is compared instead.
     if(/^ASTRO-/.test(a.tagName)) return true;
-    if(a.attributes.length !== b.attributes.length) return false;
+    // Variants are copies, which field() can't mark: its marks aren't differences.
+    var ignore = (a.hasAttribute("data-vibe-field") ? 1 : 0) - (b.hasAttribute("data-vibe-field") ? 1 : 0);
+    if(a.attributes.length - b.attributes.length !== ignore) return false;
     for(var i = 0; i < a.attributes.length; i++) {
+      if(a.attributes[i].name === "data-vibe-field") continue;
       if(b.getAttribute(a.attributes[i].name) !== a.attributes[i].value) return false;
     }
     return true;
@@ -388,7 +424,36 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
   }
 
   // What's under the pointer: the block, and the field whose element most closely contains it.
+  // An element the site marked with field() (data-vibe-field): exactly which document and field it shows.
+  function marked(element) {
+    var el = element.closest("[data-vibe-field]");
+    if(!el) return null;
+    try {
+      var mark = JSON.parse(el.getAttribute("data-vibe-field"));
+      return mark && typeof mark.type === "string" && Array.isArray(mark.path) ? { element: el, mark: mark } : null;
+    } catch (e) { return null; }
+  }
+
+  // What's under the pointer: a field() mark, or what the block's variants say, whichever is closer to it.
   function target(element) {
+    var found = blockTarget(element);
+    var explicit = marked(element);
+    var inner = found && (found.element || found.roots[0]);
+    if(!explicit || (inner && inner !== explicit.element && explicit.element.contains(inner))) return found;
+    var result = { list: found ? found.list : 0, index: null, roots: [explicit.element], element: explicit.element, field: explicit.mark.path, entry: null, mark: explicit.mark };
+    // Inside a block from the same document: named after the block, like the block's own fields.
+    var source = found && found.entry && found.entry.source;
+    if(source && source.type === explicit.mark.type && source.id === explicit.mark.id && explicit.mark.path.length > source.path.length
+      && source.path.concat([found.index]).every(function(key, i) { return String(key) === String(explicit.mark.path[i]); })) {
+      result.entry = found.entry;
+      result.index = found.index;
+      result.field = explicit.mark.path.slice(source.path.length + 1);
+      result.mark = null;
+    }
+    return result;
+  }
+
+  function blockTarget(element) {
     var block = blockOf(element);
     if(!block || block.path[0] < 0) return null;
     // Markers are looked up once per page (and again if the page changed since).
@@ -420,7 +485,7 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
   }
 
   function label(found) {
-    var type = found.entry && found.entry.type ? humanize(found.entry.type) : "Block " + (found.index + 1);
+    var type = found.mark ? humanize(found.mark.type) : found.entry && found.entry.type ? humanize(found.entry.type) : "Block " + (found.index + 1);
     // The field, and the one in it for short paths (Plans › Monthly); deeper ones are inside a field's own value, like rich text.
     var keys = found.field.filter(function(key) { return typeof key === "string"; }).map(humanize);
     if(found.field.length > 3) keys = keys.slice(0, 1);
@@ -495,7 +560,9 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
     swallow(event);
     var found = event.target.nodeType === Node.ELEMENT_NODE ? target(event.target) : null;
     if(!found) return;
-    post({ type: "vibe:preview-pick", source: found.entry ? found.entry.source : null, list: found.list, index: found.index, field: found.field });
+    // A mark names its whole path; a block's field is under its list's source (or the open document's blocks).
+    if(found.mark) post({ type: "vibe:preview-pick", source: { type: found.mark.type, id: found.mark.id, locale: found.mark.locale, path: found.mark.path }, index: null, field: [] });
+    else post({ type: "vibe:preview-pick", source: found.entry ? found.entry.source : null, list: found.list, index: found.index, field: found.field });
   }
 
   function onPickKey(event) {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { permissionSummary } from "../src/handler/auth.ts";
 import { createHandler } from "../src/handler/index.ts";
 import { previewScope } from "../src/handler/preview.ts";
+import { field } from "../src/preview/index.ts";
 import { and, desc, eq, gt, has, inArray } from "../src/query/index.ts";
 import { defineConfig } from "../src/index.ts";
 import { image } from "../src/media/index.ts";
@@ -189,6 +190,67 @@ describe("documents", () => {
   });
 });
 
+describe("search", () => {
+  async function search(query: string) {
+    const { status, body } = await t.api("/api/actions/documents.search", { method: "POST", json: { query } });
+    expect(status).toBe(200);
+    return body.results as { id: string, type: string, title: string | null, excerpt: string | null }[];
+  }
+
+  test("ranks title matches first, finds body text, follows edits and deletes", async () => {
+    const faq = await createPost({ title: "Moving FAQ", slug: "faq", seo: { description: "Common questions before moving" } });
+    const boxes = await createPost({ title: "Box sizes", slug: "boxes", seo: { description: "Wardrobe boxes for hanging clothes, see the FAQ page" } });
+    await createAuthor("Ada Lovelace");
+
+    expect((await search("faq")).map(r => r.id)).toEqual([faq.id, boxes.id]);
+    // Words match as prefixes, across types, with an excerpt only when the title didn't match.
+    const [hit] = await search("wardr hang");
+    expect(hit).toMatchObject({ id: boxes.id, type: "post", title: "Box sizes" });
+    expect(hit!.excerpt).toContain("\u0001Wardrobe\u0002");
+    expect((await search("lovel")).map(r => r.type)).toEqual(["author"]);
+    // Slugs and option values aren't prose, so they aren't indexed.
+    expect(await search("boxes default")).toEqual([]);
+
+    await t.api(`/api/documents/post/${faq.id}`, { method: "PUT", json: { data: { ...faq.draft, title: "Questions" }, baseUpdatedAt: faq.updatedAt } });
+    expect((await search("faq")).map(r => r.id)).toEqual([boxes.id]);
+    await t.api(`/api/documents/post/${boxes.id}`, { method: "DELETE" });
+    expect(await search("wardrobe")).toEqual([]);
+  });
+
+  test("a list's search uses the index, counts the whole type and explains body matches", async () => {
+    const pads = await createPost({ title: "Rainy days", slug: "rain", seo: { description: "Furniture pads keep everything dry" } });
+    const floors = await createPost({ title: "Floors and furniture", slug: "floors" });
+    await createPost({ title: "Unrelated", slug: "other" });
+    const { body } = await t.api("/api/actions/documents.list", { method: "POST", json: { type: "post", search: "furn" } });
+    // Unsorted, best matches come first: a title hit outranks a body hit.
+    expect(body.docs.map((d: { id: string }) => d.id)).toEqual([floors.id, pads.id]);
+    expect(body).toMatchObject({ total: 2, all: 3 });
+    expect(Object.keys(body.excerpts)).toEqual([pads.id]);
+    expect(body.excerpts[pads.id]).toContain("\u0001Furniture\u0002 pads keep everything dry");
+    // Hidden fields (the audit plugin's derived `searchText`) aren't indexed.
+    expect(body.excerpts[pads.id]).not.toContain("t:");
+    const sorted = await t.api("/api/actions/documents.list", { method: "POST", json: { type: "post", search: "furn", sort: "title" } });
+    expect(sorted.body.docs.map((d: { title: string }) => d.title)).toEqual(["Floors and furniture", "Rainy days"]);
+    const hidden = await t.api("/api/actions/documents.list", { method: "POST", json: { type: "post", search: "t rainy" } });
+    expect(hidden.body.total).toBe(0);
+    // Punctuation alone isn't a search.
+    const blank = await t.api("/api/actions/documents.list", { method: "POST", json: { type: "post", search: "?!" } });
+    expect(blank.body.total).toBe(3);
+  });
+
+  test("full-text conditions refuse published content, which the index doesn't hold", async () => {
+    const client = t.vibe.client(t.env);
+    await expect((async () => await client.query(post).findMany({ where: { op: "fulltext", value: "x" } }))()).rejects.toThrow(/drafts only/);
+  });
+
+  test("needs a session, since it searches drafts", async () => {
+    await createAuthor("Grace Hopper");
+    t.setToken("");
+    const { status } = await t.api("/api/actions/documents.search", { method: "POST", json: { query: "grace" } });
+    expect(status).toBe(401);
+  });
+});
+
 describe("media", () => {
   test("upload, validation against the field, and resolution in queries", async () => {
     async function upload(bytes: Uint8Array<ArrayBuffer>, field?: string) {
@@ -342,8 +404,8 @@ describe("auth", () => {
     const response = await t.vibe.handle(new Request("https://site.test/.well-known/vibe-cms"), t.env, ctx);
     expect(await response.json()).toEqual({
       protocol: 1,
-      id: "test-site",
-      name: "Test site",
+      id: expect.stringMatching(/^site_[a-z0-9]{17}$/),
+      name: "site.test",
       accent: null,
       icon: null,
       auth: { issuer: "https://issuer.test", clientId: "panel" },
@@ -424,25 +486,43 @@ describe("draft preview", () => {
     expect(closed.headers.get("set-cookie")).toContain("vibe_preview=; Path=/; HttpOnly; Max-Age=0");
   });
 
-  test("the picker's background render says which document each value came from", async () => {
-    const created = await createPost({ title: "Hello", slug: "hello" });
+  test("previews know which document each value came from, for field() and the picker", async () => {
+    const ada = await createAuthor();
+    const created = await createPost({ title: "Hello", slug: "hello", author: ada, tags: ["news"] });
     const cookie = (await previewCookie()).headers.get("set-cookie")!.split(";")[0]!;
     const worker = t.vibe({
       fetch: async () => {
-        const found = await t.vibe.client(t.env).query(post).findFirst({ where: eq(post.slug, "hello") });
-        const sources = previewScope.getStore()?.pick?.sources;
-        return Response.json({ doc: found && sources?.get(found), tags: found && sources?.get(found.tags) });
+        const found = await t.vibe.client(t.env).query(post).findFirst({ where: eq(post.slug, "hello"), with: { author: true } });
+        const scope = previewScope.getStore();
+        return Response.json({
+          pick: scope?.pick ?? false,
+          title: field(found, "title") ?? null,
+          tag: field(found?.tags, 0) ?? null,
+          author: field(found?.author, "name") ?? null,
+          attribute: field.attribute(found, "title")
+        });
       }
     });
     const headers = { cookie, "sec-fetch-dest": "empty" };
-    const picked = await (await worker.fetch(new Request("https://site.test/posts/hello", { headers: { ...headers, "x-vibe-pick": "1" } }), t.env, ctx)).json();
-    expect(picked).toEqual({
-      doc: { type: "post", id: created.id, locale: "en", path: [] },
-      tags: { type: "post", id: created.id, locale: "en", path: ["tags"] }
+    function source(path: Array<string | number>) {
+      return JSON.stringify({ type: "post", id: created.id, locale: "en", path });
+    }
+    const preview = await (await worker.fetch(new Request("https://site.test/posts/hello", { headers }), t.env, ctx)).json();
+    expect(preview).toEqual({
+      pick: false,
+      title: source(["title"]),
+      tag: source(["tags", 0]),
+      // An expanded reference is its own document.
+      author: JSON.stringify({ type: "author", id: ada, locale: "en", path: ["name"] }),
+      // For HTML built as strings: escaped, with its leading space.
+      attribute: ` data-vibe-field="${source(["title"]).replace(/"/g, "&quot;")}"`
     });
-    // Only the picker's own requests, and only in preview.
-    expect(await (await worker.fetch(new Request("https://site.test/posts/hello", { headers }), t.env, ctx)).json()).toEqual({});
-    expect(await (await worker.fetch(new Request("https://site.test/posts/hello", { headers: { "x-vibe-pick": "1" } }), t.env, ctx)).json()).toEqual({});
+    // The picker's background render is marked as such.
+    const picked = await (await worker.fetch(new Request("https://site.test/posts/hello", { headers: { ...headers, "x-vibe-pick": "1" } }), t.env, ctx)).json();
+    expect(picked.pick).toBe(true);
+    // Outside a preview, nothing is marked, header or not.
+    const live = await (await worker.fetch(new Request("https://site.test/posts/hello", { headers: { "x-vibe-pick": "1" } }), t.env, ctx)).json();
+    expect(live).toEqual({ pick: false, title: null, tag: null, author: null, attribute: "" });
   });
 
   test("a pop-out opens a window page that frames the site", async () => {
@@ -521,47 +601,82 @@ describe("text files", () => {
 });
 
 describe("site settings", () => {
-  test("name, accent and icon override the config and show up everywhere", async () => {
-    expect((await t.api("/api/site")).body).toEqual({ name: "Test site", accent: null, icon: null });
+  test("name, accent and icon show up everywhere", async () => {
+    const { id } = (await t.api("/api/site")).body;
+    expect((await t.api("/api/site")).body).toEqual({ id, name: "site.test", accent: null, icon: null, favicon: null });
 
     const form = new FormData();
     form.set("file", new File([png(64, 64)], "logo.png", { type: "image/png" }));
     const logo = (await t.api("/api/assets", { method: "POST", body: form })).body;
 
     const saved = await t.api("/api/site", { method: "PATCH", json: { name: "  Acme  ", accent: "#2563EB", icon: logo.id } });
-    expect(saved.body).toEqual({ name: "Acme", accent: "#2563eb", icon: { id: logo.id, url: logo.url } });
+    expect(saved.body).toEqual({ id, name: "Acme", accent: "#2563eb", icon: { id: logo.id, url: logo.url }, favicon: null });
 
     const descriptor = await (await t.vibe.handle(new Request("https://site.test/.well-known/vibe-cms"), t.env, ctx)).json() as any;
-    expect(descriptor).toMatchObject({ name: "Acme", accent: "#2563eb", icon: logo.url });
+    expect(descriptor).toMatchObject({ id, name: "Acme", accent: "#2563eb", icon: logo.url });
     expect((await t.api("/api/info")).body.settings.name).toBe("Acme");
+    expect(await t.vibe.site(t.env)).toMatchObject({ id, name: "Acme" });
     expect((await t.vibe.site(t.env)).icon?.url).toBe(`/_vibe/media/${logo.id}.png`);
 
     // The icon can't be deleted out from under the site.
     expect((await t.api(`/api/assets/${logo.id}`, { method: "DELETE" })).status).toBe(409);
 
-    // The code's name again clears the override; null clears the rest.
-    const reset = await t.api("/api/site", { method: "PATCH", json: { name: "Test site", accent: null, icon: null } });
-    expect(reset.body).toEqual({ name: "Test site", accent: null, icon: null });
+    const reset = await t.api("/api/site", { method: "PATCH", json: { accent: null, icon: null } });
+    expect(reset.body).toEqual({ id, name: "Acme", accent: null, icon: null, favicon: null });
   });
 
-  test("saving the default name stores no override, so a name added to the config later shows through", async () => {
+  test("each database is its own site, with an ID made once and kept", async () => {
+    function site(env: { DB: ReturnType<typeof createD1> }) {
+      return createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { bindings: (e: typeof env) => ({ db: e.DB }) }).site(env);
+    }
     const env = { DB: createD1() };
-    function call(vibe: ReturnType<typeof createHandler>, path: string, method: string, json: unknown, token = "") {
-      return vibe.handle(
-        new Request(`https://site.test/_vibe/api/${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(json) }),
-        env,
-        ctx
-      );
+    const { id } = await site(env);
+    expect(id).toMatch(/^site_/);
+    expect((await site(env)).id).toBe(id);
+    expect((await site({ DB: createD1() })).id).not.toBe(id);
+  });
+
+  test("without an icon, the site's own favicon shows, found through its handler", async () => {
+    const env = { DB: createD1() };
+    const vibe = createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { bindings: (e: typeof env) => ({ db: e.DB }) });
+    let homes = 0;
+    const worker = vibe({
+      fetch: async request => {
+        const { pathname } = new URL(request.url);
+        if(pathname === "/") {
+          homes++;
+          // The page reads the site's settings while rendering; that mustn't look at the site again.
+          await vibe.site(env);
+          return new Response("<html><head><link rel=\"stylesheet\" href=\"/a.css\"><link rel=\"icon\" type=\"image/svg+xml\" href=\"/brand/mark.svg?v=2\"></head></html>", { headers: { "content-type": "text/html" } });
+        }
+        if(pathname === "/brand/mark.svg") return new Response("<svg/>", { headers: { "content-type": "image/svg+xml" } });
+        return new Response("Not found", { status: 404 });
+      }
+    });
+    async function descriptor() {
+      return await (await worker.fetch!(new Request("https://site.test/.well-known/vibe-cms"), env, ctx)).json() as any;
     }
-    async function patch(vibe: ReturnType<typeof createHandler>, json: unknown) {
-      const { token } = await (await call(vibe, "session", "POST", { dev: true })).json() as { token: string };
-      return call(vibe, "site", "PATCH", json, token);
+    expect((await descriptor()).icon).toBe("https://site.test/brand/mark.svg?v=2");
+    expect((await vibe.site(env)).favicon).toBe("/brand/mark.svg?v=2");
+    await descriptor();
+    // Looked at once, then kept for a day.
+    expect(homes).toBe(1);
+  });
+
+  test("falls back to /favicon.ico, and to nothing", async () => {
+    async function favicon(files: Record<string, string>) {
+      const env = { DB: createD1() };
+      const vibe = createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { bindings: (e: typeof env) => ({ db: e.DB }) });
+      const worker = vibe({
+        fetch: async request => {
+          const type = files[new URL(request.url).pathname];
+          return type ? new Response("x", { headers: { "content-type": type } }) : new Response("Not found", { status: 404, headers: { "content-type": "text/html" } });
+        }
+      });
+      return (await (await worker.fetch!(new Request("https://site.test/.well-known/vibe-cms"), env, ctx)).json() as any).icon;
     }
-    const unnamed = createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { dev: true, bindings: (e: typeof env) => ({ db: e.DB }) });
-    // Without a configured name the editor shows the host; saving it as is keeps it the default.
-    expect((await patch(unnamed, { name: "site.test" })).status).toBe(200);
-    const named = createHandler(defineConfig({ name: "Acme", schemas: { page: v.object({ title: v.text() }) } }), { dev: true, bindings: (e: typeof env) => ({ db: e.DB }) });
-    expect((await named.site(env)).name).toBe("Acme");
+    expect(await favicon({ "/": "text/html", "/favicon.ico": "image/x-icon" })).toBe("https://site.test/favicon.ico");
+    expect(await favicon({ "/": "text/html" })).toBe(null);
   });
 
   test("rejects bad values and needs the siteSettings permission", async () => {

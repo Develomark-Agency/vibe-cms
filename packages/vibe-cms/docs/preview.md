@@ -43,13 +43,49 @@ The page on screen is never changed. With the picker off, nothing runs and nothi
 
 Limits:
 
-- Only blocks rendered by `<Blocks>` from `@vibe-cms/blocks/astro`. Headers, footers and other content outside it can't be picked. The React `Blocks` doesn't support it yet.
+- Without `field()` marks (below), only blocks rendered by `<Blocks>` from `@vibe-cms/blocks/astro` can be picked. The React `Blocks` doesn't support it yet.
 - A field that doesn't change anything you can see (a boolean, a setting the component only uses for layout of things it renders the same) picks the block.
 - Where a block's list came from another query or was rebuilt (`blocks.filter(…)`), the picker can't tell its document, and opens the block in the open document's blocks instead, like **Show in preview**.
 - A variant whose changed value makes its component throw is skipped. So is a component that renders differently each time, as far as it does.
 - Rich text picks the whole rich text field.
+- The built-in blocks mark their own fields, so they're exact without the comparison.
 - Picking shows content as last saved. Unsaved edits that move blocks around may point a pick at the wrong block until you save.
 - The background render runs every block once per field. That's quick for normal pages (about 60 ms for a page of 11 blocks in development), but a page with many large blocks takes longer before fields can be picked. Blocks can be picked before then.
+
+### Marking fields yourself
+
+Anything else on a page (a post's title, its author, a header from site settings) can be picked once its element says which field it shows, with `field()` from `vibe-cms/preview`:
+
+```astro
+---
+import { field } from "vibe-cms/preview";
+
+const entry = await cms.query(post).findFirst({ where: eq(post.slug, slug), with: { author: true } });
+---
+<h1 data-vibe-field={field(entry, "title")}>{entry.title}</h1>
+<span data-vibe-field={field(entry.author, "name")}>{entry.author.name}</span>
+<div data-vibe-field={field(entry, "body")} set:html={renderRichText(entry.body)} />
+<p data-vibe-field={field(entry, "faq", 2, "answer")}>{entry.faq[2].answer}</p>
+```
+
+- The first argument is an object or array straight from `vibe.client(env)`: `field()` looks it up to find its document. An expanded reference (`entry.author`) is its own document, so clicking the name opens the author.
+- The rest is the path to the field, one argument per step, checked against the value's type: `field(entry, "titel")` doesn't compile. Leave it out to mark the whole object: `field(item)`.
+- Outside a preview, and for copies (`{ ...entry }`, items of `.map()` results you built yourself), it's `undefined`, which Astro and React leave out. The live site's HTML doesn't change, and the picker falls back to what it works out by itself.
+
+For lists you filter or sort, `field.entries()` keeps each item's place in the document:
+
+```astro
+{field.entries(entry.faq).filter(([item]) => item.featured).map(([item, attr]) => (
+  <details data-vibe-field={attr()}>
+    <summary data-vibe-field={attr("question")}>{item.question}</summary>
+    <p data-vibe-field={attr("answer")}>{item.answer}</p>
+  </details>
+))}
+```
+
+A plain `.map()` over the original list doesn't need it: `field(item, "answer")` works on each item.
+
+Marks win over the picker's own mapping where they're closer to what was clicked, and the other way round. Inside a block component, its props are a copy, so `field(Astro.props, …)` gives `undefined`. Blocks don't need marks: the picker maps them itself. Use `field()` in server-rendered markup: in a hydrated island it's `undefined` in the browser, and React would warn about the difference.
 
 ## Where it opens
 

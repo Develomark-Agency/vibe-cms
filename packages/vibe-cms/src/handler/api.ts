@@ -29,10 +29,6 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(data), { ...init, headers });
 }
 
-export function siteId(config: AnyConfig, url: URL): string {
-  return config.id ?? url.hostname;
-}
-
 export function readCookie(request: Request, name: string): string | undefined {
   const header = request.headers.get("cookie") ?? "";
   for(const part of header.split(/;\s*/)) {
@@ -46,7 +42,7 @@ async function readSession(request: Request, api: ApiContext, url: URL): Promise
   const header = request.headers.get("authorization");
   const token = header?.startsWith("Bearer ") ? header.slice(7) : readCookie(request, COOKIE);
   if(!token) return null;
-  return verifySession(api.state.db, token, siteId(api.state.config, url));
+  return verifySession(api.state.db, token, api.state.siteId);
 }
 
 async function body<T>(request: Request): Promise<T> {
@@ -68,10 +64,10 @@ function cors(response: Response): Response {
 export function descriptor(config: AnyConfig, url: URL, prefix: string, site: SiteSettings) {
   return {
     protocol: 1,
-    id: siteId(config, url),
+    id: site.id,
     name: site.name,
     accent: site.accent,
-    icon: site.icon?.url ?? null,
+    icon: site.icon?.url ?? site.favicon,
     auth: config.auth ? { issuer: config.auth.issuer, clientId: config.auth.clientId } : null,
     admin: `${url.origin}${prefix}/admin`
   };
@@ -82,7 +78,7 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
   const url = new URL(request.url);
   const { config, prefix } = api.state;
   if(url.pathname === "/.well-known/vibe-cms") {
-    const site = await new Engine(api.state, { origin: url.origin, session: null, trusted: false }).site(url.hostname);
+    const site = await new Engine(api.state, { origin: url.origin, session: null, trusted: false, ctx: api.ctx }).site();
     return cors(json(descriptor(config, url, prefix, site), { headers: { "cache-control": "public, max-age=60" } }));
   }
   const path = url.pathname.slice(prefix.length) || "/";
@@ -124,7 +120,7 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
         );
       }
       const scoped = new Engine(api.state, { origin: url.origin, session: agent, trusted: false, ctx: api.ctx });
-      return await handleMcp(request, { engine: scoped, host: url.hostname });
+      return await handleMcp(request, { engine: scoped });
     }
     const named = /^\/actions\/([\w.-]+)$/.exec(route);
     if(named) {
@@ -157,7 +153,7 @@ async function editorRoute(
   let m: RegExpExecArray | null;
 
   if(route === "/info" && method === "GET") {
-    const site = await engine.site(url.hostname);
+    const site = await engine.site();
     return json({
       ...serializeConfig(config),
       prefix: api.state.prefix,
@@ -189,7 +185,7 @@ async function editorRoute(
       } else {
         throw new HttpError(400, "Expected a code");
       }
-      const { token, expiresAt } = await issueSession(db, next, siteId(config, url), url.origin);
+      const { token, expiresAt } = await issueSession(db, next, api.state.siteId, url.origin);
       const headers = new Headers();
       if(input.cookie) {
         const secure = url.protocol === "https:" ? "; Secure" : "";
@@ -235,7 +231,7 @@ async function editorRoute(
       query[key] = values.length > 1 ? values : values[0]!;
     }
     const input = { ...fromText(action.input, query), ...await restBody(request, entry, action.input), ...fromText(action.input, params) };
-    const result = await runAction(action, { engine, host: url.hostname }, input);
+    const result = await runAction(action, { engine }, input);
     return result.isOk() ? json(result.value, { status: entry.status ?? 200 }) : errorResponse(result.error);
   }
 
@@ -326,7 +322,7 @@ async function actionRoute(request: Request, engine: Engine, url: URL, name: str
   if(!action) throw new HttpError(404, `No action "${name}"`);
   const type = request.headers.get("content-type") ?? "";
   const input = type.includes("multipart/form-data") ? fromText(action.input, formValues(await request.formData())) : filesFromJson(action, await jsonBody(request));
-  const result = await runAction(action, { engine, host: url.hostname }, input);
+  const result = await runAction(action, { engine }, input);
   return result.isOk() ? json(result.value) : errorResponse(result.error);
 }
 
@@ -349,11 +345,11 @@ function redirect(url: URL, path: string, cookie: string): Response {
  * page, or with `window=1` the pop-out's window page around it.
  */
 async function startPreview(api: ApiContext, url: URL): Promise<Response> {
-  const { config, db } = api.state;
+  const { db } = api.state;
   const code = url.searchParams.get("code");
   if(!code) throw new HttpError(400, "Expected a code");
   const session = await consumeCode(db, code);
-  const { token, expiresAt } = await issueSession(db, session, siteId(config, url), url.origin);
+  const { token, expiresAt } = await issueSession(db, session, api.state.siteId, url.origin);
   const cookie = previewCookie(token, Math.min(PREVIEW_TTL, expiresAt - Math.floor(Date.now() / 1000)), url.protocol === "https:");
   const path = safePath(url.searchParams.get("path"));
   return redirect(url, url.searchParams.get("window") === "1" ? `${api.state.prefix}/preview/window?path=${encodeURIComponent(path)}` : path, cookie);

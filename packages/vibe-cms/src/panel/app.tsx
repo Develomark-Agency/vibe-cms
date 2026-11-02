@@ -45,6 +45,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../admin/components/ui/
 import { Toaster } from "../admin/components/ui/sonner.tsx";
 import { Spinner } from "../admin/components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../admin/components/ui/tooltip.tsx";
+import { SiteMark as SharedSiteMark } from "../admin/components/site-mark.tsx";
 import { cn } from "../admin/lib/utils.ts";
 import { ErrorBoundary } from "../admin/app/error-boundary.tsx";
 import type { EditorMessage, PanelMessage } from "../admin/app/session.ts";
@@ -99,21 +100,11 @@ function sortSites(sites: PanelSite[]): PanelSite[] {
   return [...sites].sort((a, b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name));
 }
 
-function initials(name: string) {
-  return name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
-}
-
-/** The site's own icon, else its initials on its accent (or a colour derived from its ID). */
+/** The shared mark at panel sizes; without an accent, a colour derived from the site's ID tells sites apart. */
 function SiteMark({ site, className }: { site: PanelSite, className?: string }) {
-  const base = "flex size-6 shrink-0 items-center justify-center rounded-[6px] text-[10px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.2),0_0_0_1px_rgb(0_0_0/0.08)]";
-  if(site.icon) return <img src={site.icon} alt="" className={cn(base, "object-cover", className)} />;
   let hue = 0;
   for(const char of site.id) hue = (hue * 31 + char.charCodeAt(0)) % 360;
-  return (
-    <span className={cn(base, className)} style={{ background: site.accent ?? `oklch(0.55 0.15 ${hue})` }}>
-      {initials(site.name)}
-    </span>
-  );
+  return <SharedSiteMark name={site.name} icon={site.icon} color={site.accent ?? `oklch(0.55 0.15 ${hue})`} className={cn("size-6 rounded-[6px] text-[10px]", className)} />;
 }
 
 /** The agency's logo, else the first letter of its name on the accent. */

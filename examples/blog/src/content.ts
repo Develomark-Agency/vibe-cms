@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { field } from "vibe-cms/preview";
 import config from "../vibe-cms.config.ts";
 import { vibe } from "./cms.ts";
 
@@ -16,5 +17,6 @@ export function localeFrom(url: URL): Locale | undefined {
 /** Name and accent from the editor's Site settings, tagline from the homepage content. */
 export async function siteSettings() {
   const [site, home] = await Promise.all([vibe.site(env), cms.query(homepage).findFirst()]);
-  return { title: site.name, accent: site.accent ?? "#c2410c", icon: site.icon?.url, tagline: home?.tagline };
+  // The tagline's mark for the preview's picker: the object it's on doesn't leave this function.
+  return { title: site.name, accent: site.accent ?? "#c2410c", icon: site.icon?.url, tagline: home?.tagline, taglineField: field(home, "tagline") };
 }

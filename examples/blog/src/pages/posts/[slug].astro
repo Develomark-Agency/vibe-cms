@@ -1,5 +1,6 @@
 ---
 import { renderRichText } from "@vibe-cms/rich-text";
+import { field } from "vibe-cms/preview";
 import { eq } from "vibe-cms/query";
 import Base from "../../layouts/Base.astro";
 import { cms, localeFrom, post } from "../../content.ts";
@@ -22,10 +23,11 @@ if(!entry) return new Response("Not found", { status: 404 });
         width={entry.cover.width}
         height={entry.cover.height}
         style={entry.cover.focal ? `object-position: ${entry.cover.focal.x * 100}% ${entry.cover.focal.y * 100}%` : undefined}
+        data-vibe-field={field(entry, "cover")}
       />
     )}
-    <h1>{entry.title}</h1>
-    <p><small>{entry.readingMinutes ? `${entry.readingMinutes} min read · ` : ""}{new Date(entry.publishedAt).toLocaleDateString("en", { dateStyle: "long", timeZone: "UTC" })}{entry.author && ` · ${entry.author.name}`}</small></p>
+    <h1 data-vibe-field={field(entry, "title")}>{entry.title}</h1>
+    <p><small>{entry.readingMinutes ? `${entry.readingMinutes} min read · ` : ""}<time data-vibe-field={field(entry, "publishedAt")}>{new Date(entry.publishedAt).toLocaleDateString("en", { dateStyle: "long", timeZone: "UTC" })}</time>{entry.author && <> · <span data-vibe-field={field(entry.author, "name")}>{entry.author.name}</span></>}</small></p>
     <Fragment set:html={renderRichText(entry.body, { linkTo: ref => `/${ref.type}s/${ref.id}` })} />
   </article>
   <p><a href="/">← All posts</a></p>
