@@ -1,5 +1,5 @@
 import { animate, motion, useDragControls, useMotionValue, useMotionValueEvent, type PanInfo } from "motion/react";
-import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, LinkIcon, MoreHorizontalIcon, RotateCwIcon, RotateCwSquareIcon, ScalingIcon, SmartphoneIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, LinkIcon, MoreHorizontalIcon, RotateCwIcon, RotateCwSquareIcon, ScalingIcon, SmartphoneIcon, SquareMousePointerIcon, XIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "../components/ui/button.tsx";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../components/ui/command.tsx";
@@ -17,7 +17,7 @@ import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
 import { DEVICES, matchesDevice, type Device } from "./devices.ts";
-import { closePreview, getPreview, popOutPreview, reloadPreview, setPreviewFrame, setPreviewSynced, subscribePreview } from "./preview.ts";
+import { closePreview, getPreview, popOutPreview, reloadPreview, setPreviewFrame, setPreviewPicking, setPreviewSynced, subscribePreview } from "./preview.ts";
 
 /** The big three newest first, as Playwright lists them; everyone else by name. */
 const GROUPS = (["Apple", "Google", "Samsung", "Other"] as const).map(maker => {
@@ -466,6 +466,15 @@ export function PreviewWindow() {
           </Tooltip>
         )}
         <ZoomControl scale={scale} zoom={layout.zoom} fixed={shape !== null} page={page} onChange={setZoom} />
+        <Tooltip>
+          <TooltipTrigger render={
+            <Button variant="ghost" size="icon-xs" aria-label="Pick in preview" aria-pressed={preview.picking} disabled={!preview.ready && !preview.picking}
+              className={cn(preview.picking && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary")} onClick={() => setPreviewPicking(!preview.picking)}>
+              <SquareMousePointerIcon />
+            </Button>
+          } />
+          <TooltipContent>{preview.picking ? "Stop picking (Esc in the preview)" : "Pick a block or field to edit"}</TooltipContent>
+        </Tooltip>
         {/* Always a menu, so the bar fits at a phone's width; reloading is rarely needed, since saves reload it. */}
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label="More"><MoreHorizontalIcon /></Button>} />

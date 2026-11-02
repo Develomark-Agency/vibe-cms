@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { permissionSummary } from "../src/handler/auth.ts";
 import { createHandler } from "../src/handler/index.ts";
+import { previewScope } from "../src/handler/preview.ts";
 import { and, desc, eq, gt, has, inArray } from "../src/query/index.ts";
 import { defineConfig } from "../src/index.ts";
 import { image } from "../src/media/index.ts";
@@ -421,6 +422,27 @@ describe("draft preview", () => {
     expect(exit.headers.get("set-cookie")).toContain("vibe_preview=; Path=/; HttpOnly; Max-Age=0");
     const closed = await t.vibe.handle(new Request("https://site.test/_vibe/api/preview", { method: "DELETE" }), t.env, ctx);
     expect(closed.headers.get("set-cookie")).toContain("vibe_preview=; Path=/; HttpOnly; Max-Age=0");
+  });
+
+  test("the picker's background render says which document each value came from", async () => {
+    const created = await createPost({ title: "Hello", slug: "hello" });
+    const cookie = (await previewCookie()).headers.get("set-cookie")!.split(";")[0]!;
+    const worker = t.vibe({
+      fetch: async () => {
+        const found = await t.vibe.client(t.env).query(post).findFirst({ where: eq(post.slug, "hello") });
+        const sources = previewScope.getStore()?.pick?.sources;
+        return Response.json({ doc: found && sources?.get(found), tags: found && sources?.get(found.tags) });
+      }
+    });
+    const headers = { cookie, "sec-fetch-dest": "empty" };
+    const picked = await (await worker.fetch(new Request("https://site.test/posts/hello", { headers: { ...headers, "x-vibe-pick": "1" } }), t.env, ctx)).json();
+    expect(picked).toEqual({
+      doc: { type: "post", id: created.id, locale: "en", path: [] },
+      tags: { type: "post", id: created.id, locale: "en", path: ["tags"] }
+    });
+    // Only the picker's own requests, and only in preview.
+    expect(await (await worker.fetch(new Request("https://site.test/posts/hello", { headers }), t.env, ctx)).json()).toEqual({});
+    expect(await (await worker.fetch(new Request("https://site.test/posts/hello", { headers: { "x-vibe-pick": "1" } }), t.env, ctx)).json()).toEqual({});
   });
 
   test("a pop-out opens a window page that frames the site", async () => {

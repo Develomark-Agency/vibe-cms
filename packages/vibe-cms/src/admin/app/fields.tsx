@@ -31,6 +31,7 @@ import { humanize, useAdmin } from "./context.tsx";
 import { setDragChip } from "./drag-chip.ts";
 import { navIcons } from "./icons.ts";
 import { focusPreviewBlock, getPreview, subscribePreview } from "./preview.ts";
+import { getReveal, subscribeReveal } from "./reveal.ts";
 import { AssetControl, RefControl } from "./pickers.tsx";
 import { Segmented } from "./segmented.tsx";
 
@@ -587,6 +588,14 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
   const simple = ["ref", "asset", "text", "number", "date", "enum"].includes(item.type);
   // A document's top-level blocks are what the site's <Blocks> renders, in this order.
   const previewing = useSyncExternalStore(subscribePreview, () => getPreview().ready) && variants !== null && path.length === 1;
+
+  // A field picked in the preview opens the card it's in.
+  const reveal = useSyncExternalStore(subscribeReveal, getReveal);
+  useEffect(() => {
+    if(!reveal || reveal.path.length <= path.length || !startsWith(reveal.path, path)) return;
+    const key = keys[Number(reveal.path[path.length])];
+    if(key && collapsed.has(key)) setCollapsed(prev => new Set([...prev].filter(k => k !== key)));
+  }, [reveal]);
 
   function add(next: JsonValue | undefined) {
     insert(items.length);

@@ -345,6 +345,20 @@ tbody.stagger > tr {
   from { opacity: 0; }
 }
 
+/* A field picked in the preview flashes once it's in view. */
+[data-revealed] {
+  border-radius: 10px;
+  animation: 1.6s ease-out vibe-reveal;
+}
+
+@keyframes vibe-reveal {
+  0%, 35% {
+    background: color-mix(in oklab, var(--primary) 6%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--primary) 6%, transparent), 0 0 0 7px color-mix(in oklab, var(--primary) 40%, transparent);
+  }
+  100% { box-shadow: 0 0 0 6px transparent, 0 0 0 7px transparent; }
+}
+
 /* --- Texture ------------------------------------------------------------------ */
 
 /* --- Material ----------------------------------------------------------------

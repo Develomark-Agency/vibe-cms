@@ -7,7 +7,7 @@ import { migrate, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { PluginHost } from "./plugins.ts";
-import { decoratePreview, PREVIEW_COOKIE, PREVIEW_TTL, previewCookie, previewScope, wantsPreview, type PreviewScope } from "./preview.ts";
+import { decoratePreview, PICK_HEADER, PREVIEW_COOKIE, PREVIEW_TTL, previewCookie, previewScope, recordSources, wantsPreview, type PreviewScope } from "./preview.ts";
 
 export type * from "./platform.ts";
 export { Engine, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
@@ -203,7 +203,9 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       const engine = new Engine(await state(env), { origin: "", session: null, trusted: true });
       const preview = previewScope.getStore();
       if(!preview) return engine.execute(queries);
-      return engine.execute(queries.map(query => (can(config, preview.session, { action: "read", type: query.type }) ? { ...query, drafts: true } : query)));
+      const results = await engine.execute(queries.map(query => (can(config, preview.session, { action: "read", type: query.type }) ? { ...query, drafts: true } : query)));
+      if(preview.pick) recordSources(preview.pick.sources, queries.map(query => query.type), results);
+      return results;
     });
   }
 
@@ -212,7 +214,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     const token = readCookie(request, PREVIEW_COOKIE);
     if(!token || !wantsPreview(request)) return null;
     const session = await verifySession((await state(env)).db, token, siteId(config, new URL(request.url)));
-    return session ? { session, token } : null;
+    if(!session) return null;
+    return { session, token, ...(request.headers.get(PICK_HEADER) === "1" ? { pick: { sources: new WeakMap() } } : {}) };
   }
 
   async function site(env: E): Promise<SiteSettings> {

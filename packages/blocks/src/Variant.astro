@@ -1,0 +1,16 @@
+---
+/*
+ * One of a block's variants, for the editor's picker (see Blocks.astro). Rendered to a string first, so a
+ * variant whose changed field breaks its component is left out instead of failing the page.
+ */
+interface Props {
+  path: string
+}
+
+const { path } = Astro.props;
+let markup: string | null = null;
+try {
+  markup = await Astro.slots.render("default");
+} catch {}
+---
+{markup !== null && <template data-vibe-path={path} set:html={markup} />}

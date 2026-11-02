@@ -9,7 +9,8 @@
 import type { AnyBlock } from "./define.ts";
 import type { AstroComponents } from "./astro.ts";
 import { renderBlock, type RenderContext } from "./html.ts";
-import { inPreview } from "./preview.ts";
+import { inPickRender, inPreview, pickSource, pickVariants } from "./preview.ts";
+import Variant from "./Variant.astro";
 
 interface Props<B extends AnyBlock = AnyBlock> extends RenderContext {
   blocks: readonly B[] | null | undefined,
@@ -20,6 +21,17 @@ const { blocks, components, linkTo } = Astro.props;
 const map = components as Record<string, any>;
 // In an editor's draft preview, comments mark where each block starts, so the editor can point at one.
 const marked = inPreview();
+// The picker's background render (never the page on screen) adds each block rendered again with each field changed.
+const picking = inPickRender();
+const source = picking && blocks ? pickSource(blocks) : null;
+function variants(block: AnyBlock) {
+  return [
+    { path: "@base", block },
+    // A second render of the same block: what differs between the two isn't any field's doing.
+    { path: "@noise", block },
+    ...pickVariants(block).map(variant => ({ path: JSON.stringify(variant.path), block: variant.block }))
+  ];
+}
 ---
 {(blocks ?? []).map((block, i) => {
   const Component = map[block.type];
@@ -27,6 +39,15 @@ const marked = inPreview();
     <>
       {marked && <Fragment set:html={`<!--vibe-block:${i}-->`} />}
       {Component ? <Component {...block} /> : <Fragment set:html={renderBlock(block, { linkTo })} />}
+      {picking && (
+        <template data-vibe-variants={i} data-vibe-type={block.type} data-vibe-source={source ? JSON.stringify(source) : undefined}>
+          {variants(block).map(variant => (
+            <Variant path={variant.path}>
+              {Component ? <Component {...variant.block} /> : <Fragment set:html={renderBlock(variant.block, { linkTo })} />}
+            </Variant>
+          ))}
+        </template>
+      )}
     </>
   );
 })}

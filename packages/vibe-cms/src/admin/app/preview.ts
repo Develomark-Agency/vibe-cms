@@ -16,7 +16,9 @@ export interface PreviewState {
   /** Bumped whenever the editor wants the window seen (opened, pointed at a page or a block), so a tucked one comes out. */
   reveals: number,
   /** Follows the editor: opening a document with a page on the site shows that page. Remembered per browser. */
-  synced: boolean
+  synced: boolean,
+  /** The picker is on: clicking in the preview opens that block or field here instead. */
+  picking: boolean
 }
 
 const SYNC_KEY = "vibe-cms:preview-sync";
@@ -29,7 +31,7 @@ function loadSynced(): boolean {
   }
 }
 
-let state: PreviewState = { open: false, src: null, path: null, ready: false, reveals: 0, synced: typeof window !== "undefined" && loadSynced() };
+let state: PreviewState = { open: false, src: null, path: null, ready: false, reveals: 0, synced: typeof window !== "undefined" && loadSynced(), picking: false };
 /** The site page of the document open in the editor, if it has one. */
 let editorPage: string | null = null;
 const listeners = new Set<() => void>();
@@ -112,7 +114,7 @@ export async function showPreview(cms: AdminClient, path?: string) {
 export function closePreview() {
   // The next window signs in again, in case this cookie expired meanwhile.
   signedIn = false;
-  set({ open: false, src: null, ready: false });
+  set({ open: false, src: null, ready: false, picking: false });
   // Pop-outs keep theirs (Exit on their badge clears it); it lapses within the hour regardless.
   for(const target of windows) {
     if("closed" in target && target.closed) windows.delete(target);
@@ -141,6 +143,19 @@ export function focusPreviewBlock(index: number) {
   set({ reveals: state.reveals + 1 });
 }
 
+/** Turns the picker on or off; each page the window loads is told again (see the message listener). */
+export function setPreviewPicking(picking: boolean) {
+  set({ picking });
+  frame?.postMessage({ type: "vibe:preview-pick-mode", on: picking }, location.origin);
+}
+
+let pickHandler: ((pick: unknown) => void) | null = null;
+
+/** Who opens what the picker picks (the editor's layout, which can navigate). */
+export function onPreviewPick(handler: ((pick: unknown) => void) | null) {
+  pickHandler = handler;
+}
+
 let pending: ReturnType<typeof setTimeout> | undefined;
 const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("vibe-cms:preview");
 
@@ -160,16 +175,20 @@ export function notifyPreview() {
 if(typeof window !== "undefined") {
   window.addEventListener("message", event => {
     if(event.origin !== location.origin || !event.source) return;
-    const message = event.data as { type?: string, path?: string, shift?: boolean } | null;
+    const message = event.data as { type?: string, path?: string, shift?: boolean, on?: boolean } | null;
     if(message?.type === "vibe:preview-ready") {
       if(event.source === frame) {
         signedIn = true;
         set({ path: typeof message.path === "string" ? message.path : null, ready: true });
+        if(state.picking) frame?.postMessage({ type: "vibe:preview-pick-mode", on: true }, location.origin);
       } else {
         // A pop-out, maybe from before this editor reloaded.
         windows.add(event.source);
       }
     }
+    if(message?.type === "vibe:preview-pick") pickHandler?.(message);
+    // Escape pressed in the preview turns the picker off.
+    if(message?.type === "vibe:preview-pick-mode" && event.source === frame) set({ picking: Boolean(message.on) });
     // ⌘S pressed inside a preview: replay it here, where the editor listens.
     if(message?.type === "vibe:preview-key") {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true, shiftKey: Boolean(message.shift), cancelable: true }));

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import v, { validate } from "vibe-cms/schema";
 import { defineBlock, normalizePath, pageSchema, type BlockProps } from "../src/index.ts";
 import { html, raw, renderBlock, renderBlocks, url } from "../src/html.ts";
+import { pickVariants } from "../src/preview.ts";
 import { Blocks } from "../src/react.tsx";
 
 const Testimonial = defineBlock({
@@ -106,5 +107,28 @@ describe("react", () => {
     createElement(Blocks<Page>, { blocks, components: { testimonial: Quote } });
     // @ts-expect-error a component for the wrong block
     createElement(Blocks<Page>, { blocks, components: { testimonial: (props: { other: number }) => props.other } });
+  });
+});
+
+describe("picker variants", () => {
+  test("one variant per text or number, each changing only that one", () => {
+    const block = { type: "pricing", heading: "Plans", plans: [{ name: "Pro", monthly: 9, highlighted: true, id: "p1" }] };
+    const variants = pickVariants(block);
+    expect(variants.map(v => v.path)).toEqual([["heading"], ["plans", 0, "name"], ["plans", 0, "monthly"]]);
+    expect(variants[0]!.block.heading).not.toBe("Plans");
+    expect(variants[0]!.block.plans[0]!.name).toBe("Pro");
+    expect(variants[2]!.block.plans[0]!.monthly).toBe(10);
+    // The discriminator, ids and booleans stay put, and the original isn't touched.
+    expect(variants.every(v => v.block.type === "pricing" && v.block.plans[0]!.id === "p1" && v.block.plans[0]!.highlighted)).toBe(true);
+    expect(block.heading).toBe("Plans");
+  });
+
+  test("large blocks change a list item at a time", () => {
+    const block = { type: "faq", items: Array.from({ length: 20 }, (_, i) => ({ question: `Q${i}`, answer: `A${i}` })) };
+    const variants = pickVariants(block);
+    expect(variants).toHaveLength(20);
+    expect(variants[3]!.path).toEqual(["items", 3]);
+    expect(variants[3]!.block.items[3]).not.toEqual(block.items[3]);
+    expect(variants[3]!.block.items[4]).toEqual(block.items[4]);
   });
 });

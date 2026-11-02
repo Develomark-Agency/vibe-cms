@@ -39,7 +39,8 @@ import { Dashboard, DocumentRoute, ListPage } from "./pages.tsx";
 import { SiteMark, SiteSettingsPage } from "./settings.tsx";
 import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
-import { closePreview, getPreview, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
+import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
+import { openPick, type PreviewPick } from "./reveal.ts";
 import { PreviewWindow } from "./preview-window.tsx";
 import { embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 
@@ -190,6 +191,13 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   const [theme, setTheme] = useTheme();
   const previewOpen = useSyncExternalStore(subscribePreview, () => getPreview().open);
   useNavigationSync();
+
+  // The preview's picker: a click there opens that block or field here.
+  const readable = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
+  useEffect(() => {
+    onPreviewPick(pick => openPick(config, readable, path, pick as PreviewPick));
+    return () => onPreviewPick(null);
+  }, [config, path, readable.join()]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {

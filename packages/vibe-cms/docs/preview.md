@@ -29,6 +29,28 @@ if(!isPreview()) await cache.put(request, response.clone());
 
 In preview, `<Blocks>` from `@vibe-cms/blocks/astro` marks where each block starts with an HTML comment (`<!--vibe-block:N-->`). Each block in the editor then has **Show in preview**, which scrolls the preview to that block and outlines it. The block is shown as last saved. The markers only exist in preview responses. The React `Blocks` doesn't add them yet.
 
+### Picking in the preview
+
+The pointer button in the preview's title bar turns on the picker. Hovering the page outlines the block or field under the pointer and names it ("Pricing › Monthly"). Clicking opens it in the editor: the right document (even from another page of the editor), the block's card (opened if it was collapsed), and the field, which scrolls into view, takes focus and flashes. Clicks on the page do nothing else while picking. Escape in the preview, or the button again, turns it off. It stays on as the preview reloads after saves.
+
+Components need nothing for this. Turning the picker on makes one extra request for the page in the background, with an `x-vibe-pick: 1` header, and reads it without showing it:
+
+- `<Blocks>` renders each block again for each of its text and number fields, with that field changed (`Ж` in front of text, numbers plus one), into `<template>` elements. Booleans, `type`, `kind` and `id` stay as they are. Past 30 fields, a block's variants change a list item or an object at a time.
+- The preview script compares each variant with the block as rendered. Whatever changed shows that field, however the component transforms it: uppercased, truncated, joined with other text, used in a class or a URL. A render that differs between two unchanged copies (random ids, timestamps) is ignored.
+- `vibe.client(env)` notes which document each value in a query result came from, so `<Blocks>` can say which document its blocks belong to.
+
+The page on screen is never changed. With the picker off, nothing runs and nothing extra is rendered.
+
+Limits:
+
+- Only blocks rendered by `<Blocks>` from `@vibe-cms/blocks/astro`. Headers, footers and other content outside it can't be picked. The React `Blocks` doesn't support it yet.
+- A field that doesn't change anything you can see (a boolean, a setting the component only uses for layout of things it renders the same) picks the block.
+- Where a block's list came from another query or was rebuilt (`blocks.filter(…)`), the picker can't tell its document, and opens the block in the open document's blocks instead, like **Show in preview**.
+- A variant whose changed value makes its component throw is skipped. So is a component that renders differently each time, as far as it does.
+- Rich text picks the whole rich text field.
+- Picking shows content as last saved. Unsaved edits that move blocks around may point a pick at the wrong block until you save.
+- The background render runs every block once per field. That's quick for normal pages (about 60 ms for a page of 11 blocks in development), but a page with many large blocks takes longer before fields can be picked. Blocks can be picked before then.
+
 ## Where it opens
 
 - **Floating window**: drag it by its title bar and it settles into the nearest corner. Resize it from any edge or corner. It always stays on screen.
