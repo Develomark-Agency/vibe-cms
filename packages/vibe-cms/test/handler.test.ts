@@ -362,10 +362,10 @@ describe("draft preview", () => {
     });
   }
 
-  async function previewCookie(path = "/posts/hello") {
+  async function previewCookie(path = "/posts/hello", popOut = false) {
     const { status, body } = await t.api("/api/preview", { method: "POST" });
     expect(status).toBe(200);
-    const response = await t.vibe.handle(new Request(`https://site.test/_vibe/preview?code=${body.code}&path=${encodeURIComponent(path)}`), t.env, ctx);
+    const response = await t.vibe.handle(new Request(`https://site.test/_vibe/preview?code=${body.code}&path=${encodeURIComponent(path)}${popOut ? "&window=1" : ""}`), t.env, ctx);
     return response;
   }
 
@@ -373,7 +373,7 @@ describe("draft preview", () => {
     const response = await previewCookie();
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("https://site.test/posts/hello");
-    expect(response.headers.get("set-cookie")).toMatch(/^vibe_preview=[\w.-]+; Path=\/; HttpOnly; Max-Age=\d+; SameSite=None; Secure; Partitioned$/);
+    expect(response.headers.get("set-cookie")).toMatch(/^vibe_preview=[\w.-]+; Path=\/; HttpOnly; Max-Age=3600; SameSite=None; Secure; Partitioned$/);
 
     const offsite = await previewCookie("//evil.test/x");
     expect(offsite.headers.get("location")).toBe("https://site.test/");
@@ -392,11 +392,21 @@ describe("draft preview", () => {
     expect(await live.text()).toContain("<h1>Hello</h1>");
     expect(live.headers.get("cache-control")).toBeNull();
 
-    const preview = await worker.fetch(new Request("https://site.test/posts/hello", { headers: { cookie } }), t.env, ctx);
+    const preview = await worker.fetch(new Request("https://site.test/posts/hello", { headers: { cookie, "sec-fetch-dest": "iframe" } }), t.env, ctx);
     const html = await preview.text();
     expect(html).toContain("<h1>Draft title</h1>");
     expect(html).toContain("<script src=\"/_vibe/preview.js\" defer></script></body>");
     expect(preview.headers.get("cache-control")).toBe("no-store");
+    // Each preview page renews the cookie for another hour.
+    expect(preview.headers.get("set-cookie")).toMatch(/^vibe_preview=[\w.-]+; Path=\/; HttpOnly; Max-Age=3600;/);
+
+    // The same browser opening the site in a tab of its own sees the live site, cookie or not.
+    const tab = await worker.fetch(new Request("https://site.test/posts/hello", { headers: { cookie, "sec-fetch-dest": "document" } }), t.env, ctx);
+    expect(await tab.text()).toContain("<h1>Hello</h1>");
+    expect(tab.headers.get("set-cookie")).toBeNull();
+    // Browsers that don't say where a page loads still get the preview.
+    const older = await worker.fetch(new Request("https://site.test/posts/hello", { headers: { cookie } }), t.env, ctx);
+    expect(await older.text()).toContain("<h1>Draft title</h1>");
 
     // A forged or expired cookie is just a normal visit.
     const forged = await worker.fetch(new Request("https://site.test/posts/hello", { headers: { cookie: "vibe_preview=nope" } }), t.env, ctx);
@@ -409,6 +419,19 @@ describe("draft preview", () => {
 
     const exit = await t.vibe.handle(new Request("https://site.test/_vibe/preview/exit?path=/posts/hello"), t.env, ctx);
     expect(exit.headers.get("set-cookie")).toContain("vibe_preview=; Path=/; HttpOnly; Max-Age=0");
+    const closed = await t.vibe.handle(new Request("https://site.test/_vibe/api/preview", { method: "DELETE" }), t.env, ctx);
+    expect(closed.headers.get("set-cookie")).toContain("vibe_preview=; Path=/; HttpOnly; Max-Age=0");
+  });
+
+  test("a pop-out opens a window page that frames the site", async () => {
+    const response = await previewCookie("/posts/hello?x=<b>", true);
+    expect(response.headers.get("location")).toBe("https://site.test/_vibe/preview/window?path=%2Fposts%2Fhello%3Fx%3D%3Cb%3E");
+    const page = await t.vibe.handle(new Request(response.headers.get("location")!), t.env, ctx);
+    const html = await page.text();
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(html).toContain("<iframe id=\"frame\" title=\"Draft preview\" src=\"/posts/hello?x=&lt;b>\">");
+    const offsite = await t.vibe.handle(new Request("https://site.test/_vibe/preview/window?path=//evil.test"), t.env, ctx);
+    expect(await offsite.text()).toContain("src=\"/\"");
   });
 });
 

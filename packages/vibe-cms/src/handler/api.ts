@@ -11,7 +11,7 @@ import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import { handleMcp } from "./mcp.ts";
 import type { ExecutionContext, Fetcher } from "./platform.ts";
 import { matchRoute } from "./plugins.ts";
-import { previewCookie, previewScriptResponse, safePath } from "./preview.ts";
+import { PREVIEW_TTL, previewCookie, previewScriptResponse, previewWindowResponse, safePath } from "./preview.ts";
 
 export interface ApiContext {
   state: EngineState,
@@ -91,6 +91,7 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
     if(path === "/admin" || path.startsWith("/admin/")) return await serveAdmin(request, api, url);
     if(path === "/preview.js" && method === "GET") return previewScriptResponse(prefix);
     if(path === "/preview" && method === "GET") return await startPreview(api, url);
+    if(path === "/preview/window" && method === "GET") return previewWindowResponse(prefix, safePath(url.searchParams.get("path")));
     if(path === "/preview/exit" && method === "GET") {
       return redirect(url, safePath(url.searchParams.get("path")), previewCookie("", 0, url.protocol === "https:"));
     }
@@ -217,6 +218,10 @@ async function editorRoute(
     if(!session) throw new HttpError(401, "Sign in required");
     return json({ code: await createCode(db, session), expiresIn: 30 });
   }
+  if(route === "/preview" && method === "DELETE") {
+    // The editor closed its preview: the cookie goes with it (from the editor's own cookie jar, or partition).
+    return json({ ok: true }, { headers: { "set-cookie": previewCookie("", 0, url.protocol === "https:") } });
+  }
 
   if((m = /^\/trash\/([\w-]+)\/file$/.exec(route)) && method === "GET") return engine.trashFile(m[1]!);
 
@@ -339,15 +344,19 @@ function redirect(url: URL, path: string, cookie: string): Response {
   return new Response(null, { status: 302, headers: { location: new URL(path, url.origin).href, "set-cookie": cookie, "cache-control": "no-store" } });
 }
 
-/** `GET {prefix}/preview?code=…&path=/…`: trades the editor's code for a preview cookie, then opens the page. */
+/**
+ * `GET {prefix}/preview?code=…&path=/…`: trades the editor's code for a preview cookie, then opens the
+ * page, or with `window=1` the pop-out's window page around it.
+ */
 async function startPreview(api: ApiContext, url: URL): Promise<Response> {
   const { config, db } = api.state;
   const code = url.searchParams.get("code");
   if(!code) throw new HttpError(400, "Expected a code");
   const session = await consumeCode(db, code);
   const { token, expiresAt } = await issueSession(db, session, siteId(config, url), url.origin);
-  const cookie = previewCookie(token, expiresAt - Math.floor(Date.now() / 1000), url.protocol === "https:");
-  return redirect(url, safePath(url.searchParams.get("path")), cookie);
+  const cookie = previewCookie(token, Math.min(PREVIEW_TTL, expiresAt - Math.floor(Date.now() / 1000)), url.protocol === "https:");
+  const path = safePath(url.searchParams.get("path"));
+  return redirect(url, url.searchParams.get("window") === "1" ? `${api.state.prefix}/preview/window?path=${encodeURIComponent(path)}` : path, cookie);
 }
 
 /** The editor is static assets; deep links fall back to its index.html. */

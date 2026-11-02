@@ -62,10 +62,10 @@ export function setPreviewFrame(next: Window | null) {
   frame = next;
 }
 
-/** A URL that signs a new window into preview mode and lands on `path`. */
-async function handoff(path: string): Promise<string> {
+/** A URL that signs a new window into preview mode and lands on `path`; for a pop-out, in its window page. */
+async function handoff(path: string, popOut = false): Promise<string> {
   const { code } = await request<{ code: string }>(prefix, "/preview", { method: "POST" });
-  return `${prefix}/preview?code=${encodeURIComponent(code)}&path=${encodeURIComponent(path)}`;
+  return `${prefix}/preview?code=${encodeURIComponent(code)}&path=${encodeURIComponent(path)}${popOut ? "&window=1" : ""}`;
 }
 
 /** Points the open window at `path`: in place once it's signed in, else through a new handoff. */
@@ -113,6 +113,11 @@ export function closePreview() {
   // The next window signs in again, in case this cookie expired meanwhile.
   signedIn = false;
   set({ open: false, src: null, ready: false });
+  // Pop-outs keep theirs (Exit on their badge clears it); it lapses within the hour regardless.
+  for(const target of windows) {
+    if("closed" in target && target.closed) windows.delete(target);
+  }
+  if(windows.size === 0) void request(prefix, "/preview", { method: "DELETE" }).catch(() => {});
 }
 
 export function reloadPreview() {
@@ -124,7 +129,7 @@ export async function popOutPreview() {
   // Opened before the request, while the click still counts as a user gesture.
   const popup = window.open("", "vibe-cms-preview", "popup,width=1280,height=860");
   if(!popup) return false;
-  popup.location.href = await handoff(state.path ?? "/");
+  popup.location.href = await handoff(state.path ?? "/", true);
   windows.add(popup);
   closePreview();
   return true;

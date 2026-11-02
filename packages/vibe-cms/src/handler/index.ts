@@ -7,7 +7,7 @@ import { migrate, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { PluginHost } from "./plugins.ts";
-import { decoratePreview, PREVIEW_COOKIE, previewScope, type PreviewScope } from "./preview.ts";
+import { decoratePreview, PREVIEW_COOKIE, PREVIEW_TTL, previewCookie, previewScope, wantsPreview, type PreviewScope } from "./preview.ts";
 
 export type * from "./platform.ts";
 export { Engine, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
@@ -207,12 +207,12 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     });
   }
 
-  /** A preview cookie's session, if it's still valid. */
-  async function previewSession(request: Request, env: E): Promise<PreviewScope | null> {
+  /** A preview cookie's session, if it's still valid and the request is a framed preview page (`wantsPreview`). */
+  async function previewSession(request: Request, env: E): Promise<(PreviewScope & { token: string }) | null> {
     const token = readCookie(request, PREVIEW_COOKIE);
-    if(!token) return null;
+    if(!token || !wantsPreview(request)) return null;
     const session = await verifySession((await state(env)).db, token, siteId(config, new URL(request.url)));
-    return session ? { session } : null;
+    return session ? { session, token } : null;
   }
 
   async function site(env: E): Promise<SiteSettings> {
@@ -226,7 +226,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
         if(!handlers.fetch) return new Response("Not found", { status: 404 });
         const preview = await previewSession(request, env);
         if(!preview) return handlers.fetch(request, env, ctx);
-        return previewScope.run(preview, async () => decoratePreview(await handlers.fetch!(request, env, ctx), prefix));
+        const renew = previewCookie(preview.token, PREVIEW_TTL, new URL(request.url).protocol === "https:");
+        return previewScope.run(preview, async () => decoratePreview(await handlers.fetch!(request, env, ctx), prefix, renew));
       },
       async scheduled(event, env, ctx) {
         await Promise.all([scheduled(event, env, ctx), handlers.scheduled?.(event, env, ctx)]);

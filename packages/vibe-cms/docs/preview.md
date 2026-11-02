@@ -5,11 +5,13 @@ Editors see the site with their saved drafts in a floating window over the edito
 ## How it works
 
 1. The editor's **Preview** (in the sidebar, the command palette, or the eye button on a document with a `preview` URL) asks the site for a one-time code and opens `{prefix}/preview?code=…&path=/…`.
-2. The site trades the code for a `vibe_preview` cookie (the editor's session, `HttpOnly`, valid for the session's 12 hours) and redirects to the page.
-3. `vibe({ fetch })` sees the cookie and runs your `fetch` inside a preview scope. There, `vibe.client(env)` reads drafts of every type the editor can read. Pages, FAQs, settings and references all show their saved drafts, including documents never published, with no changes to your site's code.
+2. The site trades the code for a `vibe_preview` cookie (the editor's session, `HttpOnly`) and redirects to the page. The cookie lasts an hour, renewed by each preview page, and closing the preview clears it.
+3. `vibe({ fetch })` sees the cookie on a page loaded **in a frame** and runs your `fetch` inside a preview scope. There, `vibe.client(env)` reads drafts of every type the editor can read. Pages, FAQs, settings and references all show their saved drafts, including documents never published, with no changes to your site's code.
 4. Preview responses are `Cache-Control: no-store` and `X-Robots-Tag: noindex`. HTML pages get `<script src="{prefix}/preview.js">`, which reloads the page (keeping its scroll position) whenever the editor saves, and passes ⌘S back to the editor.
 
 A forged or expired cookie is ignored: the request is a normal visit.
+
+Only framed pages preview. The floating window is a frame, and so is the pop-out (see below). A page opened in a tab of its own (`Sec-Fetch-Dest: document`) is always the live site, even in the browser that holds the cookie. Saving shows up in the preview; only publishing changes the site. Browsers that don't send `Sec-Fetch-Dest` (older than Safari 16.4) preview wherever the cookie goes.
 
 ## What your site needs
 
@@ -38,7 +40,7 @@ In preview, `<Blocks>` from `@vibe-cms/blocks/astro` marks where each block star
   - Shape, size, zoom and corner are remembered per browser.
 
   Device sizes come from Playwright's device list (`scripts/devices.ts` writes `src/admin/app/devices.json`; `bun run devices` after bumping `playwright-core`, which a test checks). The preview matches a device's viewport, not its user agent, pixel density or touch input: test those on the device.
-- **New window** (the arrow button): a separate browser window, for a second screen. It gets its own cookie and keeps reloading on saves. A badge on the page says it's a preview, with **Exit**, which clears the cookie.
+- **New window** (in the **⋯** menu): a separate browser window, for a second screen. It's a small page under `{prefix}/preview/window` with the site in a frame filling it, so it previews like the floating one. It keeps reloading on saves. A badge says it's a preview, with **Exit**, which clears the cookie and opens the live page.
 
 Inside a panel on another domain, the floating window's cookie is a third-party cookie, sent with `SameSite=None; Partitioned` so it stays with that panel. Browsers that block those (Safari) can't sign the floating window in, so it offers **Open in a new window** instead. Local development (plain HTTP, panel and site on `localhost`) uses `SameSite=Lax` and works everywhere.
 
