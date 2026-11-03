@@ -22,6 +22,13 @@ function sessionKey(db: D1): Promise<Uint8Array> {
   return key;
 }
 
+/** HMAC-SHA256 of `value` under the site's secret, hex: signs links that work without a session, like backup transfers. */
+export async function signValue(db: D1, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", (await sessionKey(db)) as Uint8Array<ArrayBuffer>, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)));
+  return [...mac].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** Issues a site session token. The site is both issuer and audience. */
 export async function issueSession(db: D1, session: Session, siteId: string, origin: string) {
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL;
@@ -45,6 +52,31 @@ export async function verifySession(db: D1, token: string, siteId: string): Prom
       name: payload.name as string | undefined,
       roles: (payload.roles as string[] | undefined) ?? []
     };
+  } catch {
+    return null;
+  }
+}
+
+// --- Panel backups ---------------------------------------------------------
+
+const panelKeys = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+/**
+ * A backup token from the panel the config's `backups.panel` names: signed with the panel's
+ * key, for this site, with the `backups` scope. Its session may only run backup actions.
+ */
+export async function sessionFromPanelToken(config: AnyConfig, token: string, siteId: string): Promise<Session | null> {
+  const panel = config.backups?.panel?.replace(/\/$/, "");
+  if(!panel) return null;
+  let jwks = panelKeys.get(panel);
+  if(!jwks) {
+    jwks = createRemoteJWKSet(new URL(`${panel}/.well-known/jwks.json`));
+    panelKeys.set(panel, jwks);
+  }
+  try {
+    const { payload } = await jwtVerify(token, jwks, { issuer: panel, audience: siteId, algorithms: ["ES256"] });
+    if(payload.scope !== "backups") return null;
+    return { sub: `panel|${panel}`, name: "Backups", roles: [], grants: ["backups"] };
   } catch {
     return null;
   }
@@ -132,13 +164,14 @@ export interface Permit {
   action: Action,
   type?: string,
   locale?: string,
-  /** `"media"` for the asset library, `"site"` for the site's name, accent and icon. */
-  scope?: "content" | "media" | "site"
+  /** `"media"` for the asset library, `"site"` for the site's name, accent and icon, `"backups"` for taking and restoring backups. */
+  scope?: "content" | "media" | "site" | "backups"
 }
 
 export function can(config: AnyConfig, session: Session | null, permit: Permit): boolean {
   if(!session) return false;
   if(session.sub === "dev") return true;
+  if(permit.scope === "backups" && session.grants?.includes("backups")) return true;
   const roles = config.permissions?.roles ?? {};
   return session.roles.some(name => {
     const rules = roles[name];
@@ -149,6 +182,7 @@ export function can(config: AnyConfig, session: Session | null, permit: Permit):
 function allows(rules: RoleRules, { action, type, locale, scope }: Permit): boolean {
   if(rules.all) return true;
   if(scope === "site") return rules.siteSettings === true;
+  if(scope === "backups") return rules.backups === true;
   if(scope === "media") {
     if(rules.media) return rules.media.includes(action);
     return action === "read" || hasAnyWrite(rules);
@@ -176,6 +210,7 @@ function hasAnyWrite(rules: RoleRules): boolean {
 export function require(config: AnyConfig, session: Session | null, permit: Permit): Session {
   if(!session) throw new HttpError(401, "Sign in required");
   if(!can(config, session, permit)) {
+    if(permit.scope === "backups") throw new HttpError(403, "Not allowed to take or restore backups");
     throw new HttpError(403, `Not allowed to ${permit.action} ${permit.scope === "media" ? "media" : permit.type ?? "content"}`);
   }
   return session;

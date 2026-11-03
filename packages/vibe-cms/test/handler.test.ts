@@ -409,6 +409,7 @@ describe("auth", () => {
       accent: null,
       icon: null,
       auth: { issuer: "https://issuer.test", clientId: "panel" },
+      backups: null,
       admin: "https://site.test/_vibe/admin"
     });
   });

@@ -16,6 +16,7 @@
     "./client": "./src/client/index.ts",
     "./preview": "./src/preview/index.ts",
     "./actions": "./src/actions/index.ts",
+    "./backups": "./src/backups/index.ts",
     "./react": "./src/react/index.ts",
     "./admin": "./src/admin/index.ts",
     "./admin/react": "./src/admin/react.tsx",

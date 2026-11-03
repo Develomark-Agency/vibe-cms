@@ -14,7 +14,9 @@ export interface Session {
   email?: string,
   name?: string,
   /** Roles from the identity provider's claim and `permissions.users`; `["dev"]` for the dev sign-in. */
-  roles: string[]
+  roles: string[],
+  /** Powers granted outside roles: `"backups"` for an agency panel's backup runs. */
+  grants?: string[]
 }
 
 /**

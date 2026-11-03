@@ -1,18 +1,20 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { handle } from "../src/server/index.ts";
 import { pkceChallenge, randomString } from "../src/server/oidc.ts";
-import { env, idp, installMock, ISSUER, panel, removeMock, signIn } from "./mock.ts";
+import { env, idp, installMock, ISSUER, panel, removeMock, signIn, siteId } from "./mock.ts";
 
 beforeAll(installMock);
 afterAll(removeMock);
 
 const REDIRECT = "https://agent.test/callback";
+let a: string;
 
 beforeEach(async () => {
   idp.email = "jane@agency.test";
   idp.sub = "u-jane";
   await signIn();
   await panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://site-a.test" }) });
+  a = await siteId("https://site-a.test");
 });
 
 async function registerAgent(method = "none") {
@@ -118,16 +120,16 @@ describe("connecting an agent", () => {
     const create = tools.find((t: { name: string }) => t.name === "documents_create");
     expect(create.inputSchema.required).toEqual(["site", "type", "data"]);
 
-    expect((await call(token, "sites_list")).structuredContent.sites).toEqual([{ id: "site-a", name: "Site site-a", url: "https://site-a.test" }]);
-    const created = await call(token, "documents_create", { site: "site-a", type: "post", data: { title: "From an agent" } });
+    expect((await call(token, "sites_list")).structuredContent.sites).toEqual([{ id: a, name: "site-a.test", url: "https://site-a.test" }]);
+    const created = await call(token, "documents_create", { site: a, type: "post", data: { title: "From an agent" } });
     expect(created.isError).toBeUndefined();
-    const doc = await call(token, "documents_get", { site: "site-a", type: "post", id: created.structuredContent.id });
+    const doc = await call(token, "documents_get", { site: a, type: "post", id: created.structuredContent.id });
     expect(doc.structuredContent.draft).toEqual({ title: "From an agent" });
     // Recorded against the user, as if they'd edited it themselves.
     expect(doc.structuredContent.updatedBy).toBe(`${ISSUER}|u-jane`);
 
     // The site's own rules still apply: editors here can't touch site settings.
-    const settings = await call(token, "site_update", { site: "site-a", name: "Renamed" });
+    const settings = await call(token, "site_update", { site: a, name: "Renamed" });
     expect(settings.content[0].text).toStartWith("[Forbidden]");
     expect((await call(token, "documents_list", { site: "nope", type: "post" })).content[0].text).toStartWith("[NotFound]");
   });
@@ -135,7 +137,7 @@ describe("connecting an agent", () => {
   test("signing out of the panel leaves the agent connected; disconnecting it doesn't sign anyone out", async () => {
     const { access_token: token } = await connectWithTokens();
     await panel("/auth/logout", { method: "POST" });
-    expect((await call(token, "documents_list", { site: "site-a", type: "post" })).isError).toBeUndefined();
+    expect((await call(token, "documents_list", { site: a, type: "post" })).isError).toBeUndefined();
 
     await signIn();
     const { mcpUrl, agents } = await (await panel("/api/agents")).json() as { mcpUrl: string, agents: Array<{ id: string, name: string, readOnly: boolean }> };
@@ -152,7 +154,7 @@ describe("connecting an agent", () => {
     const { tools } = (await mcp(token, "tools/list")).body.result;
     expect(tools.every((t: { annotations: { readOnlyHint: boolean } }) => t.annotations.readOnlyHint)).toBe(true);
     expect(tools.map((t: { name: string }) => t.name)).toContain("documents_list");
-    const refused = await call(token, "documents_create", { site: "site-a", type: "post", data: { title: "No" } });
+    const refused = await call(token, "documents_create", { site: a, type: "post", data: { title: "No" } });
     expect(refused.content[0].text).toStartWith("[Forbidden]");
   });
 
@@ -161,7 +163,7 @@ describe("connecting an agent", () => {
     idp.sub = "u-bob";
     await signIn();
     const { access_token: token } = await connectWithTokens();
-    const result = await call(token, "documents_list", { site: "site-a", type: "post" });
+    const result = await call(token, "documents_list", { site: a, type: "post" });
     expect(result.content[0].text).toBe("[Forbidden] No access to this site");
   });
 

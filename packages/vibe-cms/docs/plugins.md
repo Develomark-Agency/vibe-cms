@@ -2,6 +2,26 @@
 
 How to write a plugin: the descriptor in the config, a server entry for hooks and routes, an admin entry for the editor, bindings, and Durable Objects.
 
+## What a plugin can do
+
+A plugin is how a site adds behaviour to the CMS itself: code that runs when content changes, endpoints the site or editor calls, and screens inside the editor. Everything a plugin does is opt-in per site, and a plugin can do any combination of it.
+
+| Area | What it can do | Topic |
+|---|---|---|
+| Writes | Fill or derive fields (slugs, reading time, search text), normalise values, refuse a write or delete with a reason | `vibe-cms docs server-hooks` |
+| After changes | React to a publish or delete: purge a cache, send a webhook, rebuild a search index, notify a channel | `vibe-cms docs server-hooks` |
+| Reads | Adjust documents as queries return them | `vibe-cms docs server-hooks` |
+| Media | Check or transform uploads, extract metadata (duration, colours, EXIF) | `vibe-cms docs server-hooks` |
+| Background work | Cron jobs and queue consumers: syncing content out to other systems, reports, cleanup | `vibe-cms docs server-hooks` |
+| HTTP | Routes under `/_vibe/plugins/<name>/` for forms, search, webhooks from other services, or data for the editor | `vibe-cms docs plugin-routes` |
+| Editor | Whole pages with nav links, document sidebars and actions, list columns, commands, field decorators | `vibe-cms docs admin-extensions` |
+| Fields | Custom editor widgets for a field (a map picker, a colour swatch, a lookup in another system) | `vibe-cms docs widgets` |
+| Cloudflare | Its own bindings (KV, queues, Durable Objects, Workflows, secrets), supplied by the site | Below |
+
+Typical plugins: a contact form route that validates submissions and emails them; a search index kept in sync on every publish; a cron job that pushes published products to an external store; an SEO panel in the document sidebar; a deploy hook that rebuilds a static frontend. A plugin can be specific to one site, living in `src/plugins/`, or published as a package for many.
+
+## Files
+
 A plugin is three files, each loaded in a different place:
 
 | File | Exports | Loaded by |

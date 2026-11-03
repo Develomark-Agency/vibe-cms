@@ -43,6 +43,7 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 - `https://<site>/_vibe/admin/` shows "Open this editor from your agency's panel" until someone is signed in.
 - Add the site to the panel by its URL. Running a panel (`apps/panel` in the vibe-cms repository) needs its own D1 database and OIDC client; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
 - Agents connect to the panel's `/mcp`, not to each site (`vibe-cms docs agents`).
+- To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
 
 ## Environments
 

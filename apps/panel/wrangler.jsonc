@@ -14,11 +14,17 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "vibe-panel", "database_id": "00000000-0000-0000-0000-000000000000" }
   ],
+  // The backup archive. Remove it (and the trigger) to run the panel without backups.
+  "r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "vibe-panel-backups" }],
+  // Runs scheduled backups, retries and interrupted runs.
+  "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
     "OIDC_ISSUER": "https://accounts.google.com",
     "OIDC_CLIENT_ID": "1234.apps.googleusercontent.com",
     // Comma-separated email domains or group claim values.
-    "PANEL_ALLOW": "my-agency.com"
+    "PANEL_ALLOW": "my-agency.com",
+    // The panel's public address; sites trust it with `backups: { panel: "https://…" }`.
+    "PANEL_URL": "https://panel.my-agency.com"
     // Optional white-labelling: "PANEL_NAME", "PANEL_ACCENT" (#rrggbb, also the accent of framed
     // sites that don't set their own) and "PANEL_ICON" (an image URL).
   }

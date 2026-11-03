@@ -16,6 +16,7 @@ import {
   type Env
 } from "./shared.ts";
 
+import { backupsApi, jwks, processBackups, rememberOrigin } from "./backups.ts";
 import { handleMcp, unauthorized } from "./mcp.ts";
 import {
   authorizationServerMetadata,
@@ -36,7 +37,7 @@ import pkg from "../../package.json" with { type: "json" };
 
 export type { Env } from "./shared.ts";
 
-async function api(request: Request, env: Env, url: URL): Promise<Response> {
+async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext): Promise<Response> {
   if(url.pathname === "/api/branding" && request.method === "GET") {
     return json(normalizeBranding({ name: env.PANEL_NAME, accent: env.PANEL_ACCENT, icon: env.PANEL_ICON }), { headers: { "cache-control": "public, max-age=300" } });
   }
@@ -52,6 +53,9 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   }
 
   if(path === "/me" && method === "GET") return json({ name: session.name, email: session.email });
+
+  const backups = await backupsApi(request, env, session, path, ctx);
+  if(backups) return backups;
 
   if(path === "/sites" && method === "GET") {
     const { results } = await env.DB.prepare(
@@ -175,7 +179,7 @@ async function goTo(request: Request, env: Env, url: URL, siteId: string): Promi
   }
 }
 
-export async function handle(request: Request, env: Env): Promise<Response> {
+export async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   await migrate(env.DB);
   try {
@@ -185,6 +189,8 @@ export async function handle(request: Request, env: Env): Promise<Response> {
       return protectedResourceMetadata(env, url);
     }
     if(url.pathname === "/.well-known/oauth-authorization-server") return authorizationServerMetadata(url);
+    // The keys sites verify the panel's backup tokens with.
+    if(url.pathname === "/.well-known/jwks.json") return await jwks(env);
     if(url.pathname === "/oauth/register" && request.method === "POST") return await register(request, env);
     if(url.pathname === "/oauth/authorize") return await (request.method === "POST" ? decide(request, env, url) : authorize(request, env, url));
     if(url.pathname === "/oauth/token" && request.method === "POST") return await token(request, env);
@@ -202,7 +208,10 @@ export async function handle(request: Request, env: Env): Promise<Response> {
     }
     const go = /^\/go\/([^/]+)\/?$/.exec(url.pathname);
     if(go) return await goTo(request, env, url, decodeURIComponent(go[1]!));
-    if(url.pathname.startsWith("/api/")) return await api(request, env, url);
+    if(url.pathname.startsWith("/api/")) {
+      await rememberOrigin(env, url.origin);
+      return await api(request, env, url, ctx);
+    }
   } catch (error) {
     if(error instanceof PanelError) return json({ error: error.message }, { status: error.status });
     console.error(error);
@@ -221,6 +230,13 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   return new Response("Not found", { status: 404 });
 }
 
+/** Cron: scheduled snapshots, retries, and runs a stopped Worker left behind. */
+export async function scheduled(env: Env) {
+  await migrate(env.DB);
+  await processBackups(env);
+}
+
 export default {
-  fetch: handle
+  fetch: handle,
+  scheduled: (_event, env, ctx) => ctx.waitUntil(scheduled(env))
 } satisfies ExportedHandler<Env>;

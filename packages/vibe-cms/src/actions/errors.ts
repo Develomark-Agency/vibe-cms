@@ -66,6 +66,8 @@ export function errorFromJson(body: { tag?: string, error?: string, details?: un
   const props = { message: body.error ?? `Request failed (${status})`, ...(body.details === undefined ? {} : { details: body.details }) };
   const tagged = body.tag && body.tag in classes ? classes[body.tag as ActionErrorTag] : undefined;
   if(tagged) return new tagged(props);
+  // No tag: the platform answered, not the CMS (an exception, a rate limit, a gateway). Worth retrying.
+  if(status >= 500 || status === 429) return new Unavailable({ message: props.message, details: { status, retry: true } });
   return fromHttpError(new HttpError(status, props.message, props.details));
 }
 

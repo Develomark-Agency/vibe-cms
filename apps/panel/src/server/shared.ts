@@ -1,5 +1,6 @@
 import { decodeJwt } from "jose";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
+import { backupSchema } from "./backups.ts";
 import { authorizationUrl, randomString, refresh, verifyIdToken, type OidcConfig } from "./oidc.ts";
 
 export interface Env {
@@ -14,7 +15,11 @@ export interface Env {
   /** White-labelling: the panel's name, accent (`#rrggbb`) and logo URL. */
   PANEL_NAME?: string,
   PANEL_ACCENT?: string,
-  PANEL_ICON?: string
+  PANEL_ICON?: string,
+  /** The archive for scheduled backups. Without it, the panel doesn't back sites up. */
+  BACKUPS?: R2Bucket,
+  /** The panel's public address, which sites name in `backups.panel`. Learned from requests when unset. */
+  PANEL_URL?: string
 }
 
 export interface SessionRow {
@@ -124,7 +129,7 @@ const migrated = new WeakSet<D1Database>();
 
 export async function migrate(db: D1Database) {
   if(migrated.has(db)) return;
-  await db.batch(schema.map(sql => db.prepare(sql)));
+  await db.batch([...schema, ...backupSchema].map(sql => db.prepare(sql)));
   migrated.add(db);
 }
 

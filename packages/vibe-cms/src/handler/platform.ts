@@ -23,10 +23,22 @@ export interface R2Object {
   httpMetadata?: { contentType?: string }
 }
 
+export interface R2MultipartUpload {
+  uploadId: string,
+  uploadPart(partNumber: number, value: ReadableStream | ArrayBuffer | Uint8Array | Blob): Promise<{ partNumber: number, etag: string }>,
+  complete(parts: Array<{ partNumber: number, etag: string }>): Promise<unknown>,
+  abort(): Promise<void>
+}
+
 export interface R2 {
   put(key: string, value: ArrayBuffer | ReadableStream | Uint8Array | Blob, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>,
   get(key: string): Promise<R2Object | null>,
-  delete(key: string): Promise<void>
+  delete(key: string): Promise<void>,
+  /** Size and etag without the body. Backups use it to skip files that are already there. */
+  head?(key: string): Promise<Omit<R2Object, "body"> | null>,
+  /** For files too large for one request body. Backups restore large media in parts with it. */
+  createMultipartUpload?(key: string, options?: { httpMetadata?: { contentType?: string } }): Promise<R2MultipartUpload>,
+  resumeMultipartUpload?(key: string, uploadId: string): R2MultipartUpload
 }
 
 export interface Fetcher {

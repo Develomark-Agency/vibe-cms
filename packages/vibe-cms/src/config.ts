@@ -33,6 +33,8 @@ export interface RoleRules {
   media?: Action[],
   /** Editing the site's name, accent color and icon. */
   siteSettings?: boolean,
+  /** Taking and restoring backups: reads every document, draft and file, and a restore replaces them all. */
+  backups?: boolean,
   /** Per content type, or `"*"` for every type without its own rule (a type's rule replaces `"*"`). `delete` is never implied. */
   [type: string]: Action[] | boolean | { locales: string[] } | undefined
 }
@@ -85,7 +87,12 @@ export interface ConfigInput {
   /** URL prefix for everything the CMS serves. Defaults to `/_vibe`. */
   prefix?: string,
   /** Deleted documents and files stay restorable this long, then the cron trigger purges them. Defaults to 30 days. */
-  trash?: { days?: number }
+  trash?: { days?: number },
+  /**
+   * Scheduled backups from an agency panel: the panel at this URL may take snapshots and
+   * restore them, and nothing else. See `vibe-cms docs backups`.
+   */
+  backups?: { panel: string }
 }
 
 /** A column's path into the document and its field type. */
@@ -156,7 +163,8 @@ type RuleChecks<C extends ConfigInput> = {
   publish?: boolean,
   write?: { locales: ReadonlyArray<Locales<C>> },
   media?: readonly Action[],
-  siteSettings?: boolean
+  siteSettings?: boolean,
+  backups?: boolean
 } & { [T in Types<C> | "*"]?: readonly Action[] };
 
 type Placeholders<T> = T extends `${string}{${infer K}}${infer Rest}` ? K | Placeholders<Rest> : never;

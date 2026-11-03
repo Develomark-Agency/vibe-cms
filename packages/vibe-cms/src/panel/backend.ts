@@ -53,7 +53,79 @@ export interface SiteDescriptor {
   accent?: string | null,
   icon?: string | null,
   auth: { issuer: string, clientId: string } | null,
+  /** The panel the site lets take and restore backups, if any. */
+  backups?: { panel: string } | null,
   admin: string
+}
+
+/** When a site is backed up and how many snapshots the panel keeps. */
+export interface BackupPolicy {
+  enabled: boolean,
+  /** Hour of the day (UTC) the daily snapshot is taken. */
+  hour: number,
+  /** One snapshot per day for this many days, per week for this many weeks, per month for this many months. */
+  keepDaily: number,
+  keepWeekly: number,
+  keepMonthly: number
+}
+
+export interface BackupSnapshot {
+  /** Its path in the archive. */
+  id: string,
+  takenAt: number,
+  /** `safety`: taken automatically before a restore. */
+  kind: "scheduled" | "manual" | "safety",
+  documents: number,
+  files: number,
+  bytes: number,
+  warnings: string[]
+}
+
+export interface BackupRun {
+  id: string,
+  kind: "scheduled" | "manual" | "restore",
+  status: "queued" | "running" | "done" | "failed",
+  /** The snapshot it took, or for a restore, the one it restores. */
+  snapshot: string | null,
+  attempts: number,
+  progress: { step: string, [key: string]: unknown } | null,
+  error: string | null,
+  requestedBy: string | null,
+  createdAt: number,
+  startedAt: number | null,
+  finishedAt: number | null,
+  /** When a failed attempt is tried again. */
+  retryAt: number | null
+}
+
+export interface SiteBackups {
+  /** False when the panel has no archive bucket. */
+  available: boolean,
+  /** This panel's address, which the site names in `backups.panel`. */
+  panel: string | null,
+  /** Whether the site trusts this panel for backups; null when the site couldn't be reached. */
+  trusted: boolean | null,
+  /** The panel the site does trust, when it's another. */
+  trustedPanel: string | null,
+  /** The site's own policy; null when it follows the panel's defaults. */
+  policy: BackupPolicy | null,
+  effective: BackupPolicy,
+  nextAt: number | null,
+  snapshots: BackupSnapshot[],
+  runs: BackupRun[]
+}
+
+/** The hosted panel's backups. */
+export interface PanelBackups {
+  status(): Promise<{ available: boolean, panel: string | null, defaults: BackupPolicy }>,
+  setDefaults(policy: BackupPolicy): Promise<void>,
+  site(siteId: string): Promise<SiteBackups>,
+  /** `null` goes back to the panel's defaults. */
+  setPolicy(siteId: string, policy: BackupPolicy | null): Promise<SiteBackups>,
+  backUp(siteId: string): Promise<void>,
+  /** Where a snapshot downloads as one `.vibe` file. */
+  downloadUrl(snapshotId: string): string,
+  restore(siteId: string, snapshotId: string): Promise<void>
 }
 
 /**
@@ -76,7 +148,9 @@ export interface PanelBackend {
   signOut?(): Promise<void>,
   /** The panel's MCP address and the agents this user connected. Hosted panels only. */
   agents?(): Promise<{ mcpUrl: string, agents: PanelAgent[] }>,
-  disconnectAgent?(id: string): Promise<void>
+  disconnectAgent?(id: string): Promise<void>,
+  /** Scheduled backups. Hosted panels only. */
+  backups?: PanelBackups
 }
 
 export class PanelError extends Error {
@@ -200,6 +274,21 @@ export function hostedBackend(base = ""): PanelBackend {
     agents: () => api("/agents"),
     disconnectAgent: async id => {
       await api(`/agents/${encodeURIComponent(id)}`, { method: "DELETE" });
+    },
+    backups: {
+      status: () => api("/backups"),
+      setDefaults: async policy => {
+        await api("/backups/defaults", { method: "PUT", json: { policy } });
+      },
+      site: id => api(`/sites/${encodeURIComponent(id)}/backups`),
+      setPolicy: (id, policy) => api(`/sites/${encodeURIComponent(id)}/backups/policy`, { method: "PUT", json: { policy } }),
+      downloadUrl: snapshot => `${base}/api/backups/download?snapshot=${encodeURIComponent(snapshot)}`,
+      backUp: async id => {
+        await api(`/sites/${encodeURIComponent(id)}/backups`, { method: "POST" });
+      },
+      restore: async (id, snapshot) => {
+        await api(`/sites/${encodeURIComponent(id)}/backups/restore`, { method: "POST", json: { snapshot } });
+      }
     },
     signInUrl: `${base}/auth/login`,
     signOut: async () => {

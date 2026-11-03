@@ -21,14 +21,14 @@ function kebab(name: string): string {
   return name.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`);
 }
 
-const connection = {
+export const connection = {
   site: option({ long: "site", env: "VIBE_SITE", type: string, description: "The site's URL, e.g. http://localhost:1337" }),
   token: option({ long: "token", env: "VIBE_TOKEN", type: optional(string), description: "A site session token; development sites sign you in without one" }),
   prefix: option({ long: "prefix", type: string, defaultValue: () => "/_vibe", defaultValueIsSerializable: true, description: "Path the CMS is mounted at" })
 };
 
 /** Development sites hand out a session to anyone, like the editor's dev sign-in. */
-async function devToken(site: string, prefix: string): Promise<string | undefined> {
+export async function devToken(site: string, prefix: string): Promise<string | undefined> {
   const response = await fetch(`${site.replace(/\/$/, "")}${prefix}/api/session`, {
     method: "POST",
     headers: { "content-type": "application/json" },

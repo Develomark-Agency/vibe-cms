@@ -7,14 +7,19 @@ The agency's front door: sign in once, pick a site, edit it. Sites are added by 
 1. Register an OIDC client with your identity provider. Redirect URI: `https://<panel host>/auth/callback`.
 2. Create the database: `bunx wrangler d1 create vibe-panel`, and put its ID in `wrangler.jsonc`.
 3. Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `PANEL_ALLOW` in `wrangler.jsonc`, and the secret with `bunx wrangler secret put OIDC_CLIENT_SECRET`.
-4. Optionally white-label it with `PANEL_NAME`, `PANEL_ACCENT` (`#rrggbb`) and `PANEL_ICON` (an image URL).
-5. `bun run deploy`.
+4. For backups, create the archive with `bunx wrangler r2 bucket create vibe-panel-backups` and set `PANEL_URL` to the panel's address. The bucket binding and the cron trigger are already in `wrangler.jsonc`; remove them to run without backups.
+5. Optionally white-label it with `PANEL_NAME`, `PANEL_ACCENT` (`#rrggbb`) and `PANEL_ICON` (an image URL).
+6. `bun run deploy`.
 
 Sites that should appear in this panel use the same issuer and client ID in their config:
 
 ```ts
 auth: oidc({ issuer: "https://accounts.google.com", clientId: "<this panel's client ID>" })
 ```
+
+## Backups
+
+Sites that add `backups: { panel: "https://<panel host>" }` to their config are backed up every day into the `BACKUPS` bucket. Set the schedule and how many snapshots to keep under the account menu's **Backup schedule**, and override them for one site in its **Backups** (in the site's menu). Restores run from there too, for users whose role on that site has `backups: true`. See `vibe-cms docs backups`.
 
 ## AI agents
 

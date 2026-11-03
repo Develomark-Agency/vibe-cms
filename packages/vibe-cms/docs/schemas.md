@@ -8,6 +8,17 @@ A content type is a `v.object({…})` in the config's `schemas`. The same schema
 import v from "vibe-cms/schema";
 ```
 
+## Modelling content
+
+A content type describes one kind of thing, and each document is one of them. The more of a site's content lives in typed fields, the more the CMS can do with it: queries filter and sort by fields, references link records together, the editor shows a form shaped to the data, and the same record can appear in many places.
+
+- **Pages** are one content type, usually `page` from `pageSchema()` (`vibe-cms docs blocks`). Each page document is a URL on the site, the home page among them.
+- **Collections of records** get a content type each: `teamMember`, `event`, `product`, `testimonial`, `location`. Give them the fields the site displays (a name, a role, a photo, a date, a price) rather than one block of text, and they can be listed, filtered, linked to and reused.
+- **Site-wide content** that exists once (navigation, footer, contact details, social links) is a content type with `singleton: true` in its collection settings (`vibe-cms docs config`).
+- **Links between them** are references: a page block that shows chosen testimonials holds `v.ref("testimonial")` values, an event references its venue, a post its author (`vibe-cms docs references`).
+
+For example, a team section on the About page is a `teamMember` content type (name, role, `image()` photo, bio, sort order) plus a block that either lists every member or references a chosen few. Editors add a new hire once, and every page showing the team picks them up.
+
 ## Every field type
 
 ```ts

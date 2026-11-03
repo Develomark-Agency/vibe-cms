@@ -27,6 +27,7 @@ export function createD1(): D1 & { sqlite: Database } {
 
 export function createR2(): R2 & { objects: Map<string, { data: Uint8Array<ArrayBuffer>, type?: string }> } {
   const objects = new Map<string, { data: Uint8Array<ArrayBuffer>, type?: string }>();
+  const uploads = new Map<string, { key: string, type?: string, parts: Map<number, Uint8Array> }>();
   return {
     objects,
     async put(key, value, options) {
@@ -48,6 +49,40 @@ export function createR2(): R2 & { objects: Map<string, { data: Uint8Array<Array
     },
     async delete(key) {
       objects.delete(key);
+    },
+    async head(key) {
+      const object = objects.get(key);
+      return object ? { httpEtag: `"${key}-${object.data.byteLength}"`, size: object.data.byteLength, httpMetadata: { contentType: object.type } } : null;
+    },
+    async createMultipartUpload(key, options) {
+      const uploadId = `up-${uploads.size + 1}`;
+      uploads.set(uploadId, { key, type: options?.httpMetadata?.contentType, parts: new Map() });
+      return this.resumeMultipartUpload!(key, uploadId);
+    },
+    resumeMultipartUpload(key, uploadId) {
+      return {
+        uploadId,
+        async uploadPart(partNumber, value) {
+          const data = new Uint8Array(await new Response(value as BodyInit).arrayBuffer());
+          uploads.get(uploadId)!.parts.set(partNumber, data);
+          return { partNumber, etag: `part-${partNumber}` };
+        },
+        async complete(parts) {
+          const upload = uploads.get(uploadId)!;
+          const chunks = parts.map(part => upload.parts.get(part.partNumber)!);
+          const data = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+          let offset = 0;
+          for(const chunk of chunks) {
+            data.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          objects.set(key, { data, type: upload.type });
+          uploads.delete(uploadId);
+        },
+        async abort() {
+          uploads.delete(uploadId);
+        }
+      };
     }
   };
 }

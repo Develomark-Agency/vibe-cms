@@ -32,6 +32,7 @@ export default defineConfig({
 | `permissions` | none | Roles and users. See `vibe-cms docs permissions`. |
 | `prefix` | `"/_vibe"` | URL prefix for everything the CMS serves. |
 | `trash` | `{ days: 30 }` | How long deleted documents and files stay restorable before the cron trigger purges them. |
+| `backups` | none | `{ panel: "https://…" }`: the agency panel that may take and restore scheduled backups (`vibe-cms docs backups`). |
 
 The config object is also how site code reaches content types: `config.schemas.post` is what you pass to `cms.query(…)`, and `config.schemas.post.slug` is a column for `where` and `orderBy`.
 

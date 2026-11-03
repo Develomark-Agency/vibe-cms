@@ -1,10 +1,13 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { idp, installMock, ISSUER, jar, panel, removeMock, signIn, sites } from "./mock.ts";
+import { idp, installMock, ISSUER, jar, panel, removeMock, signIn, siteId, sites } from "./mock.ts";
 
 beforeAll(installMock);
 afterAll(removeMock);
 
 test("sign-in, adding a site, and the one-time code handoff", async () => {
+  idp.email = "jane@agency.test";
+  idp.sub = "u-jane";
+  const a = await siteId("https://site-a.test");
   const callback = await signIn();
   expect(callback.status).toBe(302);
   expect(callback.headers.get("location")).toBe("https://panel.test/s/site-a/");
@@ -16,12 +19,12 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   expect(refused.status).toBe(422);
   expect((await refused.json() as { error: string }).error).toBe("This site trusts a different identity provider");
 
-  await panel("/api/sites/site-a/favorite", { method: "PUT" });
+  await panel(`/api/sites/${a}/favorite`, { method: "PUT" });
   expect(await (await panel("/api/sites")).json()).toEqual([
-    { id: "site-a", url: "https://site-a.test", name: "Site site-a", admin: "https://site-a.test/_vibe/admin", favorite: true }
+    { id: a, url: "https://site-a.test", name: "site-a.test", admin: "https://site-a.test/_vibe/admin", favorite: true }
   ]);
 
-  const { code } = await (await panel("/api/sites/site-a/code", { method: "POST" })).json() as { code: string };
+  const { code } = await (await panel(`/api/sites/${a}/code`, { method: "POST" })).json() as { code: string };
   expect(code).toBeTruthy();
 
   // The editor trades the code for a site session token, once.
@@ -35,7 +38,7 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   expect(replay.status).toBe(401);
 
   // Full-page mode: the code travels in the fragment.
-  const go = await panel("/go/site-a");
+  const go = await panel(`/go/${a}`);
   expect(go.headers.get("location")).toMatch(/^https:\/\/site-a\.test\/_vibe\/admin\/#code=.+/);
 });
 
@@ -43,7 +46,7 @@ test("a site refuses users it gives no role", async () => {
   idp.email = "bob@agency.test";
   idp.sub = "u-bob";
   await signIn();
-  const response = await panel("/api/sites/site-a/code", { method: "POST" });
+  const response = await panel(`/api/sites/${await siteId("https://site-a.test")}/code`, { method: "POST" });
   expect(response.status).toBe(403);
   expect((await response.json() as { error: string }).error).toBe("No access to this site");
 });

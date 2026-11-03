@@ -47,6 +47,19 @@ Everything lives under the prefix (`/_vibe` unless `prefix` is set in the config
 
 Plugin pages in the editor live at `/_vibe/admin/p/<plugin>/…`; see `vibe-cms docs plugin-routes`.
 
+## How the pieces fit
+
+A typical site is built from four kinds of content, each with its own tool:
+
+| Content | Tool | Example |
+|---|---|---|
+| Pages editors compose and give URLs to, the home page (`/`) included | One `page` content type from `pageSchema()`, rendered by a catch-all route | Home, About, Services, Contact |
+| Repeated, structured records | A content type per kind of thing, with its own fields | Team members, products, events, testimonials, posts |
+| Site-wide values | A `singleton` collection | Navigation, footer, contact details |
+| Images, video and files | Media fields pointing into the media library | A hero image, a team member's photo, a PDF brochure |
+
+Blocks connect them: a page is a list of blocks, and a block can show records from a collection ("the three latest events", "these team members") through references. Custom blocks and your own components are how a site gets its own look while editors keep control of what goes where. Plugins add behaviour around all of it. See `vibe-cms docs blocks`, `vibe-cms docs schemas`, `vibe-cms docs media` and `vibe-cms docs plugins`; `vibe-cms docs astro` shows how routes map URLs to each.
+
 ## Reading content in your site
 
 `vibe.client(env)` queries content in-process from your Worker; `createClient({ url })` does the same over HTTP from anywhere else. Both return typed results from the config. See `vibe-cms docs queries` and `vibe-cms docs http-client`.
@@ -58,7 +71,7 @@ Run `vibe-cms docs topics` for the full list. The main ones:
 - Content: `vibe-cms docs config`, `vibe-cms docs schemas`, `vibe-cms docs media`, `vibe-cms docs references`, `vibe-cms docs localization`, `vibe-cms docs rich-text`, `vibe-cms docs blocks`, `vibe-cms docs schema-changes`
 - Reading: `vibe-cms docs queries`, `vibe-cms docs http-client`
 - Extending: `vibe-cms docs plugins`, `vibe-cms docs server-hooks`, `vibe-cms docs plugin-routes`, `vibe-cms docs admin-extensions`, `vibe-cms docs widgets`
-- Running: `vibe-cms docs getting-started`, `vibe-cms docs deploy`, `vibe-cms docs permissions`
+- Running: `vibe-cms docs getting-started`, `vibe-cms docs deploy`, `vibe-cms docs permissions`, `vibe-cms docs backups`
 - Automation: `vibe-cms docs agents`, `vibe-cms docs cli`
 
 The guides quote the vibe-cms repository's `examples/` folder: `examples/schemas` (content types and queries), `examples/plugins` (one plugin per feature), and `examples/astro`, `examples/worker` and `examples/client` (integration).

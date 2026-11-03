@@ -2,6 +2,8 @@
 
 Image, video and file fields: what they store, the rules they check, what queries return, and how to upload files from code.
 
+Media fields are how images, video and documents become content: an editor can replace a hero image, crop around a focal point, fix alt text or swap a brochure PDF, and every page using the file updates. Files that are part of the design rather than the content (the logo in the layout, icons, background textures) can stay in the site's own assets. Everything editors may want to change goes through the media library, which also gives files sizes, dimensions and immutable caching for free.
+
 Uploads go to the R2 bucket passed as `storage` in `createHandler` bindings, into one media library shared by the whole site. A media field stores a reference to a library file plus per-usage data (alt text, a focal point), never a URL.
 
 ```ts

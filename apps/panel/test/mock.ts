@@ -28,10 +28,8 @@ export async function idToken(claims: Record<string, unknown> = {}) {
     .sign(keys.privateKey);
 }
 
-export function site(id: string, issuer = ISSUER) {
+export function site(issuer = ISSUER) {
   const config = defineConfig({
-    id,
-    name: `Site ${id}`,
     auth: oidc({ issuer, clientId: CLIENT_ID }),
     permissions: { roles: { editor: { post: ["read", "write"] } }, users: { "jane@agency.test": ["editor"] } },
     schemas: { post: v.object({ title: v.text() }) }
@@ -42,9 +40,15 @@ export function site(id: string, issuer = ISSUER) {
 }
 
 export const sites: Record<string, (request: Request) => Promise<Response>> = {
-  "https://site-a.test": site("site-a"),
-  "https://site-b.test": site("site-b", "https://other-idp.test")
+  "https://site-a.test": site(),
+  "https://site-b.test": site("https://other-idp.test")
 };
+
+/** A mock site's ID, which the site makes for itself on first boot (as in production). */
+export async function siteId(origin: string): Promise<string> {
+  const response = await sites[origin]!(new Request(`${origin}/.well-known/vibe-cms`));
+  return (await response.json() as { id: string }).id;
+}
 
 const realFetch = globalThis.fetch;
 

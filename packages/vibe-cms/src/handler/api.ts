@@ -1,13 +1,14 @@
 import { HttpError, serializeConfig, type AnyConfig } from "../config.ts";
 import type { SerializedQuery } from "../query/index.ts";
 import type { Session } from "../server/index.ts";
-import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, sessionFromIdToken, verifySession } from "./auth.ts";
+import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, sessionFromIdToken, sessionFromPanelToken, verifySession } from "./auth.ts";
 import { coreActions, type CoreActions } from "../actions/core.ts";
 import { runAction, type AnyAction } from "../actions/define.ts";
 import { errorJson, fromHttpError, httpStatus, type ActionError } from "../actions/errors.ts";
 import { describeActions, filesFromJson } from "../actions/describe.ts";
 import { fromText } from "../actions/inputs.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
+import { transferRoute } from "./backups.ts";
 import { handleMcp } from "./mcp.ts";
 import type { ExecutionContext, Fetcher } from "./platform.ts";
 import { matchRoute } from "./plugins.ts";
@@ -42,7 +43,8 @@ async function readSession(request: Request, api: ApiContext, url: URL): Promise
   const header = request.headers.get("authorization");
   const token = header?.startsWith("Bearer ") ? header.slice(7) : readCookie(request, COOKIE);
   if(!token) return null;
-  return verifySession(api.state.db, token, api.state.siteId);
+  return await verifySession(api.state.db, token, api.state.siteId)
+    ?? (header ? sessionFromPanelToken(api.state.config, token, api.state.siteId) : null);
 }
 
 async function body<T>(request: Request): Promise<T> {
@@ -69,6 +71,7 @@ export function descriptor(config: AnyConfig, url: URL, prefix: string, site: Si
     accent: site.accent,
     icon: site.icon?.url ?? site.favicon,
     auth: config.auth ? { issuer: config.auth.issuer, clientId: config.auth.clientId } : null,
+    backups: config.backups ? { panel: config.backups.panel.replace(/\/$/, "") } : null,
     admin: `${url.origin}${prefix}/admin`
   };
 }
@@ -90,6 +93,11 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
     if(path === "/preview/window" && method === "GET") return previewWindowResponse(prefix, safePath(url.searchParams.get("path")));
     if(path === "/preview/exit" && method === "GET") {
       return redirect(url, safePath(url.searchParams.get("path")), previewCookie("", 0, url.protocol === "https:"));
+    }
+    // Signed links from the backup actions; the signature stands in for a session.
+    if(path.startsWith("/api/backups/files/")) {
+      const key = path.slice(19).split("/").map(decodeURIComponent).join("/");
+      return cors(await transferRoute(request, api.state.db, api.state.storage, url, key));
     }
     const session = await readSession(request, api, url);
     const engine = new Engine(api.state, { origin: url.origin, session, trusted: false, ctx: api.ctx });

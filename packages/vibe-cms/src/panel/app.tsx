@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ArchiveIcon,
   BotIcon,
   CheckIcon,
   ChevronsUpDownIcon,
@@ -53,6 +54,7 @@ import { ErrorBoundary } from "../admin/app/error-boundary.tsx";
 import type { EditorMessage, PanelMessage } from "../admin/app/session.ts";
 import { getTheme, isTheme, setAccent, setFavicon, setTheme, startTheme, subscribeTheme, useTheme, type Theme } from "../admin/app/theme.ts";
 import { Delayed } from "../admin/app/delayed.tsx";
+import { BackupDefaultsDialog, BackupsDialog } from "./backups.tsx";
 import { DEFAULT_BRANDING, fetchDescriptor, PanelError, type PanelBackend, type PanelBranding, type PanelSite } from "./backend.ts";
 
 // --- Location ---------------------------------------------------------------------
@@ -253,6 +255,13 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
+  const [backupsFor, setBackupsFor] = useState<PanelSite | null>(null);
+  const [backupsOpen, setBackupsOpen] = useState(false);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
+  function openBackups(target: PanelSite) {
+    setBackupsFor(target);
+    setBackupsOpen(true);
+  }
   useCloseOnFrameFocus(accountOpen, () => setAccountOpen(false));
   useCloseOnFrameFocus(paletteOpen, () => setPaletteOpen(false));
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => backend.sites() });
@@ -322,6 +331,12 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
               <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Open in new tab" onClick={() => openExternally(site)}><ExternalLinkIcon /></Button>} />
               <TooltipContent>Open the editor in a new tab</TooltipContent>
             </Tooltip>
+            {backend.backups && (
+              <Tooltip>
+                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Backups" onClick={() => openBackups(site)}><ArchiveIcon /></Button>} />
+                <TooltipContent>Backups</TooltipContent>
+              </Tooltip>
+            )}
           </>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -353,6 +368,9 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
               {backend.agents && (
                 <DropdownMenuItem onClick={() => setAgentsOpen(true)}><BotIcon /> AI agents</DropdownMenuItem>
               )}
+              {backend.backups && (
+                <DropdownMenuItem onClick={() => setDefaultsOpen(true)}><ArchiveIcon /> Backup schedule</DropdownMenuItem>
+              )}
               {backend.signOut && (
                 <>
                   <DropdownMenuSeparator />
@@ -368,7 +386,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
       </header>
       <main className="relative min-h-0 flex-1">
         {siteId === null ? (
-          <SiteList backend={backend} sites={live} loading={sites.isLoading} onAdd={() => setAddOpen(true)} onOpenExternally={openExternally} />
+          <SiteList backend={backend} sites={live} loading={sites.isLoading} onAdd={() => setAddOpen(true)} onOpenExternally={openExternally} onBackups={backend.backups ? openBackups : undefined} />
         ) : site ? (
           <SiteFrame key={site.id} backend={backend} branding={branding} site={site} initialPath={rest} onShortcut={() => setPaletteOpen(true)} />
         ) : sites.isLoading ? (
@@ -379,6 +397,12 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
       </main>
       <AddSiteDialog backend={backend} open={addOpen} onOpenChange={setAddOpen} />
       {backend.agents && <AgentsDialog backend={backend} open={agentsOpen} onOpenChange={setAgentsOpen} />}
+      {backend.backups && (
+        <>
+          <BackupsDialog backups={backend.backups} site={backupsFor} open={backupsOpen} onOpenChange={setBackupsOpen} />
+          <BackupDefaultsDialog backups={backend.backups} open={defaultsOpen} onOpenChange={setDefaultsOpen} />
+        </>
+      )}
       <CommandDialog open={paletteOpen} onOpenChange={setPaletteOpen}>
         <Command>
           <CommandInput placeholder="Switch to a site…" />
@@ -462,12 +486,13 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: L
   );
 }
 
-function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
+function SiteList({ backend, sites, loading, onAdd, onOpenExternally, onBackups }: {
   backend: PanelBackend,
   sites: LiveSite[] | undefined,
   loading: boolean,
   onAdd(): void,
-  onOpenExternally(site: PanelSite): void
+  onOpenExternally(site: PanelSite): void,
+  onBackups?(site: PanelSite): void
 }) {
   const [filter, setFilter] = useState("");
   const portal = usePortalHover();
@@ -529,9 +554,9 @@ function SiteList({ backend, sites, loading, onAdd, onOpenExternally }: {
             // One layout group, so a card that's starred flies from its grid to the other one.
             <MotionConfig reducedMotion="user"><LayoutGroup>
               <AnimatePresence initial={false} mode="popLayout">
-                {starred.length > 0 && <SiteGroup key="starred" title="Starred" sites={starred} backend={backend} portal={portal} onOpenExternally={onOpenExternally} />}
+                {starred.length > 0 && <SiteGroup key="starred" title="Starred" sites={starred} backend={backend} portal={portal} onOpenExternally={onOpenExternally} onBackups={onBackups} />}
                 {starred.length > 0 && others.length > 0 && <motion.hr key="divider" layout {...fade} />}
-                {others.length > 0 && <SiteGroup key="others" title={starred.length ? "Other sites" : "All sites"} sites={others} backend={backend} portal={portal} onOpenExternally={onOpenExternally} offset={starred.length} />}
+                {others.length > 0 && <SiteGroup key="others" title={starred.length ? "Other sites" : "All sites"} sites={others} backend={backend} portal={portal} onOpenExternally={onOpenExternally} onBackups={onBackups} offset={starred.length} />}
               </AnimatePresence>
             </LayoutGroup></MotionConfig>
           )}
@@ -631,12 +656,13 @@ function SitePortal({ state }: { state: PortalHover }) {
 const spring = { type: "spring", duration: 0.4, bounce: 0.12 } as const;
 const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: spring };
 
-function SiteGroup({ title, sites, backend, portal, onOpenExternally, offset = 0, ref }: {
+function SiteGroup({ title, sites, backend, portal, onOpenExternally, onBackups, offset = 0, ref }: {
   title: string,
   sites: LiveSite[],
   backend: PanelBackend,
   portal: PortalHover,
   onOpenExternally(site: PanelSite): void,
+  onBackups?(site: PanelSite): void,
   offset?: number,
   ref?: Ref<HTMLElement>
 }) {
@@ -704,6 +730,7 @@ function SiteGroup({ title, sites, backend, portal, onOpenExternally, offset = 0
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => onOpenExternally(site)}><ExternalLinkIcon /> Open in new tab</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
+                    {onBackups && <DropdownMenuItem onClick={() => onBackups(site)}><ArchiveIcon /> Backups</DropdownMenuItem>}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={async () => {
                       try {

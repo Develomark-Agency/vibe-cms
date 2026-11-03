@@ -61,6 +61,7 @@ A role is an object of rules; a user may do anything any of their roles allows.
 | `write: { locales: [...] }` | Writing every type the role can read, but only in these locales: a translator. Also limits the role's other writes to these locales. |
 | `media: [...]` | The media library. Without it: read always, upload (`write`) if the role may write any type, delete never. |
 | `siteSettings: true` | Changing the site's name, accent and icon (`vibe-cms docs config`). Not implied by anything but `all`. |
+| `backups: true` | Taking and restoring snapshots (`vibe-cms docs backups`). Reads every draft and file, and a restore replaces them all. Not implied by anything but `all`. |
 
 Details that matter:
 

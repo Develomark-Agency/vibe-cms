@@ -108,6 +108,37 @@ Results are typed from the config: `entry.title` is a `string`. Filters, orderin
 
 `data-vibe-field={field(entry, "title")}` lets editors click the title in the draft preview to edit it; outside the preview it adds nothing. Blocks and rich text mark themselves. See `vibe-cms docs preview`.
 
+## Routing
+
+Astro's file-based routing still decides which code renders a URL; the CMS decides what content it renders. Most sites combine three kinds of route:
+
+| Route | Serves | Reads |
+|---|---|---|
+| `src/pages/[...path].astro` | Every editor-managed page, including `/` | The `page` collection, looked up by `path` with `findPage` |
+| `src/pages/events/[slug].astro` | One URL per record of a collection | That collection, looked up by its slug |
+| A fixed file such as `src/pages/events/index.astro` | Listings and other pages whose structure lives in code | Queries over a collection, and singletons for surrounding text |
+
+Astro matches fixed and parameterised routes before a rest parameter, so the catch-all only receives URLs no other file claims. That lets editors create, rename and remove pages (including the home page, the page whose path is `/`) without a code change, while URLs shaped by data, like `/events/<slug>`, stay with routes written for them.
+
+```astro
+---
+// src/pages/[...path].astro: every page document, by its path.
+import { findPage } from "@vibe-cms/blocks";
+import { Blocks } from "@vibe-cms/blocks/astro";
+import Layout from "../layouts/Layout.astro";
+import { cms, page } from "../content.ts";
+import Callout from "../blocks/Callout.astro";
+
+const entry = await findPage(cms, page, Astro.url.pathname);
+if(!entry) return new Response(null, { status: 404 });
+---
+<Layout title={entry.title} description={entry.description}>
+  <Blocks blocks={entry.blocks} components={{ callout: Callout }} />
+</Layout>
+```
+
+The layout is ordinary Astro: it can read singletons (navigation, footer) with `findFirst()` and render them around every route. Blocks rendered by `<Blocks>` can be clicked in the editor's draft preview to edit them; give everything else read from the CMS (a collection route's fields, singleton text in the layout) `data-vibe-field={field(entry, "title")}` marks so it can be picked the same way (`vibe-cms docs preview`). A collection's `preview` setting should match its route (`"{path}"` for pages, `"/events/{slug}"` for events) so the editor's draft preview opens the right URL.
+
 ## Types
 
 `src/env.d.ts` declares the bindings and makes `cloudflare:workers`' `env` use them:
