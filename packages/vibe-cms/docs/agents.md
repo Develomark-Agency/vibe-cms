@@ -34,7 +34,11 @@ Use the site's dev server URL and port. Requests with an `Origin` header from an
 
 ## Content agents on deployed sites
 
-Deployed sites don't let anonymous agents in. Connect the agent to the **agency panel** instead: one MCP server for every site in it, at `https://<panel host>/mcp`.
+Deployed sites don't let anonymous agents in. Sites in an org (`VIBE_ORG`) are reached through their hub; a site without an org signs agents in itself.
+
+### Sites in an org
+
+Connect the agent to the **agency panel**: one MCP server for every site in it, at `https://<panel host>/mcp`.
 
 1. Add `https://<panel host>/mcp` to the agent as a custom connector (Claude, ChatGPT, Cursor, …). The panel's account menu, under **AI agents**, shows the address.
 2. The agent opens the panel in a browser; the user approves it (optionally read only) and signs in with the identity provider.
@@ -42,7 +46,15 @@ Deployed sites don't let anonymous agents in. Connect the agent to the **agency 
 
 Each call runs as that user on the site, so the site's role rules apply (`vibe-cms docs permissions`); a `Forbidden` error means the user can't do it. Read-only connections only see read-only tools. Users can disconnect agents under **AI agents**.
 
-A deployed site's own `/_vibe/api/mcp` only accepts a site session token (`Authorization: Bearer …`), which agents get through the panel, so the panel is the way in.
+The site's own `/_vibe/api/mcp` points agents at the hub.
+
+### Sites without an org
+
+Add the site's own MCP endpoint, `https://<site>/_vibe/api/mcp`, as a custom connector. The site is an OAuth server, the same way the panel is:
+
+1. The agent gets a 401 that points at the site's sign-in, and registers itself.
+2. The site's editor opens in a browser: the user signs in (passkey or the site's identity provider) and approves the agent, optionally read only.
+3. The agent's calls run as that user, with their roles, worked out on every call. Users see and disconnect agents under **Connected apps** in the editor's account menu.
 
 ## Tools
 

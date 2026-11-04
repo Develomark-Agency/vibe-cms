@@ -73,8 +73,8 @@ export async function signInMode(state: State): Promise<SignInMode> {
   return state.signIn.oidc ? "oidc" : "passkey";
 }
 
-/** Who signed in, as kept with a signed-in browser; roles are worked out again on every use. */
-interface Identity {
+/** Who signed in, as kept with a signed-in browser or a connected agent; roles are worked out again on every use. */
+export interface Identity {
   sub: string,
   email?: string,
   emailVerified: boolean,
@@ -270,12 +270,18 @@ async function signIn(state: State, url: URL, identity: Identity, userId?: strin
   return signinCookie(state, url, token, SIGNIN_TTL / 1000);
 }
 
-/** The signed-in browser's session, worked out again from the identity, so role changes apply at once. */
-export async function resume(state: State, cookie: string | undefined): Promise<Session | null> {
+/** Who the signed-in browser's cookie belongs to. */
+export async function cookieIdentity(state: State, cookie: string | undefined): Promise<Identity | null> {
   if(!cookie) return null;
   const row = await first<{ identity: string, expires_at: number }>(state.db, "SELECT identity, expires_at FROM vibe_signins WHERE hash = ?", [await sha256(cookie)]);
   if(!row || row.expires_at < Date.now()) return null;
-  return standaloneSession(state, JSON.parse(row.identity) as Identity);
+  return JSON.parse(row.identity) as Identity;
+}
+
+/** The signed-in browser's session, worked out again from the identity, so role changes apply at once. */
+export async function resume(state: State, cookie: string | undefined): Promise<Session | null> {
+  const identity = await cookieIdentity(state, cookie);
+  return identity ? standaloneSession(state, identity) : null;
 }
 
 export async function signOut(state: State, url: URL, cookie: string | undefined): Promise<string> {

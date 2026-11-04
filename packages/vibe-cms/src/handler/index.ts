@@ -7,6 +7,7 @@ import { getOrCreateMeta, migrate, newId, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { SiteOrg, type OrgEnv } from "./org.ts";
+import { wellKnownPaths } from "./oauth.ts";
 import { signInConfig, type SignInEnv } from "./signin.ts";
 import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
@@ -14,6 +15,8 @@ import { decoratePreview, PICK_HEADER, PREVIEW_COOKIE, PREVIEW_TTL, previewCooki
 
 export type * from "./platform.ts";
 export type { EmailMessage, EmailSender } from "./email.ts";
+/** The page a headless CLI login lands on, showing the code to paste. The hub serves it too. */
+export { codePage as oauthCodePage } from "./oauth.ts";
 export { Engine, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
 export { isPreview } from "./preview.ts";
 
@@ -196,9 +199,12 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     return fetch(request);
   }
 
+  const oauthPaths = wellKnownPaths(prefix);
+  const rootWellKnown = new Set([...oauthPaths.authorizationServer, ...oauthPaths.protectedResource].filter(path => !path.startsWith(prefix)));
+
   function match(request: Request): boolean {
     const { pathname } = new URL(request.url);
-    return pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname === "/.well-known/vibe-cms";
+    return pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname === "/.well-known/vibe-cms" || rootWellKnown.has(pathname);
   }
 
   async function handle(request: Request, env: E, ctx: ExecutionContext): Promise<Response> {

@@ -148,6 +148,7 @@ export interface Permit {
 
 export function can(config: AnyConfig, session: Session | null, permit: Permit): boolean {
   if(!session) return false;
+  if(session.readOnly && permit.action !== "read") return false;
   if(session.sub === "dev") return true;
   if(session.roles.includes(OWNER)) return true;
   if(permit.scope === "backups" && session.grants?.includes("backups")) return true;

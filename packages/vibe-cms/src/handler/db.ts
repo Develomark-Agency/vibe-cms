@@ -171,6 +171,37 @@ const tables = [
     identity TEXT NOT NULL,
     expires_at INTEGER NOT NULL
   )`,
+  // The site as an OAuth server for agents and the CLI, when it signs people in itself.
+  `CREATE TABLE IF NOT EXISTS vibe_oauth_clients (
+    id TEXT PRIMARY KEY,
+    secret_hash TEXT,
+    name TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    auth_method TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS vibe_oauth_codes (
+    hash TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    challenge TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
+  // A connected agent or CLI: who approved it (as at sign-in) and what it may do. Roles are worked out on each use.
+  `CREATE TABLE IF NOT EXISTS vibe_oauth_grants (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    sub TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    access_hash TEXT UNIQUE,
+    access_expires_at INTEGER,
+    refresh_hash TEXT UNIQUE,
+    refresh_expires_at INTEGER,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
+  )`,
   // Passkey challenges and OIDC logins in progress.
   `CREATE TABLE IF NOT EXISTS vibe_challenges (
     id TEXT PRIMARY KEY,

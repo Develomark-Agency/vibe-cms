@@ -67,7 +67,7 @@ createHandler(config, {
 });
 ```
 
-`owner` is a built-in role: every permission, plus managing users. Only the site gives it (the setup link, the Users page, or `permissions.users`); an identity provider claim or hub token naming `owner` is ignored. Owners and roles with `all: true` can manage users. A signed-in browser keeps an httpOnly cookie for 30 days, which the editor trades for a 12-hour session; signing out, or being removed, ends it. Agents and the CLI on a site without an org use a site session token (`--token`); there's no OAuth login on the site itself yet.
+`owner` is a built-in role: every permission, plus managing users. Only the site gives it (the setup link, the Users page, or `permissions.users`); an identity provider claim or hub token naming `owner` is ignored. Owners and roles with `all: true` can manage users. A signed-in browser keeps an httpOnly cookie for 30 days, which the editor trades for a 12-hour session; signing out, or being removed, ends it. Agents and the CLI sign in to a site without an org the same way: the site's editor asks the signed-in user to approve them (`vibe-cms docs agents`, `vibe-cms docs cli`).
 
 ## Roles
 

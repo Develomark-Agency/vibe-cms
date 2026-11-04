@@ -6,7 +6,7 @@ import { coreActions } from "../actions/core.ts";
 import type { AnyAction } from "../actions/define.ts";
 import { fromText, inputFields } from "../actions/inputs.ts";
 import { httpCaller } from "../actions/client.ts";
-import { hubSiteToken } from "./login.ts";
+import { hubSiteToken, loginIfInteractive, siteLoginToken } from "./login.ts";
 
 /**
  * The CLI surface: a command per action (`vibe-cms documents list --type post`),
@@ -39,9 +39,23 @@ export async function devToken(site: string, prefix: string): Promise<string | u
   return (await response.json() as { token?: string }).token;
 }
 
-/** `--token`, else a development sign-in, else a session from this project's hub login. */
+/**
+ * `--token`, else a development sign-in, else your login to the site itself, else a session from this
+ * project's hub login. At a terminal, a site that signs people in itself asks you to log in right then.
+ */
 export async function siteToken(values: { site: string, token?: string, prefix: string }): Promise<string | undefined> {
-  return values.token ?? await devToken(values.site, values.prefix) ?? await hubSiteToken(values.site);
+  const direct = values.token ?? await devToken(values.site, values.prefix) ?? await siteLoginToken(values.site, values.prefix);
+  if(direct) return direct;
+  let fromHub: string | undefined;
+  try {
+    fromHub = await hubSiteToken(values.site);
+  } catch (error) {
+    // The project's hub doesn't know this site: it may sign people in itself.
+    const login = await loginIfInteractive(values.site, values.prefix);
+    if(login) return login;
+    throw error;
+  }
+  return fromHub ?? await loginIfInteractive(values.site, values.prefix);
 }
 
 /** `@path` reads a JSON value from a file. */
@@ -90,7 +104,7 @@ function actionCommand(action: AnyAction) {
       const error = result.error;
       console.error(`${styleText("red", "✗")} ${styleText("bold", error._tag)} ${error.message}`);
       if(error.details !== undefined) console.error(styleText("dim", JSON.stringify(error.details, null, 2)));
-      if(error._tag === "Unauthorized" && !token) console.error(styleText("dim", "Log in with vibe-cms login <your hub's URL>, or pass --token."));
+      if(error._tag === "Unauthorized" && !token) console.error(styleText("dim", "Log in with vibe-cms login <your org> (or --site <url> for a site without an org), or pass --token."));
       process.exitCode = 1;
     }
   });

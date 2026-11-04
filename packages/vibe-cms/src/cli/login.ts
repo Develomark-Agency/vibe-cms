@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { styleText } from "node:util";
-import { command, positional, string } from "cmd-ts";
+import { command, flag, option, optional, positional, string } from "cmd-ts";
 import { normalizeOrg, resolveHub } from "../org/index.ts";
 
 /**
@@ -92,15 +92,25 @@ function page(message: string, status = 200): Response {
   return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
-/** The browser half of the login: the hub's consent page, then back to a loopback address with a code. */
-async function authorize(hub: string, meta: ServerMetadata, root: string): Promise<Login> {
+interface Authorized {
+  clientId: string,
+  accessToken: string,
+  refreshToken: string,
+  expiresAt: number
+}
+
+/**
+ * The browser half of a login: the server's consent page, then back to a loopback address with a code.
+ * With `headless`, the server shows the code on a page of its own instead, to paste in here.
+ */
+async function authorize(server: string, meta: ServerMetadata, clientName: string, headless?: { redirectUri: string }): Promise<Authorized> {
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
 
   let settle!: { resolve: (code: string) => void, reject: (error: Error) => void };
   const code = new Promise<string>((resolve, reject) => (settle = { resolve, reject }));
-  const server = Bun.serve({
+  const loopback = headless ? null : Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request) {
@@ -116,13 +126,13 @@ async function authorize(hub: string, meta: ServerMetadata, root: string): Promi
       return page("Logged in. You can close this tab and go back to the terminal.");
     }
   });
-  const redirectUri = `http://127.0.0.1:${server.port}/callback`;
+  const redirectUri = headless?.redirectUri ?? `http://127.0.0.1:${loopback!.port}/callback`;
   try {
     const registered = await fetch(meta.registration_endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        client_name: `vibe-cms CLI (${path.basename(root)})`,
+        client_name: clientName,
         redirect_uris: [redirectUri],
         token_endpoint_auth_method: "none",
         grant_types: ["authorization_code", "refresh_token"],
@@ -130,21 +140,40 @@ async function authorize(hub: string, meta: ServerMetadata, root: string): Promi
       })
     });
     const { client_id: clientId } = await registered.json().catch(() => ({})) as { client_id?: string };
-    if(!registered.ok || !clientId) throw new Error(`The hub refused to register the CLI (${registered.status})`);
+    if(!registered.ok || !clientId) throw new Error(`${server} refused to register the CLI (${registered.status})`);
 
     const target = new URL(meta.authorization_endpoint);
     for(const [key, value] of Object.entries({ response_type: "code", client_id: clientId, redirect_uri: redirectUri, code_challenge: challenge, code_challenge_method: "S256", state, scope: "content" })) {
       target.searchParams.set(key, value);
     }
-    console.log(`\n  Opening ${styleText("cyan", hub)} to log in. If no browser opens, visit:\n  ${styleText("dim", target.toString())}\n`);
-    openBrowser(target.toString());
+    if(headless) {
+      console.log(`\n  Open this link in a browser, sign in, and approve the CLI:\n  ${styleText("cyan", target.toString())}\n`);
+      void pasteCode(state).then(settle.resolve, settle.reject);
+    } else {
+      console.log(`\n  Opening ${styleText("cyan", server)} to log in. If no browser opens, visit:\n  ${styleText("dim", target.toString())}\n`);
+      openBrowser(target.toString());
+    }
 
-    const timeout = setTimeout(() => settle.reject(new Error("Timed out waiting for the browser")), 5 * 60_000);
+    const timeout = setTimeout(() => settle.reject(new Error("Timed out waiting for the browser")), 10 * 60_000);
     const tokens = await tokenRequest(meta.token_endpoint, { grant_type: "authorization_code", code: await code, redirect_uri: redirectUri, code_verifier: verifier, client_id: clientId })
       .finally(() => clearTimeout(timeout));
-    return { hub, clientId, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000 };
+    return { clientId, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000 };
   } finally {
-    server.stop(true);
+    loopback?.stop(true);
+  }
+}
+
+/** Reads the code the site's page showed: `<code>.<state>`, so a code from another login is refused. */
+async function pasteCode(state: string): Promise<string> {
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const pasted = (await rl.question("  Paste the code here: ")).trim();
+    const dot = pasted.lastIndexOf(".");
+    if(dot < 0 || pasted.slice(dot + 1) !== state) throw new Error("That code isn't from this login. Run the command again.");
+    return pasted.slice(0, dot);
+  } finally {
+    rl.close();
   }
 }
 
@@ -188,33 +217,150 @@ export async function hubSiteToken(site: string): Promise<string | undefined> {
   return undefined;
 }
 
+// --- Sites that sign people in themselves ---------------------------------------------------
+
+interface SiteLogin extends Authorized {
+  site: string,
+  prefix: string
+}
+
+function siteKey(site: string, prefix: string): string {
+  return `site:${new URL(site).origin}${prefix}`;
+}
+
+async function siteMetadata(site: string, prefix: string): Promise<ServerMetadata | null> {
+  const response = await fetch(`${new URL(site).origin}${prefix}/.well-known/oauth-authorization-server`).catch(() => null);
+  return response?.ok ? await response.json() as ServerMetadata : null;
+}
+
+/** Logs in to a site without an org: its editor signs you in and asks you to approve the CLI. */
+export async function loginToSite(site: string, prefix: string, headless: boolean): Promise<SiteLogin> {
+  const origin = new URL(site).origin;
+  const meta = await siteMetadata(origin, prefix);
+  if(!meta) throw new Error(`${origin} doesn't sign the CLI in by itself. If it belongs to an org, run vibe-cms login <org> instead.`);
+  secrets();
+  const login: SiteLogin = {
+    site: origin,
+    prefix,
+    ...await authorize(origin, meta, `vibe-cms CLI (${path.basename(projectRoot())})`, headless ? { redirectUri: `${origin}${prefix}/oauth/code` } : undefined)
+  };
+  await secrets().set({ service: SERVICE, name: siteKey(origin, prefix), value: JSON.stringify(login) });
+  return login;
+}
+
+/**
+ * An access token for a site you logged in to directly, refreshed when it's about to expire; undefined
+ * without a login. Site logins belong to the site, not the project, so every project can use them.
+ */
+export async function siteLoginToken(site: string, prefix: string): Promise<string | undefined> {
+  if(typeof Bun === "undefined" || !Bun.secrets) return undefined;
+  const key = siteKey(site, prefix);
+  const stored = await secrets().get({ service: SERVICE, name: key });
+  if(!stored) return undefined;
+  const login = JSON.parse(stored) as SiteLogin;
+  if(login.expiresAt > Date.now() + 60_000) return login.accessToken;
+  const meta = await siteMetadata(login.site, login.prefix);
+  if(!meta) throw new Error(`Couldn't reach ${login.site} to renew your login`);
+  try {
+    const tokens = await tokenRequest(meta.token_endpoint, { grant_type: "refresh_token", refresh_token: login.refreshToken, client_id: login.clientId });
+    const next = { ...login, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000 };
+    await secrets().set({ service: SERVICE, name: key, value: JSON.stringify(next) });
+    return next.accessToken;
+  } catch {
+    await secrets().delete({ service: SERVICE, name: key });
+    throw new Error(`Your login to ${login.site} expired or was disconnected. Run vibe-cms login --site ${login.site} again.`);
+  }
+}
+
+/**
+ * When a command runs against a site you aren't logged in to, and you're at a terminal: log in now, if
+ * the site signs the CLI in itself. Undefined when it doesn't, or nobody's there to approve.
+ */
+export async function loginIfInteractive(site: string, prefix: string): Promise<string | undefined> {
+  if(!process.stdin.isTTY || typeof Bun === "undefined" || !Bun.secrets) return undefined;
+  if(!await siteMetadata(site, prefix)) return undefined;
+  console.error(styleText("dim", `  Not logged in to ${new URL(site).origin}.`));
+  return (await loginToSite(site, prefix, false)).accessToken;
+}
+
 export const loginCommand = command({
   name: "login",
-  description: "Log in to your agency's hub (panel), for this project",
+  description: "Log in to your org's hub (for this project), or to one site that signs people in itself",
   args: {
-    org: positional({ type: string, displayName: "org", description: "Your org's domain (its VIBE_ORG), e.g. my-agency.com, or the hub's URL" })
+    org: positional({ type: optional(string), displayName: "org", description: "Your org's domain (its VIBE_ORG), e.g. my-agency.com, or the hub's URL" }),
+    site: option({ long: "site", type: optional(string), description: "Log in to this site instead: one without an org" }),
+    prefix: option({ long: "prefix", type: string, defaultValue: () => "/_vibe", defaultValueIsSerializable: true, description: "Path the CMS is mounted at" }),
+    headless: flag({ long: "headless", description: "Don't open a browser here: print a link, and paste the code it shows" })
   },
   examples: [
     { description: "Log in, then work on any site in the org", command: "vibe-cms login my-agency.com" },
-    { description: "Log in to a hub by its address", command: "vibe-cms login https://edit.my-agency.com" }
+    { description: "Log in to a hub by its address", command: "vibe-cms login https://edit.my-agency.com" },
+    { description: "Log in to a site without an org", command: "vibe-cms login --site https://client.com" },
+    { description: "…from a machine without a browser", command: "vibe-cms login --site https://client.com --headless" }
   ],
-  async handler({ org: value }) {
+  handler: args => reportErrors(() => runLogin(args))
+});
+
+/** Problems the user can act on print as one line, not a stack trace. */
+async function reportErrors(task: () => Promise<void>) {
+  try {
+    await task();
+  } catch (error) {
+    console.error(`${styleText("red", "✗")} ${(error as Error).message}`);
+    process.exitCode = 1;
+  }
+}
+
+async function runLogin({ org: value, site, prefix, headless }: { org?: string, site?: string, prefix: string, headless: boolean }) {
+  {
+    if(site) {
+      if(!URL.canParse(site)) throw new Error(`Expected a URL like https://client.com, got "${site}"`);
+      const login = await loginToSite(site, prefix, headless);
+      console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged in")} to ${styleText("cyan", login.site)}\n`);
+      return;
+    }
+    if(!value) throw new Error("Name your org (vibe-cms login my-agency.com), or a site with --site");
     const org = normalizeOrg(value);
     if(!org) throw new Error(`Expected a domain like my-agency.com or a URL, got "${value}"`);
     const origin = await resolveHub(org);
     const root = projectRoot();
     secrets();
-    const login = { ...await authorize(origin, await metadata(origin), root), ...(org === origin ? {} : { org }) };
+    const meta = await metadata(origin);
+    const login = {
+      hub: origin,
+      ...await authorize(origin, meta, `vibe-cms CLI (${path.basename(root)})`, headless ? { redirectUri: `${origin}/oauth/code` } : undefined),
+      ...(org === origin ? {} : { org })
+    };
     await saveLogin(root, login);
     console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged in")} to ${styleText("cyan", origin)} for ${styleText("dim", root)}\n`);
   }
-});
+}
 
 export const logoutCommand = command({
   name: "logout",
-  description: "Log this project out of its hub, and revoke the login there",
-  args: {},
-  async handler() {
+  description: "Log out of this project's hub, or of one site with --site, and revoke the login there",
+  args: {
+    site: option({ long: "site", type: optional(string), description: "Log out of this site instead" }),
+    prefix: option({ long: "prefix", type: string, defaultValue: () => "/_vibe", defaultValueIsSerializable: true, description: "Path the CMS is mounted at" })
+  },
+  async handler({ site, prefix }) {
+    if(site) {
+      const key = siteKey(site, prefix);
+      const stored = await secrets().get({ service: SERVICE, name: key });
+      if(!stored) {
+        console.log(`  Not logged in to ${new URL(site).origin}`);
+        return;
+      }
+      const login = JSON.parse(stored) as SiteLogin;
+      const meta = await siteMetadata(login.site, login.prefix);
+      const revoked = meta?.revocation_endpoint
+        ? await fetch(meta.revocation_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: login.refreshToken, client_id: login.clientId }) }).then(r => r.ok, () => false)
+        : false;
+      await secrets().delete({ service: SERVICE, name: key });
+      console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged out")} of ${styleText("cyan", login.site)}`);
+      if(!revoked) console.log(styleText("yellow", `  Couldn't revoke the login at ${login.site}. Disconnect it under Connected apps in the site's editor.`));
+      return;
+    }
     const root = projectRoot();
     const login = await readLogin(root);
     if(!login) {

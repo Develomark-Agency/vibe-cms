@@ -54,6 +54,16 @@ bunx vibe-cms documents list --type post --site https://ctmoving.com
 bunx vibe-cms logout
 ```
 
-`login` finds the hub through the org's DNS record (or takes the hub's URL directly), opens it in a browser, and keeps the login in the OS keychain (it needs Bun), tied to the nearest folder with a `vibe-cms.config.*`. Every command then gets a session from the hub for the site it runs against, as you, so the site decides what you may do. The site has to be in the hub. `logout` revokes the login at the hub and forgets it. A login by org looks the hub up again each time, so it keeps working if the hub moves. A site session token in `--token` or `VIBE_TOKEN` skips all of this, for CI.
+`login` finds the hub through the org's DNS record (or takes the hub's URL directly), opens it in a browser, and keeps the login in the OS keychain (it needs Bun), tied to the nearest folder with a `vibe-cms.config.*`. Every command then gets a session from the hub for the site it runs against, as you, so the site decides what you may do. The site has to be in the hub. `logout` revokes the login at the hub and forgets it. A login by org looks the hub up again each time, so it keeps working if the hub moves.
+
+A site without an org signs the CLI in itself. Run a command against it and, at a terminal, the CLI opens the site's editor to sign in and approve it, then carries on. Or log in ahead of time:
+
+```sh
+bunx vibe-cms login --site https://client.com
+bunx vibe-cms login --site https://client.com --headless   # prints a link; paste the code the page shows
+bunx vibe-cms logout --site https://client.com
+```
+
+Site logins belong to the site, not the project, and also live in the keychain. `--headless` works for `vibe-cms login <org>` too. A site session token in `--token` or `VIBE_TOKEN` skips all of this, for CI.
 
 Running a hub: `bunx vibe-cms hub keygen` prints a new signing key for its `HUB_SIGNING_KEY` secret (`bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY`). For agents working on deployed sites, use the hub's MCP server instead (`vibe-cms docs agents`).

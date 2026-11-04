@@ -3,8 +3,10 @@ import type { SerializedQuery } from "../query/index.ts";
 import type { Session } from "../server/index.ts";
 import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, require, sessionFromHubToken, verifySession } from "./auth.ts";
 import type { OrgStatus } from "../org/index.ts";
+import * as oauth from "./oauth.ts";
 import {
   announceSetup,
+  cookieIdentity,
   authenticate,
   authenticationOptions,
   invite,
@@ -62,6 +64,7 @@ async function readSession(request: Request, api: ApiContext): Promise<Session |
   if(!header?.startsWith("Bearer ")) return null;
   const token = header.slice(7);
   return await verifySession(api.state.db, token, api.state.siteId)
+    ?? await oauth.grantSession(api.state, token)
     ?? await sessionFromHubToken(api.state, token);
 }
 
@@ -109,6 +112,28 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
   const path = url.pathname.slice(prefix.length) || "/";
   const method = request.method.toUpperCase();
   try {
+    // The site as an OAuth server for agents and the CLI, when it signs people in itself.
+    const known = oauth.wellKnownPaths(prefix);
+    const isServerMetadata = known.authorizationServer.includes(url.pathname);
+    const isResourceMetadata = known.protectedResource.includes(url.pathname);
+    const oauthRoute = /^\/oauth\/(register|authorize|token|revoke|code)$/.exec(path)?.[1];
+    if(isServerMetadata || isResourceMetadata || oauthRoute) {
+      // In development, agents and the CLI get in as the developer without signing in.
+      if(api.dev) return json({ error: "Development sites let agents and the CLI in without signing in" }, { status: 404 });
+      if(!await oauth.servesOAuth(api.state)) return json({ error: "This site signs agents and the CLI in through its org's hub" }, { status: 404 });
+      if(method === "OPTIONS") return oauth.corsPreflight();
+      if(isServerMetadata) return oauth.authorizationServerMetadata(api.state, url);
+      if(isResourceMetadata) {
+        const site = await new Engine(api.state, { origin: url.origin, session: null, trusted: false, ctx: api.ctx }).site();
+        return oauth.protectedResourceMetadata(api.state, url, site.name);
+      }
+      if(oauthRoute === "register" && method === "POST") return await oauth.register(api.state, request);
+      if(oauthRoute === "authorize" && method === "GET") return await oauth.authorize(api.state, url);
+      if(oauthRoute === "token" && method === "POST") return await oauth.token(api.state, request);
+      if(oauthRoute === "revoke" && method === "POST") return await oauth.revoke(api.state, request);
+      if(oauthRoute === "code" && method === "GET") return oauth.codePage(url);
+      return json({ error: "Not found" }, { status: 404 });
+    }
     if(path === "/admin" || path.startsWith("/admin/")) return await serveAdmin(request, api, url);
     if(path === "/preview.js" && method === "GET") return previewScriptResponse(prefix);
     if(path === "/preview" && method === "GET") return await startPreview(api, url);
@@ -143,8 +168,11 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
     }
 
     if(route === "/mcp") {
+      if(method === "OPTIONS") return oauth.corsPreflight();
       // Development sites let local agents in as the developer, like the editor's dev sign-in.
       const agent = session ?? (api.dev ? DEV_SESSION : null);
+      // A site that signs people in itself points agents at its own sign-in.
+      if(!agent && await oauth.servesOAuth(api.state)) return oauth.unauthorized(api.state, url, request.headers.has("authorization"));
       if(!agent) {
         return json(
           { jsonrpc: "2.0", id: null, error: { code: -32001, message: "This site only lets agents in with a site session token (`Authorization: Bearer <token>`). For deployed sites, connect the agent to your agency panel's /mcp instead: it signs the agent in and covers every site in the panel." } },
@@ -274,6 +302,26 @@ async function editorRoute(
   }
   if(route === "/auth/oidc/login" && method === "GET") return oidcLogin(api.state, url);
   if(route === "/auth/oidc/callback" && method === "GET") return oidcCallback(api.state, url, readCookie(request, "vibe_login"));
+
+  // Connecting an agent or the CLI: the editor shows the request, and posts the signed-in user's answer.
+  if(route === "/oauth/request" && method === "GET") {
+    if(!session) throw new HttpError(401, "Sign in required");
+    return json(await oauth.describeRequest(api.state, q.get("id")));
+  }
+  if(route === "/oauth/decide" && method === "POST") {
+    if(!session) throw new HttpError(401, "Sign in required");
+    const identity = await cookieIdentity(api.state, readCookie(request, SIGNIN_COOKIE));
+    return json(await oauth.decide(api.state, url, session, identity, await body(request)));
+  }
+  if(route === "/oauth/connections" && method === "GET") {
+    if(!session) throw new HttpError(401, "Sign in required");
+    return json({ connections: await oauth.listGrants(api.state, session.sub) });
+  }
+  if((m = /^\/oauth\/connections\/([\w-]+)$/.exec(route)) && method === "DELETE") {
+    if(!session) throw new HttpError(401, "Sign in required");
+    await oauth.disconnect(api.state, session.sub, m[1]!);
+    return json({ ok: true });
+  }
 
   if(route === "/users" && method === "GET") {
     require(config, session, { action: "read", scope: "users" });

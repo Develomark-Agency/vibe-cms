@@ -19,6 +19,7 @@ import {
 import { backupsApi, processBackups } from "./backups.ts";
 import { codeFor, hubOrg, hubOrigin, jwks, moveSites, rememberOrigin, syncOrg } from "./hub.ts";
 import { hubRecordName, resolveHub } from "vibe-cms/org";
+import { oauthCodePage } from "vibe-cms/handler";
 import { handleMcp, siteToken, unauthorized } from "./mcp.ts";
 import {
   authorizationServerMetadata,
@@ -225,6 +226,8 @@ export async function handle(request: Request, env: Env, ctx?: ExecutionContext)
     if(url.pathname === "/oauth/authorize") return await (request.method === "POST" ? decide(request, env, url) : authorize(request, env, url));
     if(url.pathname === "/oauth/token" && request.method === "POST") return await token(request, env);
     if(url.pathname === "/oauth/revoke" && request.method === "POST") return await revoke(request, env);
+    // Where `vibe-cms login --headless` lands: the code to paste into the terminal.
+    if(url.pathname === "/oauth/code" && request.method === "GET") return oauthCodePage(url);
     if(url.pathname === "/site-token" && request.method === "POST") {
       const grant = await grantForRequest(request, env);
       if(!grant) return json({ error: "Log in again: this access token is unknown or expired" }, { status: 401, headers: { "www-authenticate": "Bearer" } });

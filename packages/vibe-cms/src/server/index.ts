@@ -16,7 +16,9 @@ export interface Session {
   /** Roles from the identity provider's claim and `permissions.users`; `["dev"]` for the dev sign-in. */
   roles: string[],
   /** Powers granted outside roles: `"backups"` for an agency panel's backup runs. */
-  grants?: string[]
+  grants?: string[],
+  /** A connection approved read only: whatever the roles say, it may only read. */
+  readOnly?: boolean
 }
 
 /**

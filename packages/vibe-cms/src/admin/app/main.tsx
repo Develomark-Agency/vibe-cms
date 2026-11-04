@@ -1,7 +1,7 @@
 import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import Fuse from "fuse.js";
@@ -42,6 +42,7 @@ import { SiteMark } from "../components/site-mark.tsx";
 import { SiteSettingsPage } from "./settings.tsx";
 import { SignIn } from "./signin.tsx";
 import { UsersPage } from "./users.tsx";
+import { ConnectApp, ConnectionsPage, takeConnectRequest } from "./connect.tsx";
 import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
@@ -101,6 +102,8 @@ function App({ config }: { config: AnyConfig }) {
   setBase(`${prefix}/admin`);
   const info = useQuery({ queryKey: ["info"], queryFn: () => request<SiteInfo>(prefix, "/info"), staleTime: Infinity });
   const [session, setSession] = useState<SessionState | null | undefined>(undefined);
+  // An agent or the CLI asking to connect: shown once the user is signed in.
+  const [connect, setConnect] = useState(takeConnectRequest);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -122,6 +125,7 @@ function App({ config }: { config: AnyConfig }) {
       setSession(await startSession(info.data!));
     }} />;
   }
+  if(connect && !embedded) return <ConnectApp info={info.data} session={session} id={connect} onDone={() => setConnect(null)} />;
   return <Shell config={config} info={info.data} session={session} prefix={prefix} onSignOut={() => setSession(null)} />;
 }
 
@@ -210,6 +214,8 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   const canTrash = session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete);
   // Sites in an org leave who may sign in to the hub; in development nobody signs in for real.
   const canManageUsers = session.permissions.users && info.signIn !== "hub" && !info.dev;
+  // Agents and the CLI connect to the site itself only when it signs people in itself.
+  const canConnect = info.signIn !== "hub" && !info.dev;
 
   let page: React.ReactNode = null;
   let params: Record<string, string> | null;
@@ -219,6 +225,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   else if(path === "/media" && session.permissions.media.read) page = <MediaPage />;
   else if(path === "/settings" && session.permissions.site) page = <SiteSettingsPage />;
   else if(path === "/users" && canManageUsers) page = <UsersPage />;
+  else if(path === "/connections" && canConnect) page = <ConnectionsPage />;
   else if(path === "/trash" && canTrash) page = <TrashPage />;
   else {
     for(const [pattern, entry] of Object.entries(plugins.pages)) {
@@ -397,6 +404,9 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
                       </DropdownMenuRadioGroup>
                     </DropdownMenuSubContent>
                   </DropdownMenuSub>
+                  {canConnect && (
+                    <DropdownMenuItem onClick={() => navigate("/connections")}><PlugIcon /> Connected apps</DropdownMenuItem>
+                  )}
                   {!embedded && !info.dev && (
                     <>
                       <DropdownMenuSeparator />
