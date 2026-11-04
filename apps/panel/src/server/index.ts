@@ -19,23 +19,20 @@ import {
 import { backupsApi, processBackups } from "./backups.ts";
 import { codeFor, hubOrg, hubOrigin, jwks, moveSites, rememberOrigin, syncOrg } from "./hub.ts";
 import { hubRecordName, resolveHub } from "vibe-cms/org";
-import { oauthCodePage } from "vibe-cms/handler";
-import { handleMcp, siteToken, unauthorized } from "./mcp.ts";
+import { handleMcp, siteToken } from "./mcp.ts";
 import {
-  authorizationServerMetadata,
   authorize,
+  codePage,
   completeAuthorization,
   corsPreflight,
   decide,
   grantForRequest,
   listAgents,
+  oauth,
   protectedResourceMetadata,
-  register,
   resourceUrl,
-  revoke,
   revokeGrant,
   SCOPE_READ,
-  token,
   type GrantRow
 } from "./oauth.ts";
 import pkg from "../../package.json" with { type: "json" };
@@ -131,7 +128,7 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
   }
 
   if((m = /^\/agents\/([^/]+)$/.exec(path)) && method === "DELETE") {
-    const grant = await env.DB.prepare("SELECT * FROM agent_grants WHERE id = ? AND user = ?").bind(decodeURIComponent(m[1]!), session.sub).first<GrantRow>();
+    const grant = await oauth(env).userGrant(session.sub, decodeURIComponent(m[1]!));
     if(!grant) return json({ error: "Unknown agent" }, { status: 404 });
     await revokeGrant(env, grant);
     return new Response(null, { status: 204 });
@@ -204,9 +201,8 @@ async function siteTokenRoute(request: Request, env: Env, grant: GrantRow): Prom
     site = await env.DB.prepare("SELECT id, url, name, admin, 0 AS favorite FROM sites WHERE url = ?").bind(siteOrigin(target)).first<PanelSite>();
   }
   if(!site) return json({ error: `${target} isn't in this panel. Add it in the panel first.` }, { status: 404 });
-  const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.session_id).first<SessionRow>();
+  const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.payload).first<SessionRow>();
   if(!session) return json({ error: "This connection's sign-in is gone. Log in again." }, { status: 401 });
-  await env.DB.prepare("UPDATE agent_grants SET last_used_at = ? WHERE id = ?").bind(Date.now(), grant.id).run();
   return json({ token: await siteToken(env, grant, session, site), site: { id: site.id, name: site.name, admin: site.admin } });
 }
 
@@ -219,15 +215,15 @@ export async function handle(request: Request, env: Env, ctx?: ExecutionContext)
     if(url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp") {
       return protectedResourceMetadata(env, url);
     }
-    if(url.pathname === "/.well-known/oauth-authorization-server") return authorizationServerMetadata(url);
+    if(url.pathname === "/.well-known/oauth-authorization-server") return oauth(env).authorizationServerMetadata(url);
     // The keys sites verify the hub's tokens with.
     if(url.pathname === "/.well-known/jwks.json") return await jwks(env);
-    if(url.pathname === "/oauth/register" && request.method === "POST") return await register(request, env);
+    if(url.pathname === "/oauth/register" && request.method === "POST") return await oauth(env).register(request);
     if(url.pathname === "/oauth/authorize") return await (request.method === "POST" ? decide(request, env, url) : authorize(request, env, url));
-    if(url.pathname === "/oauth/token" && request.method === "POST") return await token(request, env);
-    if(url.pathname === "/oauth/revoke" && request.method === "POST") return await revoke(request, env);
+    if(url.pathname === "/oauth/token" && request.method === "POST") return await oauth(env).token(request);
+    if(url.pathname === "/oauth/revoke" && request.method === "POST") return await oauth(env).revoke(request);
     // Where `vibe-cms login --headless` lands: the code to paste into the terminal.
-    if(url.pathname === "/oauth/code" && request.method === "GET") return oauthCodePage(url);
+    if(url.pathname === "/oauth/code" && request.method === "GET") return codePage(url);
     if(url.pathname === "/site-token" && request.method === "POST") {
       const grant = await grantForRequest(request, env);
       if(!grant) return json({ error: "Log in again: this access token is unknown or expired" }, { status: 401, headers: { "www-authenticate": "Bearer" } });
@@ -235,7 +231,7 @@ export async function handle(request: Request, env: Env, ctx?: ExecutionContext)
     }
     if(url.pathname === "/mcp") {
       const grant = await grantForRequest(request, env);
-      if(!grant) return unauthorized(url, request.headers.has("authorization"));
+      if(!grant) return oauth(env).unauthorized(url, request.headers.has("authorization"));
       return await handleMcp(request, env, grant, pkg.version);
     }
     if(url.pathname === "/auth/login") return await login(env, url);

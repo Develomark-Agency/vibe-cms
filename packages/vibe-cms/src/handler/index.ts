@@ -16,7 +16,7 @@ import { decoratePreview, PICK_HEADER, PREVIEW_COOKIE, PREVIEW_TTL, previewCooki
 export type * from "./platform.ts";
 export type { EmailMessage, EmailSender } from "./email.ts";
 /** The page a headless CLI login lands on, showing the code to paste. The hub serves it too. */
-export { codePage as oauthCodePage } from "./oauth.ts";
+export { codePage as oauthCodePage } from "../oauth/index.ts";
 export { Engine, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
 export { isPreview } from "./preview.ts";
 

@@ -1,6 +1,6 @@
 import { actionTools, CONTENT_INSTRUCTIONS, coreActions, errorResult, serveMcp, textResult, toolName, type AnyAction, type McpTool } from "vibe-cms/actions";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
-import { resourceUrl, SCOPE_READ, type GrantRow } from "./oauth.ts";
+import { SCOPE_READ, type GrantRow } from "./oauth.ts";
 import { apiBase, codeFor } from "./hub.ts";
 import { siteById, type Env, type SessionRow } from "./shared.ts";
 
@@ -79,7 +79,6 @@ async function forward(env: Env, grant: GrantRow, session: SessionRow, site: Pan
 
 export async function handleMcp(request: Request, env: Env, grant: GrantRow, version: string): Promise<Response> {
   const readOnly = grant.scope === SCOPE_READ;
-  await env.DB.prepare("UPDATE agent_grants SET last_used_at = ? WHERE id = ?").bind(Date.now(), grant.id).run();
   return serveMcp(request, {
     name: "vibe-cms panel",
     version,
@@ -99,7 +98,7 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
       if(typeof siteId !== "string" || !siteId) return errorResult({ _tag: "InvalidInput", message: "site: pass a site's id from sites_list" });
       const site = await siteById(env, siteId);
       if(!site) return errorResult({ _tag: "NotFound", message: `No site "${siteId}" in this panel. sites_list lists them.` });
-      const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.session_id).first<SessionRow>();
+      const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.payload).first<SessionRow>();
       if(!session) return errorResult({ _tag: "Unauthorized", message: "This connection's sign-in is gone. Reconnect the agent." });
       try {
         return await forward(env, grant, session, site, action.name, input);
@@ -111,20 +110,4 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
       }
     }
   });
-}
-
-/** What an agent without a valid token gets: where to find out how to sign in. */
-export function unauthorized(url: URL, invalid: boolean): Response {
-  const metadata = `${url.origin}/.well-known/oauth-protected-resource`;
-  return Response.json(
-    { jsonrpc: "2.0", id: null, error: { code: -32001, message: `Sign in to use ${resourceUrl(url)}` } },
-    {
-      status: 401,
-      headers: {
-        "www-authenticate": `Bearer resource_metadata="${metadata}"${invalid ? ", error=\"invalid_token\"" : ""}`,
-        "access-control-allow-origin": "*",
-        "access-control-expose-headers": "www-authenticate"
-      }
-    }
-  );
 }

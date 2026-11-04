@@ -305,7 +305,7 @@ A site works on its own too, the way a single site would: no hub, no `VIBE_ORG`.
 
 - **The first owner** comes from a one-time setup link the site prints to its logs while nobody owns it. Whoever opens it becomes the owner (`owner`, a built-in role with every permission plus managing users).
 - **Everyone else is invited** by an owner, by email with roles, from the editor's Users page. With passkeys, the invite is a single-use link to create one, and inviting again replaces a lost passkey. Invites are emailed when the handler has an `email` sender (any `{ send(message) }`), and always shown as a link to copy.
-- **Agents and the CLI** sign in to the site itself: it's an OAuth 2.1 server (`{prefix}/oauth/*`, metadata under `/.well-known/oauth-*{prefix}`) whose consent screen is the editor, so whoever approves is already signed in. Access tokens carry no roles: each use works them out from the approver's identity, and a read-only connection can only read. The CLI logs in with a loopback redirect, or `--headless` with a code shown at `{prefix}/oauth/code`.
+- **Agents and the CLI** sign in to the site itself: it's an OAuth 2.1 server (the same `vibe-cms/oauth` core the hub runs, with its own tables and consent) (`{prefix}/oauth/*`, metadata under `/.well-known/oauth-*{prefix}`) whose consent screen is the editor, so whoever approves is already signed in. Access tokens carry no roles: each use works them out from the approver's identity, and a read-only connection can only read. The CLI logs in with a loopback redirect, or `--headless` with a code shown at `{prefix}/oauth/code`.
 - **Sessions:** a signed-in browser holds an httpOnly, `SameSite=Lax` cookie that only `POST /api/session` reads, to hand the editor its usual 12-hour bearer token. Every other route stays bearer-only, so the cookie is no CSRF surface. Roles are worked out again on each trade, so changes apply at once.
 
 ## Moving a site to another org
@@ -379,6 +379,5 @@ In the monorepo, the panel backend and its frontend are **one package**, `apps/p
 - **Session details:** site session lifetime and refresh, and the exact request and response shapes of the code endpoints.
 - **Who can remove sites** from the shared list (any panel user, or only whoever added it).
 - **Exporting and importing** the site list, so recreating a panel doesn't mean re-adding every site.
-- **One OAuth server:** a site without an org runs its own (`handler/oauth.ts`), with consent in its editor. The hub's (`apps/panel/src/server/oauth.ts`) is a separate copy with a server-rendered consent page and a second identity-provider sign-in per agent; they could share the core.
 - **The permissions overhaul:** who assigns roles (config, a site's Users page, the hub) is due a redesign; the hub doesn't manage roles yet.
 - **Simplifying agent sessions:** sites accept hub tokens as `Authorization: Bearer` directly, so the hub could send those instead of trading each for a cached site session (`agent_site_tokens`).

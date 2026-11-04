@@ -1,4 +1,5 @@
 import { decodeJwt } from "jose";
+import { oauthSchema } from "vibe-cms/oauth";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
 import { backupSchema } from "./backups.ts";
 import { authorizationUrl, randomString, refresh, verifyIdToken, type OidcConfig } from "./oidc.ts";
@@ -76,49 +77,8 @@ export const schema = [
     return_to TEXT NOT NULL,
     expires_at INTEGER NOT NULL
   )`,
-  // Agents (MCP clients) that registered themselves with the panel's OAuth server.
-  `CREATE TABLE IF NOT EXISTS oauth_clients (
-    id TEXT PRIMARY KEY,
-    secret_hash TEXT,
-    name TEXT NOT NULL,
-    uri TEXT,
-    redirect_uris TEXT NOT NULL,
-    auth_method TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  )`,
-  // An authorization in progress: from the agent's /oauth/authorize to the code.
-  `CREATE TABLE IF NOT EXISTS oauth_requests (
-    id TEXT PRIMARY KEY,
-    client_id TEXT NOT NULL,
-    redirect_uri TEXT NOT NULL,
-    challenge TEXT NOT NULL,
-    state TEXT,
-    scope TEXT NOT NULL,
-    user TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS oauth_codes (
-    hash TEXT PRIMARY KEY,
-    grant_id TEXT NOT NULL,
-    client_id TEXT NOT NULL,
-    redirect_uri TEXT NOT NULL,
-    challenge TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`,
-  // A connected agent. It has its own provider sign-in (session_id), so signing out of the panel doesn't disconnect it.
-  `CREATE TABLE IF NOT EXISTS agent_grants (
-    id TEXT PRIMARY KEY,
-    client_id TEXT NOT NULL,
-    user TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    scope TEXT NOT NULL,
-    access_hash TEXT UNIQUE,
-    access_expires_at INTEGER,
-    refresh_hash TEXT UNIQUE,
-    refresh_expires_at INTEGER,
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER
-  )`,
+  // Agents and the CLI: the panel's OAuth server (vibe-cms/oauth). A connection's `payload` is its own provider session's id.
+  ...oauthSchema(""),
   // Site sessions the panel holds for an agent, one per site, until they expire.
   `CREATE TABLE IF NOT EXISTS agent_site_tokens (
     grant_id TEXT NOT NULL,
@@ -144,6 +104,8 @@ export async function migrate(db: D1Database) {
   await db.prepare("ALTER TABLE sites ADD COLUMN org TEXT").run().catch(() => {});
   // The signing key is a Worker secret now; one left in the database is only a liability.
   await db.prepare("DELETE FROM panel_meta WHERE key = 'signing_key'").run();
+  // Connections moved to oauth_grants (vibe-cms/oauth); agents connected before reconnect once.
+  await db.prepare("DROP TABLE IF EXISTS agent_grants").run();
   migrated.add(db);
 }
 
