@@ -2,7 +2,7 @@ import type { Context, Next } from "hono";
 import { validator } from "hono/validator";
 import { HttpError } from "../config.ts";
 import type { Session } from "../server/index.ts";
-import { errorJson, httpStatus, type ActionError } from "../actions/errors.ts";
+import { errorBody, statusForCode, type ActionError } from "../actions/errors.ts";
 import { grantSession } from "./oauth.ts";
 import { sessionFromHubToken, verifySession } from "./auth.ts";
 import type { Engine, EngineState } from "./engine.ts";
@@ -76,7 +76,7 @@ export function redirect(url: URL, path: string, cookie: string): Response {
 }
 
 export function errorResponse(error: ActionError): Response {
-  return json(errorJson(error), { status: httpStatus(error) });
+  return json(errorBody(error), { status: statusForCode(error.code) });
 }
 
 export async function jsonBody(request: Request): Promise<Record<string, unknown>> {
@@ -112,17 +112,20 @@ export function queryValues(url: URL): Record<string, string | string[]> {
  * decide what's valid; this only insists on an object. Bodies sent without a JSON content type still parse.
  */
 export function jsonInput<T extends object>() {
-  return validator("json", async (value, c): Promise<T> => {
-    let input: unknown = value;
-    if(!(c.req.header("content-type") ?? "").includes("json")) {
-      const text = await c.req.text();
-      try {
-        input = text.trim() ? JSON.parse(text) : {};
-      } catch {
-        throw new HttpError(400, "Expected a JSON body");
-      }
+  return validator("json", async (value, c): Promise<T> => (await jsonObject(value, c)) as T);
+}
+
+/** A parsed JSON body that must be an object; a body sent without a JSON content type is parsed here. */
+export async function jsonObject(value: unknown, c: Context): Promise<Record<string, unknown>> {
+  let input = value;
+  if(!(c.req.header("content-type") ?? "").includes("json")) {
+    const text = await c.req.text();
+    try {
+      input = text.trim() ? JSON.parse(text) : {};
+    } catch {
+      throw new HttpError(400, "Expected a JSON body");
     }
-    if(typeof input !== "object" || input === null || Array.isArray(input)) throw new HttpError(400, "Expected a JSON body");
-    return input as T;
-  });
+  }
+  if(typeof input !== "object" || input === null || Array.isArray(input)) throw new HttpError(400, "Expected a JSON body");
+  return input as Record<string, unknown>;
 }

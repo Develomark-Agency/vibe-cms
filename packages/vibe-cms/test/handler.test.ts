@@ -104,7 +104,7 @@ describe("documents", () => {
       json: { data: { title: "x", slug: "x", tags: [], layout: "default", author: "doc_nope" }, publish: true }
     });
     expect(missing.status).toBe(422);
-    expect(missing.body.details.issues[0].message).toMatch(/does not exist/);
+    expect(missing.body.data.issues[0].message).toMatch(/does not exist/);
 
     const ada = await createAuthor("Ada");
     const grace = await createAuthor("Grace");
@@ -728,7 +728,7 @@ describe("content stored under an older schema", () => {
       body: JSON.stringify({ queries: [{ type: "post", op: "findMany", args: {} }] })
     }), env, ctx);
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ tag: "Conflict", details: { mismatches: [{ id, path: ["cover"] }] } });
+    expect(await response.json()).toMatchObject({ code: "CONFLICT", data: { mismatches: [{ id, path: ["cover"] }] } });
   });
 
   test("missing fields aren't mismatches, and drafts and edits still work", async () => {
@@ -807,13 +807,78 @@ describe("actions", () => {
     expect((await t.api("/api/actions/documents.nope", { method: "POST", json: {} })).status).toBe(404);
   });
 
-  test("input is validated before the action runs, and errors carry a tag", async () => {
+  test("input is validated before the action runs, and errors carry a code", async () => {
     const missing = await t.api("/api/actions/documents.create", { method: "POST", json: { data: {} } });
     expect(missing.status).toBe(400);
-    expect(missing.body.tag).toBe("InvalidInput");
-    expect(missing.body.details.issues[0].path).toEqual(["type"]);
+    expect(missing.body.code).toBe("BAD_REQUEST");
+    expect(missing.body.data.issues[0].path).toEqual(["type"]);
     const unknown = await t.api("/api/documents/nope/x");
-    expect(unknown.body).toEqual({ error: "Document not found", tag: "NotFound" });
+    expect(unknown.body).toEqual({ error: "Document not found", code: "NOT_FOUND", defined: true });
+    expect(missing.body.defined).toBe(true);
+  });
+
+  test("failures an action declares arrive as defined oRPC errors, platform failures don't", async () => {
+    const { createActionClient, httpCaller } = await import("../src/actions/client.ts");
+    const { isActionError } = await import("../src/actions/errors.ts");
+    const { isDefinedError, safe } = await import("@orpc/client");
+    const token = (await t.api("/api/session", { method: "POST", json: { dev: true } })).body.token as string;
+    const actions = createActionClient<import("../src/actions/core.ts").CoreActions>(httpCaller({
+      url: "https://site.test",
+      token,
+      fetch: ((input: RequestInfo | URL, init?: RequestInit) => t.vibe.handle(new Request(input, init), t.env, ctx)) as typeof fetch
+    }));
+    const { error, definedError } = await safe(actions.documents.get({ type: "author", id: "nope" }));
+    expect(isDefinedError(error)).toBe(true);
+    expect(definedError?.code).toBe("NOT_FOUND");
+    expect(isActionError(error)).toBe(true);
+
+    const gateway = createActionClient<import("../src/actions/core.ts").CoreActions>(httpCaller({ url: "https://site.test", token, fetch: (async () => new Response("Bad gateway", { status: 502 })) as unknown as typeof fetch }));
+    const failed = await safe(gateway.schema.list());
+    expect(failed.error).toMatchObject({ code: "SERVICE_UNAVAILABLE", data: { retry: true } });
+    expect(isDefinedError(failed.error)).toBe(false);
+  });
+
+  test("action routes are never cached, and query strings are converted by the action's schema", async () => {
+    const token = (await t.api("/api/session", { method: "POST", json: { dev: true } })).body.token as string;
+    const response = await t.vibe.handle(new Request("https://site.test/_vibe/api/documents/author?limit=1&offset=0", { headers: { authorization: `Bearer ${token}` } }), t.env, ctx);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect((await t.api("/api/documents/author?limit=abc")).status).toBe(400);
+  });
+
+  test("declared errors carry typed data", async () => {
+    const { createActionClient, httpCaller } = await import("../src/actions/client.ts");
+    const { safe } = await import("@orpc/client");
+    const token = (await t.api("/api/session", { method: "POST", json: { dev: true } })).body.token as string;
+    const actions = createActionClient<import("../src/actions/core.ts").CoreActions>(httpCaller({
+      url: "https://site.test",
+      token,
+      fetch: ((input: RequestInfo | URL, init?: RequestInit) => t.vibe.handle(new Request(input, init), t.env, ctx)) as typeof fetch
+    }));
+    const author = await actions.documents.create({ type: "author", data: { name: "Ada" }, publish: true });
+    const post = await actions.documents.create({ type: "post", data: { title: "One", slug: "one", tags: [], layout: "default", author: author.id } });
+
+    // Someone else saved since: the conflict says when.
+    const stale = await safe(actions.documents.update({ type: "author", id: author.id, data: { name: "Grace" }, baseUpdatedAt: 1 }));
+    expect(stale.definedError?.code).toBe("CONFLICT");
+    if(stale.definedError?.code === "CONFLICT") expect(stale.definedError.data?.updatedAt).toBeNumber();
+
+    // A document others point at can't be deleted: the conflict lists who.
+    const referenced = await safe(actions.documents.delete({ type: "author", id: author.id }));
+    expect(referenced.definedError?.code).toBe("CONFLICT");
+    if(referenced.definedError?.code === "CONFLICT") expect(referenced.definedError.data?.references).toEqual([{ id: post.id, type: "post", locale: "en" }]);
+
+    // Publishing an invalid draft is refused with the issues.
+    const draft = await actions.documents.create({ type: "post", data: { title: "", slug: "Bad Slug", tags: [], layout: "default" } });
+    const invalid = await safe(actions.documents.publish({ type: "post", id: draft.id }));
+    expect(invalid.definedError?.code).toBe("UNPROCESSABLE_CONTENT");
+    if(invalid.definedError?.code === "UNPROCESSABLE_CONTENT") expect(invalid.definedError.data?.issues?.map(issue => issue.path[0])).toContain("title");
+
+    // Input that fails its schema is a BAD_REQUEST with the issues.
+    const bad = await safe(actions.documents.get({ type: 5 as never, id: "x" }));
+    expect(bad.definedError?.code).toBe("BAD_REQUEST");
+    if(bad.definedError?.code === "BAD_REQUEST") expect(bad.definedError.data?.issues?.[0]?.path).toEqual(["type"]);
   });
 
   test("content types are described as JSON Schema", async () => {
@@ -862,10 +927,10 @@ describe("mcp", () => {
 
     const bad = await mcp("tools/call", { name: "documents_update", arguments: { type: "post", id: doc.id, data: { title: "" }, publish: true } });
     expect(bad.body.result.isError).toBe(true);
-    expect(bad.body.result.content[0].text).toStartWith("[Rejected]");
+    expect(bad.body.result.content[0].text).toStartWith("[UNPROCESSABLE_CONTENT]");
 
     const invalid = await mcp("tools/call", { name: "documents_get", arguments: { id: doc.id } });
-    expect(invalid.body.result.content[0].text).toStartWith("[InvalidInput] type:");
+    expect(invalid.body.result.content[0].text).toStartWith("[BAD_REQUEST] type:");
 
     expect((await mcp("tools/call", { name: "nope" })).body.error.code).toBe(-32602);
   });

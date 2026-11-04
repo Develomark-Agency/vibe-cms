@@ -70,7 +70,7 @@ A derived field must be declared in the schema, or step 4 drops it. Mark it `rea
 
 ### Refuse a write
 
-Throw from `content.beforeWrite`. The API answers 422 with your message (action error tag `Rejected`), and the editor shows it.
+Throw from `content.beforeWrite`. The API answers 422 with your message (action error code `UNPROCESSABLE_CONTENT`), and the editor shows it.
 
 ```ts
 // examples/plugins/src/rules/plugin.server.ts
@@ -115,7 +115,7 @@ export default defineServer<typeof WebhookPlugin>(({ bindings, options, log }) =
 
 ## `content.beforeDelete`
 
-Runs when a whole document is deleted, after the reference check (deleting a document others reference is already refused with 409 unless forced). Set `output.cancel` to a message to refuse: the API answers 409 (tag `Conflict`). Deleting a single translation doesn't run this hook.
+Runs when a whole document is deleted, after the reference check (deleting a document others reference is already refused with 409 unless forced). Set `output.cancel` to a message to refuse: the API answers 409 (code `CONFLICT`). Deleting a single translation doesn't run this hook.
 
 ```ts
 // examples/plugins/src/rules/plugin.server.ts

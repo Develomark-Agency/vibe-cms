@@ -44,7 +44,7 @@ Connect the agent to the **agency panel**: one MCP server for every site in it, 
 2. The agent opens the panel in a browser; the user approves it (optionally read only) and signs in with the identity provider.
 3. The agent calls `sites_list`, then any tool with that site's `id` as `site`.
 
-Each call runs as that user on the site, so the site's role rules apply (`vibe-cms docs permissions`); a `Forbidden` error means the user can't do it. Read-only connections only see read-only tools. Users can disconnect agents under **AI agents**.
+Each call runs as that user on the site, so the site's role rules apply (`vibe-cms docs permissions`); a `FORBIDDEN` error means the user can't do it. Read-only connections only see read-only tools. Users can disconnect agents under **AI agents**.
 
 The site's own `/_vibe/api/mcp` points agents at the hub.
 
@@ -72,25 +72,25 @@ How they behave:
 
 - Call `schema_list`, then `schema_get` for a type, before creating or updating its documents.
 - Writes save drafts. Drafts save even when invalid and return `issues`; `documents_publish` (or `publish: true`) needs a valid document.
-- `documents_update` replaces the draft's fields. Pass the `updatedAt` from `documents_get` as `baseUpdatedAt` to fail with `Conflict` rather than overwrite someone's edit.
+- `documents_update` replaces the draft's fields. Pass the `updatedAt` from `documents_get` as `baseUpdatedAt` to fail with `CONFLICT` rather than overwrite someone's edit.
 - Media fields take `{ asset: "<id>" }` plus their per-usage fields (like `alt`): upload with `assets_upload` (file as `{ name, type?, base64 }`) first. See `vibe-cms docs media`.
 - References take document IDs (`vibe-cms docs references`); translations take a `locale` (`vibe-cms docs localization`).
 - Deleting moves things to the trash; `trash_purge` and `trash_empty` can't be undone.
 
 ## Errors
 
-Failures carry a tag, a message and sometimes `details`:
+Failures carry a code, a message and sometimes `data`:
 
-| Tag | Means |
+| Code | Means |
 |---|---|
-| `InvalidInput` | Malformed input: missing fields, wrong types, unknown locale |
-| `Unauthorized` | No session, or it expired |
-| `Forbidden` | The user's roles don't allow it |
-| `NotFound` | No such document, asset or trash item |
-| `Conflict` | Someone else's edit (`details.updatedAt`), blocking references (`details.references`), a taken name, or stored content that no longer fits the schema (`details.mismatches`) |
-| `Rejected` | Fails validation (`details.issues`), a plugin's veto, or a file the field doesn't accept |
-| `TooLarge`, `UnsupportedType` | The upload's size or type |
-| `Unavailable` | The site isn't set up for it, e.g. uploads without an R2 binding |
+| `BAD_REQUEST` | Malformed input: missing fields, wrong types, unknown locale |
+| `UNAUTHORIZED` | No session, or it expired |
+| `FORBIDDEN` | The user's roles don't allow it |
+| `NOT_FOUND` | No such document, asset or trash item |
+| `CONFLICT` | Someone else's edit (`data.updatedAt`), blocking references (`data.references`), a taken name, or stored content that no longer fits the schema (`data.mismatches`) |
+| `UNPROCESSABLE_CONTENT` | Fails validation (`data.issues`), a plugin's veto, or a file the field doesn't accept |
+| `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE` | The upload's size or type |
+| `NOT_IMPLEMENTED` | The site isn't set up for it, e.g. uploads without an R2 binding |
 
 ## Scripts
 

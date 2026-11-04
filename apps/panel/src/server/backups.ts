@@ -1,4 +1,4 @@
-import { httpCaller, type ActionCaller } from "vibe-cms/actions";
+import { httpCaller, isActionError, ORPCError, type ActionCaller } from "vibe-cms/actions";
 import { BackupError, readSnapshot, restoreSnapshot, takeSnapshot, verifyRestore, type BackupStore, type Progress, type SnapshotFile } from "vibe-cms/backups";
 import { fetchDescriptor, PanelError, type BackupPolicy, type PanelSite, type SiteBackups } from "vibe-cms/panel";
 import { randomString } from "./oidc.ts";
@@ -261,14 +261,14 @@ async function claim(env: Env, now: number, siteId?: string): Promise<RunRow | n
 function permanent(error: unknown): boolean {
   if(error instanceof PanelError) return error.status < 500;
   if(!(error instanceof BackupError)) return false;
-  const tag = (error.details as { tag?: string } | undefined)?.tag;
-  return tag === "Unauthorized" || tag === "Forbidden" || tag === "Rejected" || tag === "NotFound" || tag === "InvalidInput";
+  const code = (error.details as { code?: string } | undefined)?.code;
+  return code === "UNAUTHORIZED" || code === "FORBIDDEN" || code === "UNPROCESSABLE_CONTENT" || code === "NOT_FOUND" || code === "BAD_REQUEST";
 }
 
 function explain(error: unknown, origin: string | null): string {
   const message = (error as Error).message;
-  const tag = (error as BackupError).details && ((error as BackupError).details as { tag?: string }).tag;
-  if(tag === "Unauthorized" || tag === "Forbidden") {
+  const code = (error as BackupError).details && ((error as BackupError).details as { code?: string }).code;
+  if(code === "UNAUTHORIZED" || code === "FORBIDDEN") {
     return `${message}. The site has to let this panel back it up: it needs VIBE_ORG=${origin} and \`backups: true\` in its config.`;
   }
   return message;
@@ -421,10 +421,13 @@ export async function canRestore(env: Env, session: SessionRow, site: PanelSite)
   const exchange = await fetch(`${url}${prefix}/api/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
   const { token } = await exchange.json().catch(() => ({})) as { token?: string };
   if(!token) throw new PanelError(502, "The site refused the sign-in");
-  const result = await httpCaller({ url, prefix, token })("backups.restoreStatus", {});
-  if(result.isErr()) {
-    throw new PanelError(result.error._tag === "Forbidden" ? 403 : 502, result.error._tag === "Forbidden"
+  try {
+    await httpCaller({ url, prefix, token })("backups.restoreStatus", {});
+  } catch (error) {
+    if(!(error instanceof ORPCError)) throw error;
+    const forbidden = isActionError(error) && error.code === "FORBIDDEN";
+    throw new PanelError(forbidden ? 403 : 502, forbidden
       ? "Your role on this site doesn't allow restoring backups (it needs `backups: true`)"
-      : result.error.message);
+      : error.message);
   }
 }

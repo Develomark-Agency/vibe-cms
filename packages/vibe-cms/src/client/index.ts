@@ -41,8 +41,8 @@ export function createClient<C extends AnyConfig>(options: ClientOptions): Query
       },
       body: JSON.stringify({ queries: queries.map(serializeQuery) })
     });
-    const data = await response.json() as { results?: unknown[], error?: string, details?: unknown };
-    if(!response.ok || !data.results) throw new ClientError(response.status, data.error ?? response.statusText, data.details);
+    const data = await response.json() as { results?: unknown[], error?: string, data?: unknown };
+    if(!response.ok || !data.results) throw new ClientError(response.status, data.error ?? response.statusText, data.data);
     return data.results;
   });
 }

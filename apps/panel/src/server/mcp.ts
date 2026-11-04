@@ -1,4 +1,4 @@
-import { actionTools, CONTENT_INSTRUCTIONS, coreActions, errorResult, serveMcp, textResult, toolName, type AnyAction, type McpTool } from "vibe-cms/actions";
+import { actionTools, CONTENT_INSTRUCTIONS, coreActions, errorResult, indexActions, listActions, serveMcp, textResult, toolName, type McpTool } from "vibe-cms/actions";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
 import { SCOPE_READ, type GrantRow } from "./oauth.ts";
 import { apiBase, codeFor } from "./hub.ts";
@@ -17,7 +17,7 @@ Each call runs on that site as the signed-in user, and each site decides what th
 
 ${CONTENT_INSTRUCTIONS}`;
 
-const actions = new Map<string, AnyAction>(Object.values(coreActions).map(action => [toolName(action.name), action as AnyAction]));
+const actions = new Map([...indexActions(coreActions).values()].map(action => [toolName(action.name), action]));
 
 const sitesList: McpTool = {
   name: "sites_list",
@@ -30,7 +30,7 @@ const sitesList: McpTool = {
 let siteTools: McpTool[] | undefined;
 
 function allTools(): McpTool[] {
-  siteTools ??= actionTools(coreActions, {
+  siteTools ??= actionTools(listActions(coreActions), {
     input: schema => ({
       ...schema,
       properties: { site: { type: "string", description: "The site's id, from sites_list" }, ...(schema.properties as object) },
@@ -74,9 +74,9 @@ async function forward(env: Env, grant: GrantRow, session: SessionRow, site: Pan
     if(response.status === 401 && !fresh) continue;
     const body = await response.json().catch(() => ({ error: `The site answered ${response.status}` })) as Record<string, unknown>;
     if(response.ok) return textResult(body);
-    return errorResult({ _tag: (body.tag as never) ?? "Unavailable", message: String(body.error ?? response.statusText), details: body.details });
+    return errorResult({ code: String(body.code ?? "SERVICE_UNAVAILABLE"), message: String(body.error ?? response.statusText), data: body.data });
   }
-  return errorResult({ _tag: "Unauthorized", message: "The site keeps refusing this user's session" });
+  return errorResult({ code: "UNAUTHORIZED", message: "The site keeps refusing this user's session" });
 }
 
 export async function handleMcp(request: Request, env: Env, grant: GrantRow, version: string): Promise<Response> {
@@ -94,21 +94,21 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
       const action = actions.get(name);
       if(!action) return null;
       if(readOnly && !action.annotations.readOnly) {
-        return errorResult({ _tag: "Forbidden", message: "This agent was connected read-only. Reconnect it to make changes." });
+        return errorResult({ code: "FORBIDDEN", message: "This agent was connected read-only. Reconnect it to make changes." });
       }
       const { site: siteId, ...input } = args;
-      if(typeof siteId !== "string" || !siteId) return errorResult({ _tag: "InvalidInput", message: "site: pass a site's id from sites_list" });
+      if(typeof siteId !== "string" || !siteId) return errorResult({ code: "BAD_REQUEST", message: "site: pass a site's id from sites_list" });
       const site = await siteById(env, siteId);
-      if(!site) return errorResult({ _tag: "NotFound", message: `No site "${siteId}" in this panel. sites_list lists them.` });
+      if(!site) return errorResult({ code: "NOT_FOUND", message: `No site "${siteId}" in this panel. sites_list lists them.` });
       const [session] = await db(env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
-      if(!session) return errorResult({ _tag: "Unauthorized", message: "This connection's sign-in is gone. Reconnect the agent." });
+      if(!session) return errorResult({ code: "UNAUTHORIZED", message: "This connection's sign-in is gone. Reconnect the agent." });
       try {
         return await forward(env, grant, session, site, action.name, input);
       } catch (error) {
         if(!(error instanceof PanelError)) throw error;
-        const tag = error.status === 401 ? "Unauthorized" : error.status === 403 ? "Forbidden" : "Unavailable";
+        const code = error.status === 401 ? "UNAUTHORIZED" : error.status === 403 ? "FORBIDDEN" : "SERVICE_UNAVAILABLE";
         const message = error.status === 401 ? "Your sign-in with the identity provider expired. Reconnect the agent to the panel." : error.message;
-        return errorResult({ _tag: tag, message });
+        return errorResult({ code, message });
       }
     }
   });

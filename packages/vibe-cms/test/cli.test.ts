@@ -50,10 +50,10 @@ describe("cli", () => {
     expect(created.json.draft).toEqual({ name: "Grace" });
   }, 20_000);
 
-  test("failures print the tag and exit non-zero", async () => {
+  test("failures print the code and exit non-zero", async () => {
     const failed = await cli("documents", "get", "--type", "author", "--id", "nope");
     expect(failed.code).toBe(1);
-    expect(failed.stderr).toContain("NotFound");
+    expect(failed.stderr).toContain("NOT_FOUND");
   }, 20_000);
 
   test("exports a site to one .vibe file and imports it back", async () => {

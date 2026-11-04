@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ActionAnnotations, AnyAction } from "./define.ts";
+import type { ActionAnnotations, ActionEntry } from "./define.ts";
 import { inputFields } from "./inputs.ts";
 
 /** An action as `GET /_vibe/api/actions` lists it: name, title, description, annotations, input JSON Schema. */
@@ -34,8 +34,8 @@ const jsonFileSchema = {
  * An action's input as JSON Schema. `files: "json"` describes file fields as
  * {@link JsonFile} objects, for surfaces that only carry JSON (MCP).
  */
-export function inputJsonSchema(action: AnyAction, options: { files?: "binary" | "json" } = {}): Record<string, unknown> {
-  return z.toJSONSchema(action.input, {
+export function inputJsonSchema(schema: z.ZodType, options: { files?: "binary" | "json" } = {}): Record<string, unknown> {
+  return z.toJSONSchema(schema, {
     io: "input",
     target: "draft-2020-12",
     unrepresentable: "any",
@@ -50,21 +50,21 @@ export function inputJsonSchema(action: AnyAction, options: { files?: "binary" |
 }
 
 /** Every action's description, for listings and generated clients. */
-export function describeActions(actions: Record<string, AnyAction>, options: { files?: "binary" | "json" } = {}): ActionDescription[] {
-  return Object.values(actions).map(action => ({
+export function describeActions(actions: ActionEntry[], options: { files?: "binary" | "json" } = {}): ActionDescription[] {
+  return actions.map(action => ({
     name: action.name,
     title: action.title,
     description: action.description,
     annotations: action.annotations,
-    input: inputJsonSchema(action, options)
+    input: inputJsonSchema(action.input, options)
   }));
 }
 
 /** Turns {@link JsonFile} values back into `File`s before the input is validated. */
-export function filesFromJson(action: AnyAction, input: unknown): unknown {
+export function filesFromJson(schema: z.ZodType, input: unknown): unknown {
   if(typeof input !== "object" || input === null) return input;
   const out: Record<string, unknown> = { ...input };
-  for(const [key, info] of inputFields(action.input)) {
+  for(const [key, info] of inputFields(schema)) {
     const value = out[key] as Partial<JsonFile> | undefined;
     if(info.kind !== "file" || typeof value !== "object" || value === null || typeof value.base64 !== "string") continue;
     const bytes = Uint8Array.from(atob(value.base64), char => char.charCodeAt(0));

@@ -101,7 +101,7 @@ Every component and the factory itself get `cms`, an `AdminClient` that sends th
 
 | Member | Does |
 |---|---|
-| `actions` | Every CMS action, typed: `cms.actions.documents.publish({ type, id })`. Throws `ApiError` (with the action error's `tag`) on failure |
+| `actions` | Every CMS action, typed: `cms.actions.documents.publish({ type, id })`. Throws `ApiError` (an oRPC error, with the action error's `code`) on failure |
 | `query` | The query API, including drafts: `cms.query.query(collection, { drafts: true })` |
 | `api(path, init?)` | A request relative to `/_vibe/api`, or to `/_vibe` for paths starting with `/plugins/`. `init.json` sends a JSON body |
 | `plugins.<name>.<route>(body?)` | `POST /_vibe/plugins/<name>/<route>` with a JSON body |

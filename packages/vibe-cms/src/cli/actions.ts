@@ -2,8 +2,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { styleText } from "node:util";
 import { array, command, flag, multioption, option, optional, string, subcommands } from "cmd-ts";
+import { isActionError } from "../actions/errors.ts";
 import { coreActions } from "../actions/core.ts";
-import type { AnyAction } from "../actions/define.ts";
+import { listActions, type ActionEntry } from "../actions/define.ts";
 import { fromText, inputFields } from "../actions/inputs.ts";
 import { httpCaller } from "../actions/client.ts";
 import { hubSiteToken, loginIfInteractive, siteLoginToken } from "./login.ts";
@@ -63,7 +64,7 @@ async function jsonArgument(value: string): Promise<string> {
   return value.startsWith("@") ? readFile(value.slice(1), "utf8") : value;
 }
 
-function actionCommand(action: AnyAction) {
+function actionCommand(action: ActionEntry) {
   const fields = inputFields(action.input);
   const args: Record<string, any> = { ...connection };
   for(const [key, info] of fields) {
@@ -74,7 +75,7 @@ function actionCommand(action: AnyAction) {
     else args[key] = option({ long, type: info.optional ? optional(string) : string, description });
   }
   return command({
-    name: kebab(action.name.split(".")[1]!),
+    name: kebab(action.path.at(-1)!),
     description: `${action.title}. ${mentions(action.description)}`,
     args,
     async handler(values: Record<string, any>) {
@@ -96,27 +97,26 @@ function actionCommand(action: AnyAction) {
         return;
       }
       const call = httpCaller({ url: values.site, prefix: values.prefix, token });
-      const result = await call(action.name, fromText(action.input, text));
-      if(result.isOk()) {
-        console.log(JSON.stringify(result.value, null, 2));
-        return;
+      try {
+        console.log(JSON.stringify(await call(action.name, fromText(action.input, text)), null, 2));
+      } catch (error) {
+        if(!isActionError(error)) throw error;
+        console.error(`${styleText("red", "✗")} ${styleText("bold", error.code)} ${error.message}`);
+        if(error.data !== undefined) console.error(styleText("dim", JSON.stringify(error.data, null, 2)));
+        if(error.code === "UNAUTHORIZED" && !token) console.error(styleText("dim", "Log in with vibe-cms login <your org> (or --site <url> for a site without an org), or pass --token."));
+        process.exitCode = 1;
       }
-      const error = result.error;
-      console.error(`${styleText("red", "✗")} ${styleText("bold", error._tag)} ${error.message}`);
-      if(error.details !== undefined) console.error(styleText("dim", JSON.stringify(error.details, null, 2)));
-      if(error._tag === "Unauthorized" && !token) console.error(styleText("dim", "Log in with vibe-cms login <your org> (or --site <url> for a site without an org), or pass --token."));
-      process.exitCode = 1;
     }
   });
 }
 
 /** Subcommand groups (`documents`, `assets`, …), each with a command per action. */
-export function actionCommands(actions: Record<string, AnyAction> = coreActions) {
+export function actionCommands(actions: ActionEntry[] = listActions(coreActions)) {
   const groups = new Map<string, Record<string, ReturnType<typeof actionCommand>>>();
-  for(const action of Object.values(actions)) {
-    const [group, verb] = action.name.split(".") as [string, string];
+  for(const action of actions) {
+    const group = action.path[0]!;
     if(!groups.has(group)) groups.set(group, {});
-    groups.get(group)![kebab(verb)] = actionCommand(action);
+    groups.get(group)![kebab(action.path.at(-1)!)] = actionCommand(action);
   }
   return Object.fromEntries([...groups].map(([group, cmds]) => [group, subcommands({ name: group, description: `${group[0]!.toUpperCase()}${group.slice(1)} actions`, cmds })]));
 }

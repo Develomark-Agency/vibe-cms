@@ -92,7 +92,7 @@ export async function eventPage(cms: Cms<typeof fields>, slug: string) {
 }
 ```
 
-Published reads fail with `Conflict` if a stored value has the wrong type for its field, naming the document and field (`vibe-cms docs schema-changes`). `$meta.status` is `"draft"` (never published), `"published"` or `"changed"` (published, with newer draft edits). Media fields come back resolved with URLs (`vibe-cms docs media`), references as IDs unless expanded with `with` (`vibe-cms docs references`). `content.read` plugin hooks can reshape results on the way out.
+Published reads fail with `CONFLICT` if a stored value has the wrong type for its field, naming the document and field (`vibe-cms docs schema-changes`). `$meta.status` is `"draft"` (never published), `"published"` or `"changed"` (published, with newer draft edits). Media fields come back resolved with URLs (`vibe-cms docs media`), references as IDs unless expanded with `with` (`vibe-cms docs references`). `content.read` plugin hooks can reshape results on the way out.
 
 ## Batching
 
@@ -133,10 +133,10 @@ Pass `locale` to read a translation, falling back per document to the default lo
 The query client only reads. Documents are written through actions: the editor, the CLI (`vibe-cms docs cli`), `POST /_vibe/api/actions/documents.create` and friends, MCP (`vibe-cms docs agents`), or the typed action client:
 
 ```ts
-import { createThrowingActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
+import { createActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
 
-const actions = createThrowingActionClient<CoreActions>(httpCaller({ url: "https://site.example", token }));
+const actions = createActionClient<CoreActions>(httpCaller({ url: "https://site.example", token }));
 const doc = await actions.documents.create({ type: "post", data: { title: "Hello" }, publish: true });
 ```
 
-Every action needs a site session with the right permissions (`vibe-cms docs permissions`).
+Every action needs a site session with the right permissions (`vibe-cms docs permissions`). A failed action rejects with an oRPC `ORPCError`: its `code` (`CONFLICT`, `FORBIDDEN`, …), `message` and `data` (`vibe-cms docs agents` lists them).

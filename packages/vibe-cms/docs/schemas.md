@@ -92,9 +92,9 @@ Presets from other packages are built from these: `richText()` (`vibe-cms docs r
 
 - Every field is required unless wrapped in `v.optional(...)`. An empty array satisfies a required `v.array`.
 - **Drafts save even when invalid.** `documents.create` / `documents.update` store the draft and return its `issues` (`[{ path, message }]`), so editors can save work in progress.
-- **Publishing requires a valid document.** `documents.publish`, scheduling, and writes with `publish: true` fail with `Rejected` and the issues.
+- **Publishing requires a valid document.** `documents.publish`, scheduling, and writes with `publish: true` fail with `UNPROCESSABLE_CONTENT` and the issues.
 - Keys a schema doesn't declare are dropped on write.
-- References must point at existing documents, and a referenced document can't be deleted while referenced (`Conflict`, with the references).
+- References must point at existing documents, and a referenced document can't be deleted while referenced (`CONFLICT`, with the references).
 
 ## Unions
 

@@ -31,7 +31,7 @@ Linking documents with `v.ref()`: what's stored, how integrity is enforced, and 
 
 - `defineConfig` type-checks targets: `v.ref("autor")` is an error naming the unknown type.
 - Every write checks that referenced documents exist (`"Referenced document does not exist"`) and are of the right type.
-- Deleting a referenced document fails with `Conflict`; its `details.references` lists who points at it. Remove the references first, or pass `force: true` to `documents.delete` and leave them dangling (they expand to `null`).
+- Deleting a referenced document fails with `CONFLICT`; its `data.references` lists who points at it. Remove the references first, or pass `force: true` to `documents.delete` and leave them dangling (they expand to `null`).
 - References point at a document, not a locale: queries resolve them in the query's locale.
 
 ## Expanding with `with`

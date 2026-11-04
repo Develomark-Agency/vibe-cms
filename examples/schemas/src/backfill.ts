@@ -1,9 +1,9 @@
-import { createThrowingActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
+import { createActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
 
 // A one-off script for a schema change: copy every post's old `summary` into a new `excerpt`
 // field, keeping published posts published. Run it after deploying the schema with both fields.
 //   VIBE_SITE=http://localhost:1337 bun src/backfill.ts
-export async function backfill(actions: ReturnType<typeof createThrowingActionClient<CoreActions>>) {
+export async function backfill(actions: ReturnType<typeof createActionClient<CoreActions>>) {
   const limit = 50;
   // Oldest first: the default order (recently updated first) would shift as the script updates.
   for(let offset = 0; ; offset += limit) {
@@ -15,7 +15,7 @@ export async function backfill(actions: ReturnType<typeof createThrowingActionCl
         type: "post",
         id,
         data: { ...rest, excerpt: summary },
-        // Fails with Conflict instead of overwriting an edit made since the list was read.
+        // Fails with CONFLICT instead of overwriting an edit made since the list was read.
         baseUpdatedAt: Date.parse($meta.updatedAt),
         // Only republish what was live and unchanged, so unpublished draft edits stay unpublished.
         publish: $meta.status === "published"
@@ -33,5 +33,5 @@ if(import.meta.main) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ dev: true })
   })).json() as { token: string }).token;
-  await backfill(createThrowingActionClient<CoreActions>(httpCaller({ url: site, token })));
+  await backfill(createActionClient<CoreActions>(httpCaller({ url: site, token })));
 }

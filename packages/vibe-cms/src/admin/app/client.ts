@@ -1,10 +1,10 @@
 import { toast } from "sonner";
 import { hc } from "hono/client";
 import type { SerializedConfig } from "../../config.ts";
-import { Result } from "better-result";
-import { createThrowingActionClient, encodeInput } from "../../actions/client.ts";
+import { ORPCError } from "@orpc/client";
+import { createActionClient, encodeInput } from "../../actions/client.ts";
 import type { CoreActions } from "../../actions/core.ts";
-import type { ActionErrorTag } from "../../actions/errors.ts";
+import { codeForStatus } from "../../actions/errors.ts";
 import { createQueryClient } from "../../query/index.ts";
 import type { SiteSettings } from "../../handler/engine.ts";
 import type { SiteApi } from "../../handler/router.ts";
@@ -49,15 +49,29 @@ export interface SessionState {
   expiresAt: number
 }
 
-export class ApiError extends Error {
+/** A failed request: an `ORPCError` (`code`, `data`) that also knows the HTTP `status`. `details` is `data`. */
+export class ApiError extends ORPCError<string, any> {
   constructor(
     readonly status: number,
     message: string,
-    readonly details?: any,
-    /** The action error's tag, e.g. `Conflict`, when the server sent one. */
-    readonly tag?: ActionErrorTag
+    details?: any,
+    /** The action error's code, e.g. `CONFLICT`, when the server sent one. */
+    code?: string,
+    /** Whether the action declared this error (oRPC's `isDefinedError`). */
+    defined = false
   ) {
-    super(message);
+    super(code ?? codeForStatus(status), { message, data: details });
+    // oRPC types `defined` as read-only; it builds errors from JSON the same way.
+    (this as { defined: boolean }).defined = defined;
+  }
+
+  get details(): any {
+    return this.data;
+  }
+
+  // `ORPCError` matches any of its errors; this matches only requests that failed.
+  static override [Symbol.hasInstance](instance: unknown): boolean {
+    return Function.prototype[Symbol.hasInstance].call(this, instance);
   }
 }
 
@@ -91,10 +105,10 @@ export async function request<T>(prefix: string, path: string, init: RequestInit
   const data = response.headers.get("content-type")?.includes("json") ? await response.json() : await response.text();
   if(!response.ok) {
     if(response.status === 401 && !path.startsWith("/session")) onUnauthorized?.();
-    const failure = data as { error?: string, details?: unknown, tag?: ActionErrorTag } | string;
+    const failure = data as { error?: string, data?: unknown, code?: string, defined?: boolean } | string;
     throw typeof failure === "string"
       ? new ApiError(response.status, response.statusText)
-      : new ApiError(response.status, failure?.error ?? response.statusText, failure?.details, failure?.tag);
+      : new ApiError(response.status, failure?.error ?? response.statusText, failure?.data, failure?.code, failure?.defined);
   }
   return data as T;
 }
@@ -131,13 +145,13 @@ interface Reply<T> {
   text(): Promise<string>
 }
 
-/** A reply's JSON, or an `ApiError` carrying the server's message, tag and details. */
+/** A reply's JSON, or an `ApiError` carrying the server's message, code and data. */
 export async function read<T>(reply: Reply<T>): Promise<T> {
   if(reply.ok) return reply.json();
   const failure = reply.headers.get("content-type")?.includes("json")
-    ? await reply.json().catch(() => null) as { error?: string, details?: unknown, tag?: ActionErrorTag } | null
+    ? await reply.json().catch(() => null) as { error?: string, data?: unknown, code?: string, defined?: boolean } | null
     : null;
-  throw new ApiError(reply.status, failure?.error ?? reply.statusText, failure?.details, failure?.tag);
+  throw new ApiError(reply.status, failure?.error ?? reply.statusText, failure?.data, failure?.code, failure?.defined);
 }
 
 /** Raw bytes from the editor API, with the same credentials as `request`, for previews `<img src>` can't authenticate. */
@@ -157,12 +171,12 @@ export function createAdminClient(prefix: string, types: string[], navigate: (pa
     return request<T>(prefix, path, init);
   }
   // `request` throws `ApiError` on failure, so the editor catches rather than matching results.
-  const actions = createThrowingActionClient<CoreActions>(async (name, input) => {
+  const actions = createActionClient<CoreActions>(async (name, input) => {
     const { body, contentType } = encodeInput(input);
     const result = await api(`/actions/${name}`, { method: "POST", body, headers: contentType ? { "content-type": contentType } : {} });
     // Anything that changed content (a save, not only a publish) refreshes open previews.
     if(!READ_ONLY_ACTION.test(name)) notifyPreview();
-    return Result.ok(result);
+    return result;
   });
   const plugins = new Proxy({} as AdminClient["plugins"], {
     get: (_, name: string) => new Proxy({}, {

@@ -42,7 +42,7 @@ The client is the same `QueryClient` as `vibe.client(env)`, so every query in `v
 | `prefix` | If the config changes `prefix` from `/_vibe` |
 | `fetch` | A custom `fetch`, e.g. a service binding's |
 
-Failed requests reject with a `ClientError` carrying `status`, `message` and `details`.
+Failed requests reject with a `ClientError` carrying `status`, `message` and `details` (the response's `data`).
 
 ## Drafts
 
@@ -57,7 +57,7 @@ const drafts = await cms.query(config.schemas.post, { drafts: true }).findMany()
 console.log(drafts.map(entry => `${entry.title} (${entry.$meta.status})`));
 ```
 
-Development sites give a token to anyone who asks (`POST /_vibe/api/session` with `{ "dev": true }`). Deployed sites issue tokens to people signed in through the panel; sessions last 12 hours. Without a token, a draft query fails with `401 { "error": "Sign in required", "tag": "Unauthorized" }`.
+Development sites give a token to anyone who asks (`POST /_vibe/api/session` with `{ "dev": true }`). Deployed sites issue tokens to people signed in through the panel; sessions last 12 hours. Without a token, a draft query fails with `401 { "error": "Sign in required", "code": "UNAUTHORIZED" }`.
 
 ## The raw endpoint
 
@@ -77,7 +77,7 @@ const response = await fetch(`${url}/_vibe/api/query`, {
   })
 });
 
-// `{ results: [...] }`, one per query in order; failures are `{ error, tag, details? }` with a 4xx status.
+// `{ results: [...] }`, one per query in order; failures are `{ error, code, data? }` with a 4xx status.
 console.log(JSON.stringify(await response.json(), null, 2));
 ```
 

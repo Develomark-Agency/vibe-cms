@@ -1,10 +1,10 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { Result } from "better-result";
-import type { AnyAction } from "./define.ts";
-import { describeActions } from "./describe.ts";
-import type { ActionError } from "./errors.ts";
+import { call } from "@orpc/server";
+import type { ActionContext, ActionEntry } from "./define.ts";
+import { describeActions, filesFromJson } from "./describe.ts";
+import { isActionError } from "./errors.ts";
 
 /**
  * MCP over Streamable HTTP, served by the official SDK without sessions: just tools.
@@ -52,12 +52,12 @@ export const CONTENT_INSTRUCTIONS = `Workflow:
 - Call schema_list for the content types and locales, then schema_get for a type before writing its documents: it returns JSON Schema for \`data\`.
 - Content types are defined in the site's code (vibe-cms.config.ts). These tools can't add or change fields; that's a code change (\`bunx vibe-cms docs schemas\` in the site's repository).
 - documents_create and documents_update save drafts. Drafts save even when invalid and return \`issues\`; documents_publish (or \`publish: true\`) needs a valid document.
-- documents_update replaces the draft's fields: read the document with documents_get, change what you need, send all of \`data\` back, and pass its updatedAt as baseUpdatedAt so you don't overwrite someone else's edit (that fails with Conflict).
+- documents_update replaces the draft's fields: read the document with documents_get, change what you need, send all of \`data\` back, and pass its updatedAt as baseUpdatedAt so you don't overwrite someone else's edit (that fails with CONFLICT).
 - Media fields take \`{ "asset": "<id>", ...per-usage fields such as alt }\`. Upload with assets_upload first: \`file\` is \`{ name, type?, base64 }\` (type being its MIME type), and the input's own \`type\` and \`field\` (content type and field name) check the file against that field.
 - Reference fields take document IDs; references to any type take \`{ type, id }\`. A referenced document can't be deleted until nothing points at it (documents_references lists what does).
 - Pass \`locale\` to read or write a translation; updating a document in a new locale creates that translation. Each locale is published separately.
 - Deleting moves things to the trash (trash_restore brings them back); trash_purge and trash_empty can't be undone.
-- Errors carry a tag: Rejected (validation, with details.issues), Conflict, Forbidden (the user's role doesn't allow it), NotFound, InvalidInput.`;
+- Errors carry a code: UNPROCESSABLE_CONTENT (validation, with data.issues), CONFLICT, FORBIDDEN (the user's role doesn't allow it), NOT_FOUND, BAD_REQUEST.`;
 
 /** MCP tool names can't contain dots in every client. */
 export function toolName(action: string): string {
@@ -74,7 +74,7 @@ function mentionsIn(schema: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** Every action as a tool. `input` can add to each input schema, e.g. the panel's `site`. */
-export function actionTools(actions: Record<string, AnyAction>, options: { input?: (schema: Record<string, unknown>) => Record<string, unknown> } = {}): McpTool[] {
+export function actionTools(actions: ActionEntry[], options: { input?: (schema: Record<string, unknown>) => Record<string, unknown> } = {}): McpTool[] {
   return describeActions(actions, { files: "json" }).map(action => ({
     name: toolName(action.name),
     title: action.title,
@@ -98,15 +98,20 @@ export function textResult(value: unknown): ToolResult {
   };
 }
 
-/** A failed tool result: `{ error, tag, details? }`, as the REST API reports errors. */
-export function errorResult(error: Pick<ActionError, "_tag" | "message" | "details">): ToolResult {
-  const details = error.details === undefined ? "" : `\n${JSON.stringify(error.details, null, 2)}`;
-  return { isError: true, content: [{ type: "text", text: `[${error._tag}] ${error.message}${details}` }] };
+/** A failed tool result: `[CODE] message`, then the error's `data`. */
+export function errorResult(error: { code: string, message: string, data?: unknown }): ToolResult {
+  const data = error.data === undefined ? "" : `\n${JSON.stringify(error.data, null, 2)}`;
+  return { isError: true, content: [{ type: "text", text: `[${error.code}] ${error.message}${data}` }] };
 }
 
-/** An action's `Result` as a tool result. */
-export function toolResult(result: Result<unknown, ActionError>): ToolResult {
-  return result.isOk() ? textResult(result.value) : errorResult(result.error);
+/** Runs an action for a tool call: its output, or the failure, as a tool result. Anything but an action's own error is a bug and keeps throwing. */
+export async function runTool(action: ActionEntry, ctx: ActionContext, args: Record<string, unknown>): Promise<ToolResult> {
+  try {
+    return textResult(await call(action.procedure, filesFromJson(action.input, args), { context: ctx }));
+  } catch (error) {
+    if(isActionError(error)) return errorResult(error);
+    throw error;
+  }
 }
 
 function forbidden(): Response {

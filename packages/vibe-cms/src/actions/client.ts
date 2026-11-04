@@ -1,29 +1,17 @@
-import { Result } from "better-result";
-import type { ActionInput, ActionOutput, AnyAction } from "./define.ts";
-import { errorFromJson, type ActionError } from "./errors.ts";
+import { ORPCError } from "@orpc/client";
+import type { AnyRouter, RouterClient } from "@orpc/server";
+import { errorFromBody } from "./errors.ts";
 
-type Group<K> = K extends `${infer G}.${string}` ? G : never;
+/**
+ * `client.documents.list(input)` for every action in a router, resolving to its output and rejecting
+ * with an `ORPCError` (`code`, `message`, `data`) on failure.
+ */
+export type ActionClient<R extends AnyRouter> = RouterClient<R>;
 
-type Args<A extends AnyAction> = {} extends ActionInput<A> ? [input?: ActionInput<A>] : [input: ActionInput<A>];
+/** Sends one action by its dotted name (`documents.list`) and resolves to its output: `httpCaller` over HTTP, or your own transport. Rejects with an `ORPCError`. */
+export type ActionCaller = (name: string, input: unknown) => Promise<unknown>;
 
-/** `client.documents.list(input)` for every `documents.list`-style action, resolving to a `Result`. */
-export type ActionClient<A extends Record<string, AnyAction>> = {
-  [G in Group<keyof A & string>]: {
-    [K in keyof A & `${G}.${string}` as K extends `${G}.${infer V}` ? V : never]: (...args: Args<A[K]>) => Promise<Result<ActionOutput<A[K]>, ActionError>>
-  }
-};
-
-/** The same, for callers that would rather catch: failures reject with the tagged error. */
-export type ThrowingActionClient<A extends Record<string, AnyAction>> = {
-  [G in Group<keyof A & string>]: {
-    [K in keyof A & `${G}.${string}` as K extends `${G}.${infer V}` ? V : never]: (...args: Args<A[K]>) => Promise<ActionOutput<A[K]>>
-  }
-};
-
-/** Sends one action by name and resolves to its `Result`: `httpCaller` over HTTP, or your own transport. */
-export type ActionCaller = (name: string, input: unknown) => Promise<Result<unknown, ActionError>>;
-
-function proxy(call: (name: string, input: unknown) => Promise<unknown>): any {
+function proxy(call: ActionCaller): any {
   return new Proxy({}, {
     get: (_, group) => typeof group !== "string" ? undefined : new Proxy({}, {
       get: (__, verb) => typeof verb !== "string" ? undefined : (input?: unknown) => call(`${group}.${verb}`, input ?? {})
@@ -33,19 +21,10 @@ function proxy(call: (name: string, input: unknown) => Promise<unknown>): any {
 
 /**
  * A typed client for actions: `createActionClient<CoreActions>(httpCaller({ url, token }))`, then
- * `client.documents.create({ … })` resolves to a `Result`. See `vibe-cms docs queries` (Writing).
+ * `await client.documents.create({ … })`. See `vibe-cms docs queries` (Writing).
  */
-export function createActionClient<A extends Record<string, AnyAction>>(call: ActionCaller): ActionClient<A> {
+export function createActionClient<R extends AnyRouter>(call: ActionCaller): ActionClient<R> {
   return proxy(call);
-}
-
-/** Like `createActionClient`, but failures reject with the tagged error (`_tag`, `message`, `details`). */
-export function createThrowingActionClient<A extends Record<string, AnyAction>>(call: ActionCaller): ThrowingActionClient<A> {
-  return proxy(async (name, input) => {
-    const result = await call(name, input);
-    if(result.isErr()) throw result.error;
-    return result.value;
-  });
 }
 
 export interface HttpCallerOptions {
@@ -70,7 +49,8 @@ export function httpCaller(options: HttpCallerOptions): ActionCaller {
     if(contentType) headers.set("content-type", contentType);
     const response = await doFetch(`${base}${name}`, { method: "POST", headers, body: payload, credentials: options.credentials });
     const body = response.headers.get("content-type")?.includes("json") ? await response.json() : { error: await response.text() };
-    return response.ok ? Result.ok(body) : Result.err(errorFromJson(body as { tag?: string, error?: string, details?: unknown }, response.status));
+    if(response.ok) return body;
+    throw errorFromBody(body as { code?: string, error?: string, data?: unknown, defined?: boolean }, response.status);
   };
 }
 
@@ -87,3 +67,5 @@ export function encodeInput(input: unknown): { body: BodyInit, contentType?: str
   }
   return { body: form };
 }
+
+export { ORPCError };

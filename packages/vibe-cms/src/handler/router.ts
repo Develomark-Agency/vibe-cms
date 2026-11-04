@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { HttpError } from "../config.ts";
-import { errorJson, fromHttpError } from "../actions/errors.ts";
+import { fromHttpError } from "../actions/define.ts";
+import { errorBody, isActionError } from "../actions/errors.ts";
 import { announceSetup } from "./signin.ts";
 import { Engine } from "./engine.ts";
-import { json, readSession, type SiteEnv } from "./http.ts";
+import { errorResponse, json, readSession, type SiteEnv } from "./http.ts";
 import { actions } from "./routes/actions.ts";
 import { admin } from "./routes/admin.ts";
 import { auth } from "./routes/auth.ts";
@@ -60,7 +61,9 @@ export function createRouter(prefix: string) {
   root.onError(error => {
     // A body the router's validators couldn't read.
     if(error instanceof HTTPException) return json({ error: error.message }, { status: error.status });
-    if(error instanceof HttpError) return json(errorJson(fromHttpError(error)), { status: error.status });
+    if(error instanceof HttpError) return json(errorBody(fromHttpError(error)), { status: error.status });
+    // An action that failed on its own terms.
+    if(isActionError(error)) return errorResponse(error);
     console.error("vibe-cms:", error);
     return json({ error: "Internal error" }, { status: 500 });
   });

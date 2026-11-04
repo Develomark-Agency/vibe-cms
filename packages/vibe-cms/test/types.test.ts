@@ -136,13 +136,12 @@ test("query locales are the site's locales", () => {
 });
 
 test("action clients are typed from the action definitions", async () => {
-  const { createActionClient, createThrowingActionClient } = await import("../src/actions/client.ts");
+  const { createActionClient } = await import("../src/actions/client.ts");
   type Actions = import("../src/actions/core.ts").CoreActions;
-  const { Result } = await import("better-result");
   const calls: string[] = [];
-  const actions = createThrowingActionClient<Actions>(async name => {
+  const actions = createActionClient<Actions>(async name => {
     calls.push(name);
-    return Result.ok({ docs: [], total: 0 });
+    return { docs: [], total: 0 };
   });
   const listed = await actions.documents.list({ type: "post", limit: 5 });
   assertType<Equal<typeof listed.total, number>>(true);
@@ -152,10 +151,6 @@ test("action clients are typed from the action definitions", async () => {
   void actions.documents.nope;
   void actions.schema.list();
   expect(calls).toEqual(["documents.list", "documents.list", "schema.list"]);
-
-  const results = createActionClient<Actions>(async () => Result.ok({ folders: [] }));
-  const folders = await results.folders.list();
-  if(folders.isErr()) assertType<Equal<typeof folders.error._tag, import("../src/actions/errors.ts").ActionErrorTag>>(true);
 });
 
 test("field() paths are checked against the value", () => {

@@ -37,6 +37,7 @@ import { Toaster } from "../components/ui/sonner.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
+import { safe } from "@orpc/client";
 import { ApiError } from "./client.ts";
 import { formatDate, useAdmin } from "./context.tsx";
 import { Delayed } from "./delayed.tsx";
@@ -476,24 +477,25 @@ export function MediaPage() {
     let notEmpty = 0;
     let failed = 0;
     for(const file of bulk.files) {
-      try {
-        trashed.push((await cms.actions.assets.delete({ id: file.id })).trash);
-        name = file.name;
-        deleted++;
-      } catch (error) {
-        if(error instanceof ApiError && error.tag === "Conflict") inUse++;
+      const { data, error, definedError } = await safe(cms.actions.assets.delete({ id: file.id }));
+      if(error) {
+        if(definedError?.code === "CONFLICT") inUse++;
         else failed++;
+        continue;
       }
+      trashed.push(data.trash);
+      name = file.name;
+      deleted++;
     }
     for(const path of [...bulk.folders].sort((a, b) => b.split("/").length - a.split("/").length)) {
-      try {
-        await cms.actions.folders.delete({ path });
-        removedFolders.push(path);
-        deleted++;
-      } catch (error) {
-        if(error instanceof ApiError && error.tag === "Conflict") notEmpty++;
+      const { error, definedError } = await safe(cms.actions.folders.delete({ path }));
+      if(error) {
+        if(definedError?.code === "CONFLICT") notEmpty++;
         else failed++;
+        continue;
       }
+      removedFolders.push(path);
+      deleted++;
     }
     library.refresh();
     clearSelection();

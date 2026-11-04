@@ -1,7 +1,6 @@
 import { coreActions } from "../actions/core.ts";
-import { runAction, type ActionContext, type AnyAction } from "../actions/define.ts";
-import { filesFromJson } from "../actions/describe.ts";
-import { actionTools, CONTENT_INSTRUCTIONS, serveMcp, toolName, toolResult, type McpTool } from "../actions/mcp.ts";
+import { indexActions, type ActionContext } from "../actions/define.ts";
+import { actionTools, CONTENT_INSTRUCTIONS, runTool, serveMcp, toolName, type McpTool } from "../actions/mcp.ts";
 import pkg from "../../package.json" with { type: "json" };
 
 /** A site's own MCP server: every action is a tool, run with the request's site session. */
@@ -10,7 +9,8 @@ const INSTRUCTIONS = `Content management for this site: its documents, media lib
 
 ${CONTENT_INSTRUCTIONS}`;
 
-const tools = new Map<string, AnyAction>(Object.values(coreActions).map(action => [toolName(action.name), action as AnyAction]));
+const actions = indexActions(coreActions);
+const tools = new Map([...actions.values()].map(action => [toolName(action.name), action]));
 
 let toolList: McpTool[] | undefined;
 
@@ -19,11 +19,10 @@ export function handleMcp(request: Request, ctx: ActionContext): Promise<Respons
     name: "vibe-cms",
     version: pkg.version,
     instructions: INSTRUCTIONS,
-    tools: () => (toolList ??= actionTools(coreActions)),
+    tools: () => (toolList ??= actionTools([...actions.values()])),
     async call(name, args) {
       const action = tools.get(name);
-      if(!action) return null;
-      return toolResult(await runAction(action, ctx, filesFromJson(action, args)));
+      return action ? runTool(action, ctx, args) : null;
     }
   });
 }

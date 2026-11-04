@@ -150,7 +150,7 @@ export const importCommand = command({
         if(answer?.trim().toLowerCase() !== "y") return;
       }
       // An import that stopped part-way left the site as it was, and its export already exists.
-      const status = (await call("backups.restoreStatus", {})).unwrap() as { restore: { from: { siteId: string, takenAt: number } } | null };
+      const status = await call("backups.restoreStatus", {}) as { restore: { from: { siteId: string, takenAt: number } } | null };
       const resuming = status.restore?.from.siteId === plan.snapshot.siteId && status.restore.from.takenAt === plan.snapshot.takenAt;
       if(!values.noSafety && !resuming) {
         const safety = await exportSite(call, undefined, path.dirname(input), report.progress, "-before-import");

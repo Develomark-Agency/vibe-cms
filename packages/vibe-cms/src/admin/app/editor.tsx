@@ -42,6 +42,7 @@ import { Skeleton } from "../components/ui/skeleton.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
+import { isActionError } from "../../actions/errors.ts";
 import { ApiError } from "./client.ts";
 import { Delayed, useArrival } from "./delayed.tsx";
 import {
@@ -152,22 +153,27 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   }
 
   function handleError(error: unknown) {
-    if(error instanceof ApiError) {
-      if(error.tag === "Conflict" && error.details?.updatedAt) {
+    if(isActionError(error)) {
+      if(error.code === "CONFLICT" && error.data?.updatedAt !== undefined) {
         void cms.actions.documents.get({ type, id: id!, locale }).then(setConflict);
         return;
       }
-      if(error.details?.issues) {
-        setServerIssues(error.details.issues);
+      if((error.code === "BAD_REQUEST" || error.code === "UNPROCESSABLE_CONTENT") && error.data?.issues) {
+        setServerIssues(error.data.issues);
         setShowIssues(true);
         cms.toast(error.message, { type: "error" });
         requestAnimationFrame(() => document.querySelector("[data-invalid]")?.scrollIntoView({ behavior: "smooth", block: "center" }));
         return;
       }
-      if(error.details?.references) {
+      if(error.code === "CONFLICT" && error.data?.references) {
         cms.toast(`${error.message}. Remove those references first.`, { type: "error" });
         return;
       }
+      cms.toast(error.message, { type: "error" });
+      return;
+    }
+    // A request that failed some other way: the network, a gateway, a route that isn't an action.
+    if(error instanceof ApiError) {
       cms.toast(error.message, { type: "error" });
       return;
     }

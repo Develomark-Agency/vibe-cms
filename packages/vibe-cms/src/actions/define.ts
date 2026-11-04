@@ -1,8 +1,9 @@
-import { Result } from "better-result";
-import type { z } from "zod";
+import { getOpenAPIMeta, openapi } from "@orpc/openapi";
+import { defineMeta, ORPCError, os, walkProcedureContractsSync, type AnyProcedure, type AnyRouter, type ErrorMapItem, type RouterClient } from "@orpc/server";
+import { z } from "zod";
 import { HttpError } from "../config.ts";
 import type { Engine } from "../handler/engine.ts";
-import { fromHttpError, InvalidInput, type ActionError } from "./errors.ts";
+import { codeForStatus, type ActionError, type ActionErrorCode } from "./errors.ts";
 
 /** What an action runs against: the engine for this request's session. */
 export interface ActionContext {
@@ -19,47 +20,145 @@ export interface ActionAnnotations {
   idempotent?: boolean
 }
 
-/** A named capability with a Zod input, run by every surface (REST, MCP, CLI, the editor). */
-export interface Action<N extends string = string, I extends z.ZodType = z.ZodType, O = unknown> {
-  /** `group.verb`, e.g. `documents.list`. Surfaces derive their own names from it. */
-  name: N,
+const [annotationsMeta, getAnnotations] = defineMeta<"vibe/annotations", ActionAnnotations>("vibe/annotations", (incoming, current) => ({ ...current, ...incoming }));
+
+/** An action's {@link ActionAnnotations}, as declared with {@link base}. */
+export { getAnnotations };
+
+const path = z.array(z.union([z.string(), z.number()]));
+const issues = z.array(z.object({ path, message: z.string() }));
+
+/**
+ * The errors every action can fail with, and the `data` each carries (`undefined` when it carries none).
+ * oRPC only treats an error as declared (`isDefinedError`) when its data fits, so these describe exactly
+ * what the engine throws. Codes: `vibe-cms docs agents`.
+ */
+export const errorMap = {
+  /** `issues`: the input that failed its schema, or a value the engine refused (a row with the wrong type). */
+  BAD_REQUEST: { data: z.object({ issues }).optional() },
+  UNAUTHORIZED: {},
+  FORBIDDEN: {},
+  NOT_FOUND: {},
+  CONFLICT: {
+    data: z.object({
+      /** Someone saved since `baseUpdatedAt`: when, and by whom. */
+      updatedAt: z.number().optional(),
+      updatedBy: z.string().nullable().optional(),
+      /** Documents that still point at the one being deleted. */
+      references: z.array(z.object({ id: z.string(), type: z.string(), locale: z.string() })).optional(),
+      /** Stored values that no longer fit their field (a schema change). */
+      mismatches: z.array(z.object({ type: z.string(), id: z.string(), locale: z.string(), path, expected: z.string(), found: z.string() })).optional(),
+      /** The unfinished restore in the way. */
+      restoreId: z.string().optional()
+    }).optional()
+  },
+  PAYLOAD_TOO_LARGE: {},
+  UNSUPPORTED_MEDIA_TYPE: {},
+  UNPROCESSABLE_CONTENT: {
+    data: z.object({
+      /** Content that fails validation. */
+      issues: issues.optional(),
+      /** Why a snapshot can't be restored here, and what to know anyway. */
+      problems: z.array(z.string()).optional(),
+      warnings: z.array(z.string()).optional()
+    }).optional()
+  },
+  NOT_IMPLEMENTED: {},
+  BAD_GATEWAY: {},
+  SERVICE_UNAVAILABLE: { data: z.object({ status: z.number().optional(), retry: z.boolean().optional() }).optional() }
+} satisfies { [K in ActionErrorCode]: ErrorMapItem };
+
+/** The engine still throws `HttpError`; this is where its statuses become codes. Its `details` become `data`. */
+export function fromHttpError(error: HttpError): ActionError {
+  return new ORPCError(codeForStatus(error.status), { message: error.message, ...(error.details === undefined ? {} : { data: error.details }) }) as ActionError;
+}
+
+const builder = os
+  .$context<ActionContext>()
+  .errors(errorMap)
+  .use(async ({ next }) => {
+    try {
+      return await next();
+    } catch (error) {
+      if(error instanceof HttpError) throw fromHttpError(error);
+      // The first failed input check, as one readable line: `data.title: Invalid input`.
+      if(error instanceof ORPCError && error.code === "BAD_REQUEST" && (error.data as { issues?: unknown } | undefined)?.issues) {
+        const raw = (error.data as { issues: Array<{ message: string, path?: ReadonlyArray<PropertyKey | { key: PropertyKey }> }> }).issues;
+        const issues = raw.map(issue => ({ path: (issue.path ?? []).map(step => { const key = typeof step === "object" ? step.key : step; return typeof key === "number" ? key : String(key); }), message: issue.message }));
+        const first = issues[0];
+        throw new ORPCError("BAD_REQUEST", { message: first ? `${first.path.length ? `${first.path.join(".")}: ` : ""}${first.message}` : error.message, data: { issues } });
+      }
+      throw error;
+    }
+  });
+
+/** What every action declares: `summary` and `description` (shown by MCP, the CLI and the actions listing) and its {@link ActionAnnotations}. */
+export interface ActionMeta extends ActionAnnotations {
+  summary: string,
+  description: string
+}
+
+/**
+ * Starts an action: `base({ summary, description, readOnly: true }).input(…).handler(…)`. What it
+ * builds on has the engine as context, the shared errors, and `HttpError`s from the engine turned into
+ * them. Chain `.meta(…)` for anything else.
+ */
+export function base({ summary, description, ...annotations }: ActionMeta) {
+  return builder.meta(openapi({ summary, description }), annotationsMeta(annotations));
+}
+
+/** Groups actions into a router: `router({ list, get })`. Plain objects work too, but this checks that everything in it is an action or another router. */
+export function router<T extends AnyRouter>(routes: T) {
+  return os.$context<ActionContext>().router(routes);
+}
+
+/** Any router of actions: procedures grouped in plain objects. */
+export type ActionRouter = AnyRouter;
+
+/** One action found in a router: its dotted name (`documents.list`), metadata and input schema. */
+export interface ActionEntry {
+  /** The path joined with dots, e.g. `documents.list`. Surfaces derive their own names from it. */
+  name: string,
+  path: string[],
   title: string,
   description: string,
-  input: I,
   annotations: ActionAnnotations,
-  run(ctx: ActionContext, input: z.output<I>): Promise<Result<O, ActionError>>
+  input: z.ZodType,
+  procedure: AnyProcedure
 }
 
-/** Any action. */
-export type AnyAction = Action<string, z.ZodType, any>;
-/** An action's input, as callers write it. */
-export type ActionInput<A extends AnyAction> = z.input<A["input"]>;
-/** What an action resolves to. */
-export type ActionOutput<A extends AnyAction> = A extends Action<any, any, infer O> ? O : never;
-
-/** Declares an action; the identity function, for inference. */
-export function defineAction<const N extends string, I extends z.ZodType, O>(action: Action<N, I, O>): Action<N, I, O> {
-  return action;
+/** An action's input schema (an empty object when it takes none). */
+export function inputSchemaOf(procedure: AnyProcedure): z.ZodType {
+  const schemas = procedure["~orpc"].inputSchemas as unknown;
+  return ((Array.isArray(schemas) ? schemas[0] : schemas) ?? z.object({})) as z.ZodType;
 }
 
-/** Calls into the engine, which still throws `HttpError`, and turns those into tagged errors. Anything else is a bug and keeps throwing. */
-export async function attempt<T>(fn: () => Promise<T>): Promise<Result<T, ActionError>> {
-  try {
-    return Result.ok(await fn());
-  } catch (error) {
-    if(error instanceof HttpError) return Result.err(fromHttpError(error));
-    throw error;
-  }
+/** What an action takes, as callers write it. */
+export type ActionInputOf<P extends AnyProcedure> = NonNullable<Parameters<RouterClient<P>>[0]>;
+
+/** Every action in a router, in declaration order. Surfaces (REST, MCP, CLI) are generated from this. */
+export function listActions(router: ActionRouter): ActionEntry[] {
+  const entries: ActionEntry[] = [];
+  walkProcedureContractsSync(router, (contract, path) => {
+    const procedure = contract as AnyProcedure;
+    const name = path.join(".");
+    const docs = getOpenAPIMeta(procedure);
+    // Surfaces show these (MCP tool lists, CLI help, the actions listing), so an action can't go without.
+    if(!docs?.summary || !docs.description) throw new Error(`Action ${name} needs .meta(openapi({ summary, description }))`);
+    entries.push({
+      name,
+      path,
+      title: docs.summary,
+      description: docs.description,
+      annotations: getAnnotations(procedure) ?? {},
+      input: inputSchemaOf(procedure),
+      procedure
+    });
+  });
+  return entries;
 }
 
-/** The one entry point every surface uses: validate the input, then run. */
-export async function runAction<A extends AnyAction>(action: A, ctx: ActionContext, input: unknown): Promise<Result<ActionOutput<A>, ActionError>> {
-  const parsed = action.input.safeParse(input ?? {});
-  if(!parsed.success) {
-    const issues = parsed.error.issues.map(issue => ({ path: issue.path.map(key => (typeof key === "symbol" ? String(key) : key)), message: issue.message }));
-    const first = issues[0]!;
-    const where = first.path.length ? `${first.path.join(".")}: ` : "";
-    return Result.err(new InvalidInput({ message: `${where}${first.message}`, details: { issues } }));
-  }
-  return action.run(ctx, parsed.data);
+/** The same, by name. */
+export function indexActions(router: ActionRouter): Map<string, ActionEntry> {
+  return new Map(listActions(router).map(entry => [entry.name, entry]));
 }

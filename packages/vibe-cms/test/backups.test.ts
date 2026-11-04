@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createThrowingActionClient, httpCaller, type CoreActions } from "../src/actions/index.ts";
+import { createActionClient, httpCaller, type CoreActions } from "../src/actions/index.ts";
 import { folderStore } from "../src/backups/fs.ts";
 import { BackupError, listSnapshots, packSnapshot, planRestore, restoreSnapshot, takeSnapshot, unpackSnapshot, verifyRestore, type BackupStore } from "../src/backups/index.ts";
 import { can } from "../src/handler/auth.ts";
@@ -38,7 +38,7 @@ async function connect(target: Site) {
   const response = await network(`${target.origin}/_vibe/api/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dev: true }) });
   const { token } = await response.json() as { token: string };
   const call = httpCaller({ url: target.origin, token, fetch: network });
-  return { call, actions: createThrowingActionClient<CoreActions>(call) };
+  return { call, actions: createActionClient<CoreActions>(call) };
 }
 
 let dir: string;
@@ -200,10 +200,10 @@ describe("restores", () => {
     const taken = await takeSnapshot({ call: (await connect(a)).call, store, fetch: network });
     const { actions } = await connect(b);
     const { restoreId } = await actions.backups.restoreBegin({ manifest: taken.manifest });
-    await expect(actions.backups.restoreCommit({ restoreId, expected: taken.manifest.tables })).rejects.toMatchObject({ _tag: "Conflict", message: expect.stringContaining("documents has 0 of 3 rows") });
+    await expect(actions.backups.restoreCommit({ restoreId, expected: taken.manifest.tables })).rejects.toMatchObject({ code: "CONFLICT", message: expect.stringContaining("documents has 0 of 3 rows") });
     const assets = await (await connect(a)).actions.backups.export({ table: "assets" });
     await actions.backups.restoreRows({ restoreId, table: "assets", rows: assets.rows });
-    await expect(actions.backups.restoreCommit({ restoreId, expected: { assets: 1 } })).rejects.toMatchObject({ _tag: "Conflict", message: expect.stringContaining("weren't uploaded") });
+    await expect(actions.backups.restoreCommit({ restoreId, expected: { assets: 1 } })).rejects.toMatchObject({ code: "CONFLICT", message: expect.stringContaining("weren't uploaded") });
     await actions.backups.restoreCancel({ restoreId });
     expect((await actions.backups.restoreStatus()).restore).toBeNull();
   });
@@ -216,7 +216,7 @@ describe("restores", () => {
     const check = await actions.backups.check({ manifest });
     expect(check.ok).toBe(false);
     expect(check.problems[0]).toContain("\"product\"");
-    await expect(actions.backups.restoreBegin({ manifest })).rejects.toMatchObject({ _tag: "Rejected" });
+    await expect(actions.backups.restoreBegin({ manifest })).rejects.toMatchObject({ code: "UNPROCESSABLE_CONTENT" });
     expect((await actions.backups.restoreStatus()).restore).toBeNull();
   });
 
@@ -225,7 +225,7 @@ describe("restores", () => {
     const taken = await takeSnapshot({ call: (await connect(a)).call, store, fetch: network });
     const { actions } = await connect(b);
     await actions.backups.restoreBegin({ manifest: taken.manifest });
-    await expect(actions.backups.restoreBegin({ manifest: taken.manifest })).rejects.toMatchObject({ _tag: "Conflict" });
+    await expect(actions.backups.restoreBegin({ manifest: taken.manifest })).rejects.toMatchObject({ code: "CONFLICT" });
     await actions.backups.restoreBegin({ manifest: taken.manifest, force: true });
   });
 });
@@ -240,7 +240,7 @@ describe("access", () => {
   test("transfer links are signed and expire", async () => {
     await fill(a);
     const { actions } = await connect(a);
-    const { files } = await actions.backups.files();
+    const { files } = await actions.backups.files({});
     const url = new URL(files[0]!.url!);
     expect((await network(url)).status).toBe(200);
     const tampered = new URL(url);

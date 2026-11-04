@@ -13,5 +13,5 @@ const response = await fetch(`${url}/_vibe/api/query`, {
   })
 });
 
-// `{ results: [...] }`, one per query in order; failures are `{ error, tag, details? }` with a 4xx status.
+// `{ results: [...] }`, one per query in order; failures are `{ error, code, data? }` with a 4xx status.
 console.log(JSON.stringify(await response.json(), null, 2));

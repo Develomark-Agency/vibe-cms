@@ -42,7 +42,7 @@ Flags:
 - Files (`--file`) take a path.
 - `--site` (or `VIBE_SITE`) is the site's origin; `--prefix` if it isn't `/_vibe`.
 
-Output is the action's result as JSON on stdout, so it pipes into `jq`. Failures print the error tag, message and details on stderr and exit 1 (tags: `vibe-cms docs agents`).
+Output is the action's result as JSON on stdout, so it pipes into `jq`. Failures print the error code, message and data on stderr and exit 1 (codes: `vibe-cms docs agents`).
 
 ## Signing in
 

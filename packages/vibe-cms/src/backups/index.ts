@@ -1,5 +1,6 @@
 import type { ActionCaller } from "../actions/client.ts";
-import type { ActionError } from "../actions/errors.ts";
+import { ORPCError } from "@orpc/client";
+import { isRetryable } from "../actions/errors.ts";
 import { BACKUP_TABLE_NAMES, type BackupFile, type BackupManifest, type BackupTable, type RestoreCheck } from "../handler/backups.ts";
 
 /**
@@ -71,10 +72,6 @@ export class BackupError extends Error {
 
 const PAGE = 200;
 
-function retryable(error: ActionError): boolean {
-  return error._tag === "Unavailable" && (error.details as { retry?: boolean } | undefined)?.retry === true;
-}
-
 async function backoff(attempt: number) {
   await new Promise(resolve => setTimeout(resolve, Math.min(30_000, 500 * 2 ** attempt) * (0.5 + Math.random() / 2)));
 }
@@ -86,11 +83,9 @@ function steady(options: RunOptions) {
     for(let attempt = 1; ; attempt++) {
       let failure: string;
       try {
-        const result = await options.call(name, input);
-        if(result.isOk()) return result.value as T;
-        if(!retryable(result.error) || attempt >= attempts) throw new BackupError(`${name}: ${result.error.message}`, { tag: result.error._tag, details: result.error.details });
-        failure = result.error.message;
+        return await options.call(name, input) as T;
       } catch (error) {
+        if(error instanceof ORPCError && (!isRetryable(error) || attempt >= attempts)) throw new BackupError(`${name}: ${error.message}`, { code: error.code, data: error.data });
         if(error instanceof BackupError || attempt >= attempts) throw error;
         failure = (error as Error).message;
       }

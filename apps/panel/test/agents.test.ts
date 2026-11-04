@@ -130,8 +130,8 @@ describe("connecting an agent", () => {
 
     // The site's own rules still apply: editors here can't touch site settings.
     const settings = await call(token, "site_update", { site: a, name: "Renamed" });
-    expect(settings.content[0].text).toStartWith("[Forbidden]");
-    expect((await call(token, "documents_list", { site: "nope", type: "post" })).content[0].text).toStartWith("[NotFound]");
+    expect(settings.content[0].text).toStartWith("[FORBIDDEN]");
+    expect((await call(token, "documents_list", { site: "nope", type: "post" })).content[0].text).toStartWith("[NOT_FOUND]");
   });
 
   test("signing out of the panel leaves the agent connected; disconnecting it doesn't sign anyone out", async () => {
@@ -155,16 +155,16 @@ describe("connecting an agent", () => {
     expect(tools.every((t: { annotations: { readOnlyHint: boolean } }) => t.annotations.readOnlyHint)).toBe(true);
     expect(tools.map((t: { name: string }) => t.name)).toContain("documents_list");
     const refused = await call(token, "documents_create", { site: a, type: "post", data: { title: "No" } });
-    expect(refused.content[0].text).toStartWith("[Forbidden]");
+    expect(refused.content[0].text).toStartWith("[FORBIDDEN]");
   });
 
-  test("a user the site gives no role gets Forbidden from the site", async () => {
+  test("a user the site gives no role gets FORBIDDEN from the site", async () => {
     idp.email = "bob@agency.test";
     idp.sub = "u-bob";
     await signIn();
     const { access_token: token } = await connectWithTokens();
     const result = await call(token, "documents_list", { site: a, type: "post" });
-    expect(result.content[0].text).toBe("[Forbidden] No access to this site");
+    expect(result.content[0].text).toBe("[FORBIDDEN] No access to this site");
   });
 
   test("refresh tokens rotate", async () => {

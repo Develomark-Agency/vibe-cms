@@ -1,91 +1,222 @@
+import { createRouterClient, call, type AnyProcedure, type RouterClient } from "@orpc/server";
 import { Hono } from "hono";
+import { validator } from "hono/validator";
 import { HttpError } from "../../config.ts";
 import { coreActions, type CoreActions } from "../../actions/core.ts";
-import { runAction, type AnyAction } from "../../actions/define.ts";
+import { indexActions, inputSchemaOf, listActions, type ActionInputOf } from "../../actions/define.ts";
 import { describeActions, filesFromJson } from "../../actions/describe.ts";
 import { fromText } from "../../actions/inputs.ts";
-import { errorResponse, formValues, json, jsonBody, queryValues, type SiteEnv } from "../http.ts";
+import { formValues, jsonBody, jsonObject, queryValues, type SiteEnv } from "../http.ts";
 
-/** The CMS's actions over HTTP: by name, and as a REST API. Mounted under `/api`. */
-export const actions = new Hono<SiteEnv>();
+/**
+ * The CMS's actions over HTTP: by name, and as a REST API where each route says where an action's
+ * input comes from. Mounted under `/api`.
+ */
+export const actions = new Hono<{ Bindings: SiteEnv["Bindings"], Variables: SiteEnv["Variables"] & { actions: RouterClient<CoreActions> } }>();
 
-actions.get("/actions", () => json({ actions: describeActions(coreActions) }));
+const index = indexActions(coreActions);
 
-/** Any action by name: `POST /_vibe/api/actions/documents.list` with its input as JSON or multipart. */
-actions.post("/actions/:name", async c => {
-  const name = c.req.param("name");
-  const action = (coreActions as Record<string, AnyAction>)[name];
-  if(!action) throw new HttpError(404, `No action "${name}"`);
-  const type = c.req.header("content-type") ?? "";
-  const input = type.includes("multipart/form-data") ? fromText(action.input, formValues(await c.req.raw.formData())) : filesFromJson(action, await jsonBody(c.req.raw));
-  const result = await runAction(action, { engine: c.get("engine") }, input);
-  return result.isOk() ? json(result.value) : errorResponse(result.error);
-});
-actions.all("/actions/:name", () => {
-  throw new HttpError(405, "Use POST");
+actions.use("*", async (c, next) => {
+  c.set("actions", createRouterClient(coreActions, { context: { engine: c.get("engine") } }));
+  await next();
+  if(!c.res.headers.has("cache-control")) c.header("cache-control", "no-store");
 });
 
-interface RestRoute {
-  /** `METHOD /path/:param`, relative to `/_vibe/api`. */
-  route: string,
-  action: keyof CoreActions,
-  status?: number,
-  /** How the body carries input: JSON (the default), multipart form fields, or raw text as one field. */
-  body?: "form" | { text: string }
+/**
+ * The query string as the action's input: numbers, booleans and lists converted by the input schema's
+ * own field types, so no route lists them. Typed as that input, but only the action's validation
+ * checks it, when the action runs.
+ */
+function coerceQuery<P extends AnyProcedure>(procedure: P) {
+  const schema = inputSchemaOf(procedure);
+  return validator("query", (_, c): Partial<ActionInputOf<P>> => fromText(schema, queryValues(new URL(c.req.url))) as Partial<ActionInputOf<P>>);
 }
 
 /**
- * The REST API: each route only says where an action's input comes from. Path params,
- * then the body, then the query string, in that order of precedence.
+ * A JSON body as an action's input, without the fields the route takes from its path. Fields the body
+ * leaves out can come from the query string (`PUT /documents/post/x?locale=fr`).
  */
-const restRoutes: RestRoute[] = [
-  { route: "GET /schema", action: "schema.list" },
-  { route: "GET /schema/:type", action: "schema.get" },
-  { route: "GET /site", action: "site.get" },
-  { route: "PATCH /site", action: "site.update" },
-  { route: "GET /documents/:type", action: "documents.list" },
-  { route: "POST /documents/:type", action: "documents.create", status: 201 },
-  { route: "GET /documents/:type/:id", action: "documents.get" },
-  { route: "PUT /documents/:type/:id", action: "documents.update" },
-  { route: "DELETE /documents/:type/:id", action: "documents.delete" },
-  { route: "POST /documents/:type/:id/publish", action: "documents.publish" },
-  { route: "POST /documents/:type/:id/unpublish", action: "documents.unpublish" },
-  { route: "GET /documents/:type/:id/references", action: "documents.references" },
-  { route: "GET /documents/:type/:id/versions", action: "documents.versions" },
-  { route: "GET /documents/:type/:id/versions/:ver", action: "documents.version" },
-  { route: "POST /documents/:type/:id/versions/:ver/restore", action: "documents.restoreVersion" },
-  { route: "POST /documents/:type/:id/schedule", action: "documents.schedule" },
-  { route: "DELETE /documents/:type/:id/schedule", action: "documents.unschedule" },
-  { route: "GET /assets", action: "assets.list" },
-  { route: "POST /assets", action: "assets.upload", status: 201, body: "form" },
-  { route: "GET /assets/:id", action: "assets.get" },
-  { route: "PATCH /assets/:id", action: "assets.update" },
-  { route: "DELETE /assets/:id", action: "assets.delete" },
-  { route: "PUT /assets/:id/content", action: "assets.replaceContent", body: { text: "content" } },
-  { route: "GET /folders", action: "folders.list" },
-  { route: "POST /folders", action: "folders.create", status: 201 },
-  { route: "PATCH /folders", action: "folders.move" },
-  { route: "DELETE /folders", action: "folders.delete" },
-  { route: "GET /trash", action: "trash.list" },
-  { route: "DELETE /trash", action: "trash.empty" },
-  { route: "GET /trash/:id", action: "trash.get" },
-  { route: "DELETE /trash/:id", action: "trash.purge" },
-  { route: "POST /trash/:id/restore", action: "trash.restore" }
-];
-
-async function restBody(request: Request, entry: RestRoute, schema: AnyAction["input"]): Promise<Record<string, unknown>> {
-  if(request.method === "GET" || request.method === "DELETE") return {};
-  if(entry.body === "form") return fromText(schema, formValues(await request.formData()));
-  if(entry.body) return { [entry.body.text]: await request.text() };
-  return jsonBody(request);
-}
-
-for(const entry of restRoutes) {
-  const [method, path] = entry.route.split(" ") as [string, string];
-  const action = coreActions[entry.action];
-  actions.on(method, path, async c => {
-    const input = { ...fromText(action.input, queryValues(new URL(c.req.url))), ...await restBody(c.req.raw, entry, action.input), ...fromText(action.input, c.req.param()) };
-    const result = await runAction(action, { engine: c.get("engine") }, input);
-    return result.isOk() ? json(result.value, { status: entry.status ?? 200 }) : errorResponse(result.error);
+function body<P extends AnyProcedure, const K extends keyof ActionInputOf<P> = never>(procedure: P, ..._fromPath: K[]) {
+  const schema = inputSchemaOf(procedure);
+  return validator("json", async (value, c): Promise<Omit<ActionInputOf<P>, K>> => {
+    return { ...fromText(schema, queryValues(new URL(c.req.url))), ...await jsonObject(value, c) } as Omit<ActionInputOf<P>, K>;
   });
 }
+
+const a = coreActions;
+
+actions
+  .get("/actions", c => c.json({ actions: describeActions(listActions(coreActions)) }))
+  // Any action by name: `POST /_vibe/api/actions/documents.list` with its input as JSON or multipart.
+  .post(
+    "/actions/:name",
+    async c => {
+      const name = c.req.param("name");
+      const action = index.get(name);
+      if(!action) throw new HttpError(404, `No action "${name}"`);
+      const type = c.req.header("content-type") ?? "";
+      const input = type.includes("multipart/form-data") ? fromText(action.input, formValues(await c.req.raw.formData())) : filesFromJson(action.input, await jsonBody(c.req.raw));
+      return c.json(await call(action.procedure, input, { context: { engine: c.get("engine") } }));
+    }
+  )
+  .all("/actions/:name", () => { throw new HttpError(405, "Use POST"); })
+
+  .get("/schema", async c => c.json(await c.var.actions.schema.list()))
+  .get("/schema/:type", async c => c.json(await c.var.actions.schema.get(c.req.param())))
+
+  .get("/site", async c => c.json(await c.var.actions.site.get()))
+  .patch(
+    "/site",
+    body(a.site.update),
+    async c => c.json(await c.var.actions.site.update(c.req.valid("json")))
+  )
+
+  .get(
+    "/documents/:type",
+    coerceQuery(a.documents.list),
+    async c => c.json(await c.var.actions.documents.list({ ...c.req.valid("query"), ...c.req.param() }))
+  )
+  .post(
+    "/documents/:type",
+    body(a.documents.create, "type"),
+    async c => c.json(await c.var.actions.documents.create({
+      ...c.req.valid("json"),
+      ...c.req.param()
+    }), 201)
+  )
+  .get(
+    "/documents/:type/:id",
+    coerceQuery(a.documents.get),
+    async c => c.json(await c.var.actions.documents.get({ ...c.req.valid("query"), ...c.req.param() }))
+  )
+  .put(
+    "/documents/:type/:id",
+    body(a.documents.update, "type", "id"),
+    async c => c.json(await c.var.actions.documents.update({ ...c.req.valid("json"), ...c.req.param() }))
+  )
+  .delete(
+    "/documents/:type/:id",
+    coerceQuery(a.documents.delete),
+    async c => c.json(await c.var.actions.documents.delete({
+      ...c.req.valid("query"),
+      ...c.req.param()
+    }))
+  )
+  .post(
+    "/documents/:type/:id/publish",
+    body(a.documents.publish, "type", "id"),
+    async c => c.json(await c.var.actions.documents.publish({
+      ...c.req.valid("json"),
+      ...c.req.param()
+    }))
+  )
+  .post(
+    "/documents/:type/:id/unpublish",
+    body(a.documents.unpublish, "type", "id"),
+    async c => c.json(await c.var.actions.documents.unpublish({
+      ...c.req.valid("json"),
+      ...c.req.param()
+    }))
+  )
+  .get(
+    "/documents/:type/:id/references",
+    async c => c.json(await c.var.actions.documents.references({ ...c.req.param() }))
+  )
+  .get(
+    "/documents/:type/:id/versions",
+    coerceQuery(a.documents.versions),
+    async c => c.json(await c.var.actions.documents.versions({
+      ...c.req.valid("query"),
+      ...c.req.param()
+    }))
+  )
+  .get(
+    "/documents/:type/:id/versions/:ver",
+    coerceQuery(a.documents.version),
+    async c => c.json(await c.var.actions.documents.version({
+      ...c.req.valid("query"),
+      type: c.req.param("type"),
+      id: c.req.param("id"),
+      ver: Number(c.req.param("ver"))
+    }))
+  )
+  .post(
+    "/documents/:type/:id/versions/:ver/restore",
+    body(a.documents.restoreVersion, "type", "id", "ver"),
+    async c => c.json(await c.var.actions.documents.restoreVersion({
+      ...c.req.valid("json"),
+      type: c.req.param("type"),
+      id: c.req.param("id"),
+      ver: Number(c.req.param("ver"))
+    }))
+  )
+  .post(
+    "/documents/:type/:id/schedule",
+    body(a.documents.schedule, "type", "id"),
+    async c => c.json(await c.var.actions.documents.schedule({
+      ...c.req.valid("json"),
+      ...c.req.param()
+    }))
+  )
+  .delete(
+    "/documents/:type/:id/schedule",
+    coerceQuery(a.documents.unschedule),
+    async c => c.json(await c.var.actions.documents.unschedule({
+      ...c.req.valid("query"),
+      ...c.req.param()
+    }))
+  )
+
+  .get(
+    "/assets",
+    coerceQuery(a.assets.list),
+    async c => c.json(await c.var.actions.assets.list(c.req.valid("query")))
+  )
+  .post(
+    "/assets",
+    async c => {
+      const input = fromText(inputSchemaOf(a.assets.upload), formValues(await c.req.raw.formData())) as ActionInputOf<typeof a.assets.upload>;
+      return c.json(await c.var.actions.assets.upload(input), 201);
+    }
+  )
+  .get("/assets/:id", async c => c.json(await c.var.actions.assets.get(c.req.param())))
+  .patch(
+    "/assets/:id",
+    body(a.assets.update, "id"),
+    async c => c.json(await c.var.actions.assets.update({
+      ...c.req.valid("json"),
+      id: c.req.param("id")
+    }))
+  )
+  .delete("/assets/:id", async c => c.json(await c.var.actions.assets.delete(c.req.param())))
+  // The file's new content is the request body itself.
+  .put(
+    "/assets/:id/content",
+    async c => c.json(await c.var.actions.assets.replaceContent({
+      id: c.req.param("id"),
+      content: await c.req.text()
+    }))
+  )
+
+  .get("/folders", async c => c.json(await c.var.actions.folders.list()))
+  .post(
+    "/folders",
+    body(a.folders.create),
+    async c => c.json(await c.var.actions.folders.create(c.req.valid("json")), 201)
+  )
+  .patch(
+    "/folders",
+    body(a.folders.move),
+    async c => c.json(await c.var.actions.folders.move(c.req.valid("json")))
+  )
+  .delete(
+    "/folders",
+    coerceQuery(a.folders.delete),
+    async c => c.json(await c.var.actions.folders.delete(c.req.valid("query") as ActionInputOf<typeof a.folders.delete>))
+  )
+
+  .get("/trash", async c => c.json(await c.var.actions.trash.list()))
+  .delete("/trash", async c => c.json(await c.var.actions.trash.empty()))
+  .get("/trash/:id", async c => c.json(await c.var.actions.trash.get(c.req.param())))
+  .delete("/trash/:id", async c => c.json(await c.var.actions.trash.purge(c.req.param())))
+  .post("/trash/:id/restore", async c => c.json(await c.var.actions.trash.restore(c.req.param())));

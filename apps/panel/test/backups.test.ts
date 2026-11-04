@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { defineConfig } from "vibe-cms";
-import { createThrowingActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
+import { createActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
 import { createHandler } from "vibe-cms/handler";
 import { unpackSnapshot } from "vibe-cms/backups";
 import type { SiteBackups } from "vibe-cms/panel";
@@ -76,7 +76,7 @@ function backupSite(origin: string, allowBackups: boolean) {
   sites[origin] = handler;
   async function dev() {
     const response = await handler(new Request(`${origin}/_vibe/api/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dev: true }) }));
-    return createThrowingActionClient<CoreActions>(httpCaller({ url: origin, token: (await response.json() as { token: string }).token, fetch: ((input: RequestInfo | URL, init?: RequestInit) => handler(new Request(input, init))) as typeof fetch }));
+    return createActionClient<CoreActions>(httpCaller({ url: origin, token: (await response.json() as { token: string }).token, fetch: ((input: RequestInfo | URL, init?: RequestInit) => handler(new Request(input, init))) as typeof fetch }));
   }
   return {
     env: siteEnv,

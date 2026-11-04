@@ -4,7 +4,7 @@ What happens to stored content when you change a schema, which changes are safe,
 
 vibe-cms doesn't migrate content. Documents are JSON in D1, written under the schema of the time, and validation only runs when a document is written. Reads check one thing: that each stored value still has the right type for its field. Missing values and broken rules (`min`, `format`, …) come back as stored.
 
-When a published value has the wrong type, the query fails with `Conflict` (HTTP 409) and says which document and field:
+When a published value has the wrong type, the query fails with `CONFLICT` (HTTP 409) and says which document and field:
 
 ```
 Stored content doesn't match the schema: post doc_0mvv… (en) has the text "https://cdn.example/a.jpg" in "cover",
@@ -12,7 +12,7 @@ which expects a media library file ({ asset: "ast_…" }, uploaded with assets.u
 changed after this was published. Fix the document in the editor, or move the data to a new field: `vibe-cms docs schema-changes`.
 ```
 
-`details.mismatches` lists up to 20 as `{ type, id, locale, path, expected, found }`. Draft reads (`drafts: true`) don't fail: drafts may hold anything, so they come back as stored. Saving a document with an old value reports it as a validation issue on that field.
+`data.mismatches` lists up to 20 as `{ type, id, locale, path, expected, found }`. Draft reads (`drafts: true`) don't fail: drafts may hold anything, so they come back as stored. Saving a document with an old value reports it as a validation issue on that field.
 
 ## What each change does to existing documents
 
@@ -25,7 +25,7 @@ changed after this was published. Fix the document in the editor, or move the da
 | Tighten a rule | Reads work; documents that break the new rule can't be published again until fixed. |
 | Remove a field | The stored value stays and still comes back in query results (outside the types) until the document is next saved, which drops it. |
 | Rename a field | A remove plus an add: the old value is stranded under the old name. |
-| Change a field's type (text → `image()`, number → text, …) | Published reads of documents with an old value fail with `Conflict`, naming each document and field (above), until they're fixed or the change is undone. |
+| Change a field's type (text → `image()`, number → text, …) | Published reads of documents with an old value fail with `CONFLICT`, naming each document and field (above), until they're fixed or the change is undone. |
 | Rename or remove a content type | Its documents stay in the database under the old name, unreachable. |
 | Add a content type, collection settings, labels, widgets | Safe. |
 
@@ -46,7 +46,7 @@ The action client from `vibe-cms/actions` writes through the same checks as the 
 
 ```ts
 // examples/schemas/src/backfill.ts
-export async function backfill(actions: ReturnType<typeof createThrowingActionClient<CoreActions>>) {
+export async function backfill(actions: ReturnType<typeof createActionClient<CoreActions>>) {
   const limit = 50;
   // Oldest first: the default order (recently updated first) would shift as the script updates.
   for(let offset = 0; ; offset += limit) {
@@ -58,7 +58,7 @@ export async function backfill(actions: ReturnType<typeof createThrowingActionCl
         type: "post",
         id,
         data: { ...rest, excerpt: summary },
-        // Fails with Conflict instead of overwriting an edit made since the list was read.
+        // Fails with CONFLICT instead of overwriting an edit made since the list was read.
         baseUpdatedAt: Date.parse($meta.updatedAt),
         // Only republish what was live and unchanged, so unpublished draft edits stay unpublished.
         publish: $meta.status === "published"

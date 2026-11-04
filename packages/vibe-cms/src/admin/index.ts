@@ -5,7 +5,7 @@ import type { QueryClient } from "../query/index.ts";
 import type { AnySchema, DocumentData, JsonValue } from "../schema/types.ts";
 import type { DocumentMeta } from "../query/index.ts";
 import type { Issue } from "../schema/validate.ts";
-import type { ThrowingActionClient } from "../actions/client.ts";
+import type { ActionClient } from "../actions/client.ts";
 import type { CoreActions } from "../actions/core.ts";
 
 /** The field a widget or field decorator is rendered for. */
@@ -43,8 +43,8 @@ export interface AdminClient {
    * `/plugins/`. Resolves to the parsed body; throws `ApiError` on a non-2xx answer.
    */
   api<T = unknown>(path: string, init?: RequestInit & { json?: unknown }): Promise<T>,
-  /** Every CMS action, typed: `cms.actions.documents.publish({ type, id })`. Failures throw an `ApiError` carrying the action error's `tag`. */
-  actions: ThrowingActionClient<CoreActions>,
+  /** Every CMS action, typed: `cms.actions.documents.publish({ type, id })`. Failures throw an `ApiError` (an `ORPCError`) carrying the action error's `code`. */
+  actions: ActionClient<CoreActions>,
   /** Queries including drafts. */
   query: QueryClient<AnyConfig>,
   /** With `type` and `field`, the upload is checked against that asset field. */

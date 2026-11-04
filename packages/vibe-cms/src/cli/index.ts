@@ -104,5 +104,15 @@ await run(subcommands({
   name: "vibe-cms",
   version: pkg.version,
   description: "Guides, a local panel, build tools, and every CMS action against a running site",
-  cmds: { docs, admin, "build-admin": buildAdminCommand, hub: hubCommand, login: loginCommand, logout: logoutCommand, export: exportCommand, import: importCommand, ...actionCommands() }
+  cmds: {
+    docs,
+    admin,
+    "build-admin": buildAdminCommand,
+    hub: hubCommand,
+    login: loginCommand,
+    logout: logoutCommand,
+    export: exportCommand,
+    import: importCommand,
+    ...actionCommands()
+  }
 }), process.argv.slice(2));
