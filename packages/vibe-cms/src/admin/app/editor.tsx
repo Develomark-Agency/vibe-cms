@@ -374,7 +374,9 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             {id !== null && (
               <DropdownMenu>
                 <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="More actions"><MoreHorizontalIcon /></Button>} />
-                <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuContent align="end" className="w-64">
+                  <DocumentInfo doc={doc.data} />
+                  <DropdownMenuSeparator />
                   {permissions.publish && !readOnly && (
                     <DropdownMenuItem onClick={() => setScheduleOpen(true)}><CalendarClockIcon /> Schedule…</DropdownMenuItem>
                   )}
@@ -450,8 +452,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
               ))}
             </form>
           </main>
-          <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
-            <DocumentInfo doc={doc.data} />
+          <aside className="flex flex-col gap-4">
             {doc.data?.schedules.length ? <Schedules type={type} id={id!} doc={doc.data} onChange={applyResult} /> : null}
             {panels.map(panel => (
               <section key={panel.id} className="rounded-[16px] elevated p-4">
@@ -558,17 +559,14 @@ function DocumentInfo({ doc }: { doc: DocumentState | undefined }) {
     ["Published", doc.publishedAt ? formatDate(doc.publishedAt) : "Never"]
   ] : [["Status", "Not saved yet"]];
   return (
-    <section className="rounded-[16px] elevated p-4">
-      <h3 className="mb-2 text-sm font-medium">Document</h3>
-      <dl className="grid gap-1.5 text-sm">
-        {rows.map(([label, text]) => (
-          <div key={label} className="flex justify-between gap-3">
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd className="truncate text-right">{text}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
+    <dl className="grid gap-1 px-1.5 py-1 text-xs">
+      {rows.map(([label, text]) => (
+        <div key={label} className="flex justify-between gap-3">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="truncate text-right">{text}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

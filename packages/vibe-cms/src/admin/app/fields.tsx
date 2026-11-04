@@ -610,7 +610,8 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
   const s = schema as ArraySchema;
   const items = Array.isArray(value) ? value : [];
   const { keys, insert, remove, move } = useItemKeys(items.length);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Blocks start collapsed so a long page is a scannable list; ones added later open so you can fill them in.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => path.length === 1 && unwrap(s.item).type === "union" ? new Set(keys) : new Set());
   // Items glide to their new places when the order changes. `layoutDependency` limits that to reorders,
   // so a block opening or closing doesn't also drag its neighbours along with a second animation.
   const [order, setOrder] = useState(0);
