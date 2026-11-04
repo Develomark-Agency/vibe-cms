@@ -81,21 +81,26 @@ export async function sessionFromHubToken(state: Pick<EngineState, "config" | "o
   return identitySession(state.config, payload.sub, claims);
 }
 
+/** Built in, and only given by a site that signs people in itself: every permission, plus managing who may sign in. */
+export const OWNER = "owner";
+
 /**
  * Maps a provider identity (`<issuer>|<sub>`) and its claims to this site's roles: the `roles` claim
  * (the hub fills it from the identity provider claim in its `OIDC_ROLES_CLAIM`) and `permissions.users`.
  */
-function identitySession(config: AnyConfig, sub: string, claims: Record<string, unknown>): Session {
+export function identitySession(config: AnyConfig, sub: string, claims: Record<string, unknown>, siteRoles: string[] = []): Session {
   const email = typeof claims.email === "string" ? claims.email : undefined;
   const verifiedEmail = email && claims.email_verified === true ? email.toLowerCase() : undefined;
   const roles = new Set<string>();
   const claim = claims.roles;
-  for(const role of Array.isArray(claim) ? claim : typeof claim === "string" ? [claim] : []) roles.add(String(role));
+  // An identity provider group that happens to be called "owner" mustn't make someone owner everywhere.
+  for(const role of Array.isArray(claim) ? claim : typeof claim === "string" ? [claim] : []) if(String(role) !== OWNER) roles.add(String(role));
+  for(const role of siteRoles) roles.add(role);
   const users = config.permissions?.users ?? {};
   for(const key of [sub, verifiedEmail]) {
     for(const role of (key && users[key]) || []) roles.add(role);
   }
-  const known = new Set(Object.keys(config.permissions?.roles ?? {}));
+  const known = new Set([OWNER, ...Object.keys(config.permissions?.roles ?? {})]);
   const granted = [...roles].filter(role => known.has(role));
   if(granted.length === 0) throw new HttpError(403, "No access to this site");
   return {
@@ -134,13 +139,17 @@ export interface Permit {
   action: Action,
   type?: string,
   locale?: string,
-  /** `"media"` for the asset library, `"site"` for the site's name, accent and icon, `"backups"` for taking and restoring backups. */
-  scope?: "content" | "media" | "site" | "backups"
+  /**
+   * `"media"` for the asset library, `"site"` for the site's name, accent and icon, `"backups"` for taking
+   * and restoring backups, `"users"` for who may sign in to a site without an org (owners and `all` roles).
+   */
+  scope?: "content" | "media" | "site" | "backups" | "users"
 }
 
 export function can(config: AnyConfig, session: Session | null, permit: Permit): boolean {
   if(!session) return false;
   if(session.sub === "dev") return true;
+  if(session.roles.includes(OWNER)) return true;
   if(permit.scope === "backups" && session.grants?.includes("backups")) return true;
   const roles = config.permissions?.roles ?? {};
   return session.roles.some(name => {
@@ -151,6 +160,7 @@ export function can(config: AnyConfig, session: Session | null, permit: Permit):
 
 function allows(rules: RoleRules, { action, type, locale, scope }: Permit): boolean {
   if(rules.all) return true;
+  if(scope === "users") return false;
   if(scope === "site") return rules.siteSettings === true;
   if(scope === "backups") return rules.backups === true;
   if(scope === "media") {
@@ -206,6 +216,7 @@ export function permissionSummary(config: AnyConfig, session: Session) {
       delete: can(config, session, { action: "delete", scope: "media" })
     },
     locales: writeLocales,
-    site: can(config, session, { action: "write", scope: "site" })
+    site: can(config, session, { action: "write", scope: "site" }),
+    users: can(config, session, { action: "write", scope: "users" })
   };
 }

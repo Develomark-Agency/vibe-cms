@@ -62,6 +62,7 @@ export const { post } = config.schemas;
 | `db` | yes | Documents, versions, the media library index, sessions |
 | `storage` | for uploads | R2 bucket for media files |
 | `assets` | no | The static assets binding that serves the editor's files. Defaults to `env.ASSETS` |
+| `email` | no | Sends invites for sites that sign people in themselves: any `{ send(message) }`, such as one wrapping Cloudflare's `send_email` binding or another provider's API. Without it, the editor shows invite links to copy (`vibe-cms docs permissions`) |
 | *plugin name* | when a plugin declares bindings | Whatever that plugin's `definePlugin<{ … }>()` asks for (`vibe-cms docs plugins`) |
 
 A missing `db`, or a plugin binding that is `undefined` at runtime, fails the first request with an error naming it.

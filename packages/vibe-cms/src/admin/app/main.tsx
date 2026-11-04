@@ -1,7 +1,7 @@
 import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import Fuse from "fuse.js";
@@ -40,6 +40,8 @@ import { Dashboard, DocumentRoute, ListPage, useDebounced } from "./pages.tsx";
 import { Marked, markTitle } from "./marked.tsx";
 import { SiteMark } from "../components/site-mark.tsx";
 import { SiteSettingsPage } from "./settings.tsx";
+import { SignIn } from "./signin.tsx";
+import { UsersPage } from "./users.tsx";
 import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
@@ -114,35 +116,17 @@ function App({ config }: { config: AnyConfig }) {
 
   if(info.isError) return <Centered><p className="text-sm text-destructive">Couldn't reach the site's API: {(info.error as Error).message}</p></Centered>;
   if(!info.data || session === undefined) return <Delayed><Centered><Spinner className="size-5" /></Centered></Delayed>;
-  if(!session) return <SignIn info={info.data} error={error} />;
+  if(!session) {
+    return <SignIn info={info.data} error={error} onSignedIn={async () => {
+      setError(null);
+      setSession(await startSession(info.data!));
+    }} />;
+  }
   return <Shell config={config} info={info.data} session={session} prefix={prefix} onSignOut={() => setSession(null)} />;
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex min-h-full items-center justify-center p-8">{children}</div>;
-}
-
-function SignIn({ info, error }: { info: SiteInfo, error: string | null }) {
-  return (
-    <div className="flex min-h-full items-center justify-center bg-sidebar p-8">
-      <div className="flex w-full max-w-sm flex-col items-center gap-5 rounded-[24px] elevated px-8 py-10 text-center">
-        <div className="flex size-12 items-center justify-center rounded-[14px] raised-brand">
-          <KeyRoundIcon className="size-5" />
-        </div>
-        <div className="space-y-2">
-          <p className="eyebrow">Editor</p>
-          <h1 className="text-xl font-medium tracking-tight">{info.site.name}</h1>
-          <p className="text-sm text-balance text-muted-foreground">
-            {embedded
-              ? "Waiting for your agency panel to sign you in…"
-              : "This editor only opens inside your agency's panel, which signs you in. This page has no password form."}
-          </p>
-          {info.hub && <a className="text-sm font-medium text-primary underline-offset-4 hover:underline" href={`${info.hub}/s/${encodeURIComponent(info.site.id)}/`}>Open in {new URL(info.hub).host}</a>}
-        </div>
-        {error && <p className="rounded-[12px] bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-      </div>
-    </div>
-  );
 }
 
 function Shell({ config, info, session, prefix, onSignOut }: {
@@ -224,6 +208,8 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   const singletons = types.filter(t => collectionSettings(config, t).singleton);
   const collections = types.filter(t => !collectionSettings(config, t).singleton);
   const canTrash = session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete);
+  // Sites in an org leave who may sign in to the hub; in development nobody signs in for real.
+  const canManageUsers = session.permissions.users && info.signIn !== "hub" && !info.dev;
 
   let page: React.ReactNode = null;
   let params: Record<string, string> | null;
@@ -232,6 +218,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   else if((params = match("/content/:type/:id", path)) && types.includes(params.type!)) page = <DocumentRoute type={params.type!} id={params.id!} />;
   else if(path === "/media" && session.permissions.media.read) page = <MediaPage />;
   else if(path === "/settings" && session.permissions.site) page = <SiteSettingsPage />;
+  else if(path === "/users" && canManageUsers) page = <UsersPage />;
   else if(path === "/trash" && canTrash) page = <TrashPage />;
   else {
     for(const [pattern, entry] of Object.entries(plugins.pages)) {
@@ -318,7 +305,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-          {(singletons.length > 0 || session.permissions.site) && (
+          {(singletons.length > 0 || session.permissions.site || canManageUsers) && (
             <SidebarGroup>
               <SidebarGroupLabel className="eyebrow">Settings</SidebarGroupLabel>
               <SidebarGroupContent>
@@ -326,6 +313,11 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
                   {session.permissions.site && (
                     <SidebarMenuItem>
                       <NavButton active={active("/settings")} to="/settings" tooltip="Site"><SlidersHorizontalIcon /> <span>Site</span></NavButton>
+                    </SidebarMenuItem>
+                  )}
+                  {canManageUsers && (
+                    <SidebarMenuItem>
+                      <NavButton active={active("/users")} to="/users" tooltip="Users"><UsersIcon /> <span>Users</span></NavButton>
                     </SidebarMenuItem>
                   )}
                   {singletons.map(type => (

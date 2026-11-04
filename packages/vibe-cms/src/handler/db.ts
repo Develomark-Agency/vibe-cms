@@ -139,6 +139,44 @@ const tables = [
     payload TEXT NOT NULL,
     expires_at INTEGER NOT NULL
   )`,
+  // Sign-in for sites without an org (VIBE_ORG): people who may sign in, by email, with roles given in the editor.
+  `CREATE TABLE IF NOT EXISTS vibe_users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT,
+    roles TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    last_sign_in_at INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS vibe_passkeys (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    counter INTEGER NOT NULL,
+    transports TEXT,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
+  )`,
+  // Invite links, stored as hashes: one registers a passkey for that user.
+  `CREATE TABLE IF NOT EXISTS vibe_invites (
+    hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
+  // Signed-in browsers: an httpOnly cookie names one, and the editor trades it for a session token.
+  `CREATE TABLE IF NOT EXISTS vibe_signins (
+    hash TEXT PRIMARY KEY,
+    identity TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
+  // Passkey challenges and OIDC logins in progress.
+  `CREATE TABLE IF NOT EXISTS vibe_challenges (
+    id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
   // Full-text search over working copies, one row per document and locale. Triggers keep it current.
   `CREATE VIRTUAL TABLE IF NOT EXISTS vibe_search USING fts5(
     id UNINDEXED, locale UNINDEXED, type UNINDEXED, title, body,

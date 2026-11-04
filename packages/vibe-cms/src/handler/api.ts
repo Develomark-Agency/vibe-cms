@@ -3,6 +3,24 @@ import type { SerializedQuery } from "../query/index.ts";
 import type { Session } from "../server/index.ts";
 import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, require, sessionFromHubToken, verifySession } from "./auth.ts";
 import type { OrgStatus } from "../org/index.ts";
+import {
+  announceSetup,
+  authenticate,
+  authenticationOptions,
+  invite,
+  listUsers,
+  needsSetup,
+  oidcCallback,
+  oidcLogin,
+  register,
+  registrationOptions,
+  removeUser,
+  resume,
+  SIGNIN_COOKIE,
+  signInMode,
+  signOut,
+  updateUser
+} from "./signin.ts";
 import { coreActions, type CoreActions } from "../actions/core.ts";
 import { runAction, type AnyAction } from "../actions/define.ts";
 import { errorJson, fromHttpError, httpStatus, type ActionError } from "../actions/errors.ts";
@@ -103,6 +121,8 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
       const key = path.slice(19).split("/").map(decodeURIComponent).join("/");
       return cors(await transferRoute(request, api.state.db, api.state.storage, url, key));
     }
+    // A site nobody owns yet prints its one-time setup link to its logs.
+    if(!api.dev) api.ctx.waitUntil?.(announceSetup(api.state, url.origin).catch(() => {}));
     const session = await readSession(request, api);
     const engine = new Engine(api.state, { origin: url.origin, session, trusted: false, ctx: api.ctx });
 
@@ -172,6 +192,7 @@ async function editorRoute(
       prefix: api.state.prefix,
       dev: api.dev,
       hub: org.hub,
+      signIn: await signInMode(api.state),
       site: descriptor(config, url, api.state.prefix, site, org),
       settings: site
     });
@@ -205,13 +226,20 @@ async function editorRoute(
       return json({ user: session, permissions: permissionSummary(config, session) });
     }
     if(method === "POST") {
-      const input = await body<{ code?: string, dev?: boolean }>(request);
+      const input = await body<{ code?: string, dev?: boolean, resume?: boolean }>(request);
       let next: Session;
       if(input.dev) {
         if(!api.dev) throw new HttpError(403, "Dev sessions are only available in development");
         next = DEV_SESSION;
       } else if(input.code) {
         next = await consumeCode(db, input.code);
+      } else if(input.resume) {
+        // The signed-in browser's cookie, for sites that sign people in themselves. Only from the site's own pages.
+        const origin = request.headers.get("origin");
+        if(origin && origin !== url.origin) throw new HttpError(403, "Cross-origin request refused");
+        const resumed = await resume(api.state, readCookie(request, SIGNIN_COOKIE));
+        if(!resumed) throw new HttpError(401, "Not signed in");
+        next = resumed;
       } else {
         throw new HttpError(400, "Expected a code");
       }
@@ -219,7 +247,52 @@ async function editorRoute(
       const { token, expiresAt } = await issueSession(db, next, api.state.siteId, url.origin);
       return json({ token, expiresAt, user: next, permissions: permissionSummary(config, next) });
     }
-    if(method === "DELETE") return json({ ok: true });
+    if(method === "DELETE") {
+      return json({ ok: true }, { headers: { "set-cookie": await signOut(api.state, url, readCookie(request, SIGNIN_COOKIE)) } });
+    }
+  }
+
+  if(route === "/auth" && method === "GET") {
+    // How the editor offers sign-in.
+    const mode = await signInMode(api.state);
+    return json({
+      mode,
+      setup: await needsSetup(api.state),
+      email: Boolean(api.state.signIn.email),
+      provider: mode === "oidc" ? new URL(api.state.signIn.oidc!.issuer).host : null
+    });
+  }
+  if(route === "/auth/passkey/register/options" && method === "POST") return json(await registrationOptions(api.state, url, await body(request)));
+  if(route === "/auth/passkey/register" && method === "POST") {
+    const { cookie } = await register(api.state, url, await body(request));
+    return json({ ok: true }, { headers: { "set-cookie": cookie } });
+  }
+  if(route === "/auth/passkey/login/options" && method === "POST") return json(await authenticationOptions(api.state, url));
+  if(route === "/auth/passkey/login" && method === "POST") {
+    const { cookie } = await authenticate(api.state, url, await body(request));
+    return json({ ok: true }, { headers: { "set-cookie": cookie } });
+  }
+  if(route === "/auth/oidc/login" && method === "GET") return oidcLogin(api.state, url);
+  if(route === "/auth/oidc/callback" && method === "GET") return oidcCallback(api.state, url, readCookie(request, "vibe_login"));
+
+  if(route === "/users" && method === "GET") {
+    require(config, session, { action: "read", scope: "users" });
+    return json({ users: await listUsers(api.state), mode: await signInMode(api.state), roles: ["owner", ...Object.keys(config.permissions?.roles ?? {})] });
+  }
+  if(route === "/users/invites" && method === "POST") {
+    const by = require(config, session, { action: "write", scope: "users" });
+    return json(await invite(api.state, url.origin, by, await body(request)), { status: 201 });
+  }
+  if((m = /^\/users\/([\w-]+)$/.exec(route))) {
+    if(method === "PATCH") {
+      require(config, session, { action: "write", scope: "users" });
+      return json(await updateUser(api.state, m[1]!, await body(request)));
+    }
+    if(method === "DELETE") {
+      require(config, session, { action: "delete", scope: "users" });
+      await removeUser(api.state, m[1]!);
+      return json({ ok: true });
+    }
   }
 
   if(route === "/session/code" && method === "POST") {

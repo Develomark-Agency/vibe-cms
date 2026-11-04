@@ -1,5 +1,6 @@
 import { getSchema, HttpError, type AnyConfig } from "../config.ts";
 import type { SiteOrg } from "./org.ts";
+import type { SignInConfig } from "./signin.ts";
 import type { SerializedQuery, QueryArgs, WithOptions, DocumentMeta, Order, Condition } from "../query/index.ts";
 import { parseSize } from "../schema/builders.ts";
 import type {
@@ -46,6 +47,8 @@ export interface EngineState {
   siteId: string,
   /** The org whose hub the site trusts (`VIBE_ORG`), and moves to another. */
   org: SiteOrg,
+  /** How the site signs people in when it has no org: its identity provider, or passkeys; and its email sender. */
+  signIn: SignInConfig,
   /** The site's own pages, for finding its favicon. */
   siteFetch?: SiteFetch
 }

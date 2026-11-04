@@ -15,6 +15,8 @@ export interface SiteInfo extends SerializedConfig {
   dev: boolean,
   /** The hub of the org the site trusts (`VIBE_ORG`), as its DNS record names it. */
   hub: string | null,
+  /** How the site signs people in: through its org's hub, its own identity provider, or passkeys. */
+  signIn: "hub" | "oidc" | "passkey",
   site: {
     id: string,
     name: string,
@@ -32,7 +34,9 @@ export interface Permissions {
   media: { read: boolean, write: boolean, delete: boolean },
   locales: string[],
   /** May change the site's name, accent and icon. */
-  site: boolean
+  site: boolean,
+  /** May invite people and change their roles (sites that sign people in themselves). */
+  users: boolean
 }
 
 export interface SessionState {

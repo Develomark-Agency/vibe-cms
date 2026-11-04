@@ -7,10 +7,13 @@ import { getOrCreateMeta, migrate, newId, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { SiteOrg, type OrgEnv } from "./org.ts";
+import { signInConfig, type SignInEnv } from "./signin.ts";
+import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
 import { decoratePreview, PICK_HEADER, PREVIEW_COOKIE, PREVIEW_TTL, previewCookie, previewScope, recordSources, wantsPreview, type PreviewScope } from "./preview.ts";
 
 export type * from "./platform.ts";
+export type { EmailMessage, EmailSender } from "./email.ts";
 export { Engine, type SiteSettings, type SiteSettingsPatch } from "./engine.ts";
 export { isPreview } from "./preview.ts";
 
@@ -20,7 +23,12 @@ export interface CoreBindings {
   /** R2 bucket for uploads. Optional if you never upload media. */
   storage?: R2,
   /** Static assets binding, used to serve the editor's deep links. Defaults to `env.ASSETS`. */
-  assets?: Fetcher
+  assets?: Fetcher,
+  /**
+   * Sends the CMS's email: invites, for sites that sign people in themselves. Any `{ send(message) }`,
+   * wrapping Cloudflare's `send_email` binding or another provider. Without it, the editor shows links to copy.
+   */
+  email?: EmailSender
 }
 
 type PluginsOf<C> = C extends { plugins?: ReadonlyArray<infer P> } ? P : never;
@@ -156,6 +164,7 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       prefix,
       siteId: await getOrCreateMeta(bindings.db, "site_id", () => newId("site")),
       org: await SiteOrg.load(bindings.db, (env ?? {}) as OrgEnv),
+      signIn: signInConfig((env ?? {}) as SignInEnv, bindings.email),
       siteFetch: (request: Request) => fetchSite(request, env)
     };
     const plugins = await PluginHost.load((config.plugins ?? []) as PluginDescriptor[], plugin => ({

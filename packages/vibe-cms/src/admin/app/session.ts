@@ -94,16 +94,17 @@ interface SessionResponse extends Omit<SessionState, "token"> {
   token?: string
 }
 
-async function exchange(prefix: string, input: { code?: string, dev?: boolean }): Promise<SessionState> {
+async function exchange(prefix: string, input: { code?: string, dev?: boolean, resume?: boolean }): Promise<SessionState> {
   const session = await request<SessionResponse>(prefix, "/session", { method: "POST", json: input });
   setToken(session.token);
   return session;
 }
 
 /**
- * Works out how this editor was opened and establishes a session. Deployed editors only run
- * framed by the hub, which hands over codes; on their own they show the way to the hub.
- * Development editors sign in as the developer, framed or not.
+ * Works out how this editor was opened and establishes a session. Editors of sites in an org run
+ * framed by the hub, which hands over codes; on their own they show the way to the hub. Sites that
+ * sign people in themselves trade the browser's sign-in cookie for a session. Development editors
+ * sign in as the developer, framed or not.
  */
 export async function startSession(info: SiteInfo): Promise<SessionState | null> {
   const { prefix } = info;
@@ -117,6 +118,14 @@ export async function startSession(info: SiteInfo): Promise<SessionState | null>
     return exchange(prefix, { code: await requestCode() });
   }
   if(info.dev) return exchange(prefix, { dev: true });
+  if(info.signIn !== "hub") {
+    try {
+      return await exchange(prefix, { resume: true });
+    } catch (error) {
+      if((error as { status?: number }).status === 401) return null;
+      throw error;
+    }
+  }
   return null;
 }
 

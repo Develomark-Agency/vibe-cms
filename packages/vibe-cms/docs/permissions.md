@@ -35,16 +35,49 @@ export default defineConfig({
 - **Development** (`dev`, which defaults to Vite's `import.meta.env.DEV`): the editor, the CLI and local agents sign in as a local developer with every permission. No `VIBE_ORG` or `permissions` needed.
 - **Deployed**: the site belongs to the org in its `VIBE_ORG` environment variable, and everyone signs in to that org's hub (the agency panel), which signs them in with its identity provider. Sign-in is the same for every site in the org, so it's deploy configuration, not part of the config file. For each site, the hub signs a short-lived token addressed to that site alone, issued by the org and carrying the provider identity (`<issuer>|<sub>`) and claims. The site finds the hub through the org's DNS record, checks the token against the hub's keys at `<hub>/.well-known/jwks.json`, works out roles itself, and creates its own session, valid for 12 hours. Sites have no secrets to configure; the session signing key is generated and stored in D1. See `vibe-cms docs deploy` for orgs.
 - The editor of a deployed site only opens inside the hub, which hands it a one-time code; on its own it links to the site's page in the hub (`<hub>/s/<site id>/`). The CLI logs in to the hub with `vibe-cms login` (`vibe-cms docs cli`), and agents connect to the hub's `/mcp` (`vibe-cms docs agents`).
-- A site without `VIBE_ORG` can't be signed in to once deployed. See `vibe-cms docs deploy` for the hub.
+- **Deployed without an org**: a site without `VIBE_ORG` signs people in itself (below).
+
+## Sites without an org
+
+A site that doesn't belong to an org signs people in by itself. Its environment picks how, and an org wins over both:
+
+| Set | Sign-in |
+|---|---|
+| `VIBE_ORG` | The org's hub (above) |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` (a secret) | The site's own identity provider. Register `https://<site>/_vibe/api/auth/oidc/callback` as its redirect URI. Optional: `OIDC_SCOPES`, `OIDC_ROLES_CLAIM` (a claim whose values count as roles), `VIBE_ALLOW` (email domains or group values allowed to sign in) |
+| Neither | Passkeys |
+
+Setting only some of the `OIDC_*` variables is an error, not a quiet fall back to passkeys.
+
+**The first owner.** Until someone owns the site, nobody can sign in. The site prints a one-time setup link to its logs (`wrangler tail`, or the dev server's output): `https://<site>/_vibe/admin/#setup=…`. Whoever opens it becomes the site's **owner**: with passkeys, by creating one; with an identity provider, by signing in through the link (with a verified email). Then the link stops working. Nobody becomes owner just by finding the site first.
+
+**Inviting people.** Owners manage everyone else on the editor's **Users** page: invite by email with roles, change roles, remove people. With passkeys, an invite is a link that works once, for 7 days, to create a passkey; inviting someone again is how they add a device or replace a lost passkey. With an identity provider, roles are matched to the verified email people sign in with. If the site has an `email` sender (`vibe-cms docs getting-started`), invites are emailed; either way the editor shows the link to copy, so a site that can't send email, or an email that fails, never blocks an invite.
+
+```ts
+import type { EmailSender } from "vibe-cms/handler";
+
+createHandler(config, {
+  bindings: env => ({
+    db: env.DB,
+    // Cloudflare Email Service (a send_email binding), or any other provider's API
+    email: {
+      send: ({ to, subject, text, html }) => env.EMAIL.send({ to, from: "cms@client.com", subject, text, html }),
+    } satisfies EmailSender,
+  }),
+});
+```
+
+`owner` is a built-in role: every permission, plus managing users. Only the site gives it (the setup link, the Users page, or `permissions.users`); an identity provider claim or hub token naming `owner` is ignored. Owners and roles with `all: true` can manage users. A signed-in browser keeps an httpOnly cookie for 30 days, which the editor trades for a 12-hour session; signing out, or being removed, ends it. Agents and the CLI on a site without an org use a site session token (`--token`); there's no OAuth login on the site itself yet.
 
 ## Roles
 
 A signed-in user's roles are the union of:
 
 - the `roles` the hub passes on: the values of the identity provider claim named by the hub's `OIDC_ROLES_CLAIM` (for example `groups`), if it sets one, and
-- `permissions.users` entries matching their verified email (lowercased) or `<issuer>|<sub>`.
+- `permissions.users` entries matching their verified email (lowercased) or `<issuer>|<sub>`, and
+- on a site without an org, the roles given on the editor's **Users** page.
 
-Only roles defined in `permissions.roles` count. A user with none gets "No access to this site".
+Only roles defined in `permissions.roles`, and the built-in `owner`, count. A user with none gets "No access to this site".
 
 ## Role rules
 
