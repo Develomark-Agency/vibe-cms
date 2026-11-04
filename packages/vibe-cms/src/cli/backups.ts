@@ -10,7 +10,7 @@ import type { ActionCaller } from "../actions/client.ts";
 import { httpCaller } from "../actions/client.ts";
 import { folderStore } from "../backups/fs.ts";
 import { BackupError, packSnapshot, planRestore, restoreSnapshot, takeSnapshot, unpackSnapshot, verifyRestore, type BackupManifest, type Progress } from "../backups/index.ts";
-import { connection, devToken } from "./actions.ts";
+import { connection, siteToken } from "./actions.ts";
 
 /** `vibe-cms export` and `vibe-cms import`: a site's content and media, as one `.vibe` file. */
 
@@ -42,7 +42,10 @@ function reporter() {
 }
 
 async function caller(values: { site: string, token?: string, prefix: string }) {
-  const token = values.token ?? await devToken(values.site, values.prefix);
+  const token = await siteToken(values).catch((error: Error) => {
+    console.error(`${styleText("red", "✗")} ${error.message}`);
+    process.exit(1);
+  });
   return httpCaller({ url: values.site, prefix: values.prefix, token });
 }
 
@@ -122,7 +125,7 @@ export const importCommand = command({
   },
   examples: [
     { description: "See what an import would change", command: "vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com --dry-run" },
-    { description: "Move local content to production", command: "vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com --token $VIBE_TOKEN" }
+    { description: "Move local content to production, after vibe-cms login", command: "vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com" }
   ],
   async handler(values) {
     const report = reporter();

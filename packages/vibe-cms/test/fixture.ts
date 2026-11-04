@@ -1,5 +1,5 @@
 import { defineConfig } from "../src/index.ts";
-import { oidc } from "../src/auth/index.ts";
+import { hub } from "../src/auth/index.ts";
 import { image } from "../src/media/index.ts";
 import v from "../src/schema/index.ts";
 import { definePlugin } from "../src/descriptor.ts";
@@ -14,7 +14,7 @@ export const AuditPlugin = definePlugin()((options: { tag: string }) => ({
 
 export const config = defineConfig({
   locales: ["en", "fr"],
-  auth: oidc({ issuer: "https://issuer.test", clientId: "panel" }),
+  auth: hub({ url: "https://hub.test" }),
   plugins: [AuditPlugin({ tag: "t" })],
   permissions: {
     roles: {

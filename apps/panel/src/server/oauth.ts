@@ -83,6 +83,7 @@ export function authorizationServerMetadata(url: URL): Response {
     authorization_endpoint: `${url.origin}/oauth/authorize`,
     token_endpoint: `${url.origin}/oauth/token`,
     registration_endpoint: `${url.origin}/oauth/register`,
+    revocation_endpoint: `${url.origin}/oauth/revoke`,
     scopes_supported: SCOPES,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
@@ -381,6 +382,21 @@ export async function token(request: Request, env: Env): Promise<Response> {
   }
 
   return oauthError("unsupported_grant_type", "Use authorization_code or refresh_token");
+}
+
+/**
+ * `POST /oauth/revoke` (RFC 7009): an access or refresh token in, the whole connection gone.
+ * Answers 200 for tokens it doesn't know too, so it can't be used to probe for valid ones.
+ */
+export async function revoke(request: Request, env: Env): Promise<Response> {
+  const form = new URLSearchParams(await request.text());
+  const found = await authenticate(request, env, form);
+  if(!found) return oauthError("invalid_client", "Unknown client or wrong secret", 401);
+  const hash = await sha256(form.get("token") ?? "");
+  const grant = await env.DB.prepare("SELECT * FROM agent_grants WHERE (access_hash = ? OR refresh_hash = ?) AND client_id = ?")
+    .bind(hash, hash, found.id).first<GrantRow>();
+  if(grant) await revokeGrant(env, grant);
+  return new Response(null, { status: 200, headers: CORS });
 }
 
 /** The grant behind an `Authorization: Bearer` access token, if it's still valid. */

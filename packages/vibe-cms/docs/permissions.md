@@ -1,15 +1,14 @@
 # Permissions
 
-How editors sign in to a deployed site (`oidc()`), how roles are assigned, and exactly what each role rule allows.
+How editors sign in to a deployed site (`hub()`), how roles are assigned, and exactly what each role rule allows.
 
 ```ts
 // examples/schemas/src/permissions.ts
 export default defineConfig({
-  // Editors sign in through the agency panel with this identity provider. Development sites don't need it.
-  auth: oidc({
-    issuer: "https://accounts.google.com",
-    clientId: "1234.apps.googleusercontent.com",
-    // Optional: read roles from this ID token claim as well.
+  // Editors, the CLI and agents sign in through the agency's hub (panel). Development sites don't need it.
+  auth: hub({
+    url: "https://edit.my-agency.com",
+    // Optional: read roles from this identity provider claim as well; the hub passes it through.
     roles: "groups"
   }),
   permissions: {
@@ -36,14 +35,15 @@ export default defineConfig({
 ## Signing in
 
 - **Development** (`dev`, which defaults to Vite's `import.meta.env.DEV`): the editor, the CLI and local agents sign in as a local developer with every permission. No `auth` or `permissions` needed.
-- **Deployed**: editors sign in to the agency panel with the identity provider in `auth`, and the panel hands each site a one-time code. The site verifies the user's ID token against `issuer` and `clientId` (the panel's client ID at the provider) and creates its own session, valid for 12 hours. Sites have no secrets to configure; the session signing key is generated and stored in D1.
-- A site without `auth` can't be signed in to once deployed. See `vibe-cms docs deploy` for the panel.
+- **Deployed**: everyone signs in to the hub named in `auth` (the agency panel), which signs them in with its identity provider. For each site, the hub signs a short-lived token addressed to that site alone, carrying the provider identity (`<issuer>|<sub>`) and claims. The site checks it against the hub's keys at `<hub>/.well-known/jwks.json`, works out roles itself, and creates its own session, valid for 12 hours. Sites have no secrets to configure; the session signing key is generated and stored in D1.
+- The editor of a deployed site only opens inside the hub, which hands it a one-time code; on its own it links to the site's page in the hub (`<hub>/s/<site id>/`). The CLI logs in to the hub with `vibe-cms login` (`vibe-cms docs cli`), and agents connect to the hub's `/mcp` (`vibe-cms docs agents`).
+- A site without `auth` can't be signed in to once deployed. See `vibe-cms docs deploy` for the hub.
 
 ## Roles
 
 A signed-in user's roles are the union of:
 
-- the values of the ID token claim named by `auth.roles` (a string or array), if set, and
+- the values of the identity provider claim named by `auth.roles` (a string or array), if set, and
 - `permissions.users` entries matching their verified email (lowercased) or `<issuer>|<sub>`.
 
 Only roles defined in `permissions.roles` count. A user with none gets "No access to this site".

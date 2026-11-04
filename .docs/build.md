@@ -97,7 +97,7 @@ Published plugin packages can additionally use the `workerd` export condition to
 
 ### 3. The site's editor as a third Vite environment
 
-The plugin adds an admin environment that builds the site's editor: a standalone single-page app containing the vibe-cms admin core at this site's version, plus every widget and admin plugin. The panel shows it in an iframe or as a full page (see [panel-and-auth.md](./panel-and-auth.md)); nothing is shared with the panel at runtime.
+The plugin adds an admin environment that builds the site's editor: a standalone single-page app containing the vibe-cms admin core at this site's version, plus every widget and admin plugin. The panel shows it in an iframe (see [panel-and-auth.md](./panel-and-auth.md)); nothing is shared with the panel at runtime.
 
 - **`vite build`** writes it into the static assets output under `_vibe/admin/`. No separate `vibe build` step.
 - **`vite dev`** serves it at `/_vibe/admin` with hot reloading.

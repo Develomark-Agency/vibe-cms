@@ -1,8 +1,7 @@
-import { fetchDescriptor, normalizeBranding, PanelError, type PanelSite } from "vibe-cms/panel";
+import { fetchDescriptor, normalizeBranding, PanelError, siteOrigin, type PanelSite } from "vibe-cms/panel";
 import { exchangeCode, isAllowed, randomString, verifyIdToken } from "./oidc.ts";
 import {
   beginLogin,
-  codeFor,
   cookie,
   currentSession,
   json,
@@ -13,11 +12,13 @@ import {
   SESSION_TTL,
   setCookie,
   siteById,
-  type Env
+  type Env,
+  type SessionRow
 } from "./shared.ts";
 
-import { backupsApi, jwks, processBackups, rememberOrigin } from "./backups.ts";
-import { handleMcp, unauthorized } from "./mcp.ts";
+import { backupsApi, processBackups } from "./backups.ts";
+import { codeFor, hubOrigin, jwks, rememberOrigin } from "./hub.ts";
+import { handleMcp, siteToken, unauthorized } from "./mcp.ts";
 import {
   authorizationServerMetadata,
   authorize,
@@ -29,7 +30,9 @@ import {
   protectedResourceMetadata,
   register,
   resourceUrl,
+  revoke,
   revokeGrant,
+  SCOPE_READ,
   token,
   type GrantRow
 } from "./oauth.ts";
@@ -68,10 +71,10 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
   if(path === "/sites" && method === "POST") {
     const { url: siteUrl } = await request.json() as { url?: string };
     const descriptor = await fetchDescriptor(siteUrl ?? "");
-    const config = oidcConfig(env);
-    // The site has to have agreed to trust this panel's identity provider.
-    if(descriptor.auth?.issuer.replace(/\/$/, "") !== config.issuer.replace(/\/$/, "") || descriptor.auth.clientId !== config.clientId) {
-      return json({ error: "This site trusts a different identity provider" }, { status: 422 });
+    // The site has to have agreed to trust this hub.
+    const origin = await hubOrigin(env) ?? url.origin;
+    if(descriptor.hub !== origin) {
+      return json({ error: descriptor.hub ? `This site trusts another hub (${descriptor.hub})` : `This site doesn't trust a hub yet. Add \`auth: hub({ url: "${origin}" })\` to its config and deploy it.` }, { status: 422 });
     }
     const site: PanelSite = { id: descriptor.id, url: new URL(descriptor.admin).origin, name: descriptor.name, admin: descriptor.admin, favorite: false };
     await env.DB.prepare(
@@ -164,36 +167,47 @@ async function callback(request: Request, env: Env, url: URL): Promise<Response>
   return new Response(null, { status: 302, headers });
 }
 
-/** Full-page handoff: `edit.my-agency.com/go/<siteId>` → the site's editor, signed in. */
-async function goTo(request: Request, env: Env, url: URL, siteId: string): Promise<Response> {
-  const session = await currentSession(request, env);
-  if(!session) return Response.redirect(`${url.origin}/auth/login?return=${encodeURIComponent(url.pathname)}`, 302);
-  const site = await siteById(env, siteId);
-  if(!site) return Response.redirect(`${url.origin}/?error=${encodeURIComponent("Unknown site")}`, 302);
-  try {
-    const code = await codeFor(env, session, site);
-    // The code rides in the fragment, which never reaches a server.
-    return Response.redirect(`${site.admin}/#code=${encodeURIComponent(code)}`, 302);
-  } catch (error) {
-    return Response.redirect(`${url.origin}/?error=${encodeURIComponent((error as Error).message)}`, 302);
+/**
+ * `POST /site-token` with an OAuth access token: a session on one site for the connection's user,
+ * for clients that call sites directly, like the CLI. `site` is the site's id or URL.
+ */
+async function siteTokenRoute(request: Request, env: Env, grant: GrantRow): Promise<Response> {
+  // A site session can do whatever the user may; a read-only connection can't be held to less.
+  if(grant.scope === SCOPE_READ) return json({ error: "This connection is read-only, and site tokens aren't" }, { status: 403 });
+  const { site: target } = await request.json().catch(() => ({})) as { site?: string };
+  if(!target) return json({ error: "Expected site" }, { status: 400 });
+  let site = await siteById(env, target);
+  if(!site && URL.canParse(target)) {
+    site = await env.DB.prepare("SELECT id, url, name, admin, 0 AS favorite FROM sites WHERE url = ?").bind(siteOrigin(target)).first<PanelSite>();
   }
+  if(!site) return json({ error: `${target} isn't in this panel. Add it in the panel first.` }, { status: 404 });
+  const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.session_id).first<SessionRow>();
+  if(!session) return json({ error: "This connection's sign-in is gone. Log in again." }, { status: 401 });
+  await env.DB.prepare("UPDATE agent_grants SET last_used_at = ? WHERE id = ?").bind(Date.now(), grant.id).run();
+  return json({ token: await siteToken(env, grant, session, site), site: { id: site.id, name: site.name, admin: site.admin } });
 }
 
 export async function handle(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   await migrate(env.DB);
   try {
-    const agentRoutes = ["/mcp", "/oauth/token", "/oauth/register"];
+    const agentRoutes = ["/mcp", "/oauth/token", "/oauth/register", "/oauth/revoke", "/site-token"];
     if(request.method === "OPTIONS" && (agentRoutes.includes(url.pathname) || url.pathname.startsWith("/.well-known/"))) return corsPreflight();
     if(url.pathname === "/.well-known/oauth-protected-resource" || url.pathname === "/.well-known/oauth-protected-resource/mcp") {
       return protectedResourceMetadata(env, url);
     }
     if(url.pathname === "/.well-known/oauth-authorization-server") return authorizationServerMetadata(url);
-    // The keys sites verify the panel's backup tokens with.
+    // The keys sites verify the hub's tokens with.
     if(url.pathname === "/.well-known/jwks.json") return await jwks(env);
     if(url.pathname === "/oauth/register" && request.method === "POST") return await register(request, env);
     if(url.pathname === "/oauth/authorize") return await (request.method === "POST" ? decide(request, env, url) : authorize(request, env, url));
     if(url.pathname === "/oauth/token" && request.method === "POST") return await token(request, env);
+    if(url.pathname === "/oauth/revoke" && request.method === "POST") return await revoke(request, env);
+    if(url.pathname === "/site-token" && request.method === "POST") {
+      const grant = await grantForRequest(request, env);
+      if(!grant) return json({ error: "Log in again: this access token is unknown or expired" }, { status: 401, headers: { "www-authenticate": "Bearer" } });
+      return await siteTokenRoute(request, env, grant);
+    }
     if(url.pathname === "/mcp") {
       const grant = await grantForRequest(request, env);
       if(!grant) return unauthorized(url, request.headers.has("authorization"));
@@ -206,8 +220,6 @@ export async function handle(request: Request, env: Env, ctx?: ExecutionContext)
       if(id) await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(id).run();
       return new Response(null, { status: 204, headers: { "set-cookie": setCookie(url, SESSION_COOKIE, "", 0) } });
     }
-    const go = /^\/go\/([^/]+)\/?$/.exec(url.pathname);
-    if(go) return await goTo(request, env, url, decodeURIComponent(go[1]!));
     if(url.pathname.startsWith("/api/")) {
       await rememberOrigin(env, url.origin);
       return await api(request, env, url, ctx);

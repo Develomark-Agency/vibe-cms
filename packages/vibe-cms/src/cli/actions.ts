@@ -6,6 +6,7 @@ import { coreActions } from "../actions/core.ts";
 import type { AnyAction } from "../actions/define.ts";
 import { fromText, inputFields } from "../actions/inputs.ts";
 import { httpCaller } from "../actions/client.ts";
+import { hubSiteToken } from "./login.ts";
 
 /**
  * The CLI surface: a command per action (`vibe-cms documents list --type post`),
@@ -23,7 +24,7 @@ function kebab(name: string): string {
 
 export const connection = {
   site: option({ long: "site", env: "VIBE_SITE", type: string, description: "The site's URL, e.g. http://localhost:1337" }),
-  token: option({ long: "token", env: "VIBE_TOKEN", type: optional(string), description: "A site session token; development sites sign you in without one" }),
+  token: option({ long: "token", env: "VIBE_TOKEN", type: optional(string), description: "A site session token. Without one: development sites sign you in, deployed ones use `vibe-cms login`" }),
   prefix: option({ long: "prefix", type: string, defaultValue: () => "/_vibe", defaultValueIsSerializable: true, description: "Path the CMS is mounted at" })
 };
 
@@ -36,6 +37,11 @@ export async function devToken(site: string, prefix: string): Promise<string | u
   }).catch(() => null);
   if(!response?.ok) return undefined;
   return (await response.json() as { token?: string }).token;
+}
+
+/** `--token`, else a development sign-in, else a session from this project's hub login. */
+export async function siteToken(values: { site: string, token?: string, prefix: string }): Promise<string | undefined> {
+  return values.token ?? await devToken(values.site, values.prefix) ?? await hubSiteToken(values.site);
 }
 
 /** `@path` reads a JSON value from a file. */
@@ -67,7 +73,14 @@ function actionCommand(action: AnyAction) {
         else if(info.kind === "json") text[key] = await jsonArgument(value);
         else text[key] = value;
       }
-      const token = values.token ?? await devToken(values.site, values.prefix);
+      let token: string | undefined;
+      try {
+        token = await siteToken(values as { site: string, token?: string, prefix: string });
+      } catch (error) {
+        console.error(`${styleText("red", "✗")} ${(error as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
       const call = httpCaller({ url: values.site, prefix: values.prefix, token });
       const result = await call(action.name, fromText(action.input, text));
       if(result.isOk()) {
@@ -77,7 +90,7 @@ function actionCommand(action: AnyAction) {
       const error = result.error;
       console.error(`${styleText("red", "✗")} ${styleText("bold", error._tag)} ${error.message}`);
       if(error.details !== undefined) console.error(styleText("dim", JSON.stringify(error.details, null, 2)));
-      if(error._tag === "Unauthorized" && !values.token) console.error(styleText("dim", "Pass --token or set VIBE_TOKEN."));
+      if(error._tag === "Unauthorized" && !token) console.error(styleText("dim", "Log in with vibe-cms login <your hub's URL>, or pass --token."));
       process.exitCode = 1;
     }
   });

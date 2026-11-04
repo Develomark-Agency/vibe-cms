@@ -135,9 +135,9 @@ function SignIn({ info, error }: { info: SiteInfo, error: string | null }) {
           <p className="text-sm text-balance text-muted-foreground">
             {embedded
               ? "Waiting for your agency panel to sign you in…"
-              : "Open this editor from your agency's panel to sign in. Sessions are handed over from the panel; this page has no password form."}
+              : "This editor only opens inside your agency's panel, which signs you in. This page has no password form."}
           </p>
-          {info.auth && <p className="text-xs text-muted-foreground">{new URL(info.auth.issuer).host}</p>}
+          {info.hub && <a className="text-sm font-medium text-primary underline-offset-4 hover:underline" href={`${info.hub}/s/${encodeURIComponent(info.site.id)}/`}>Open in {new URL(info.hub).host}</a>}
         </div>
         {error && <p className="rounded-[12px] bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
       </div>

@@ -408,8 +408,8 @@ describe("auth", () => {
       name: "site.test",
       accent: null,
       icon: null,
-      auth: { issuer: "https://issuer.test", clientId: "panel" },
-      backups: null,
+      hub: "https://hub.test",
+      backups: false,
       admin: "https://site.test/_vibe/admin"
     });
   });

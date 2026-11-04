@@ -7,8 +7,8 @@
   "assets": {
     "directory": "dist/client",
     "binding": "ASSETS",
-    // The API, sign-in, handoff, agent (OAuth and MCP) routes run in the Worker; everything else is the app.
-    "run_worker_first": ["/api/*", "/auth/*", "/go/*", "/mcp", "/oauth/*", "/.well-known/*"],
+    // The API, sign-in, agent and CLI (OAuth, MCP, site tokens) routes run in the Worker; everything else is the app.
+    "run_worker_first": ["/api/*", "/auth/*", "/mcp", "/oauth/*", "/site-token", "/.well-known/*"],
     "not_found_handling": "single-page-application"
   },
   "d1_databases": [
@@ -23,7 +23,7 @@
     "OIDC_CLIENT_ID": "1234.apps.googleusercontent.com",
     // Comma-separated email domains or group claim values.
     "PANEL_ALLOW": "my-agency.com",
-    // The panel's public address; sites trust it with `backups: { panel: "https://…" }`.
+    // The panel's public address: the hub sites trust with `auth: hub({ url: "https://…" })`.
     "PANEL_URL": "https://panel.my-agency.com"
     // Optional white-labelling: "PANEL_NAME", "PANEL_ACCENT" (#rrggbb, also the accent of framed
     // sites that don't set their own) and "PANEL_ICON" (an image URL).

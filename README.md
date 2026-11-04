@@ -62,7 +62,7 @@ In `examples/blog`: `bun run build` runs the production build (the same `astro b
 // vibe-cms.config.ts
 export default defineConfig({
   locales: ["en", "fr"],
-  auth: oidc({ issuer: "https://accounts.google.com", clientId: "…" }),
+  auth: hub({ url: "https://edit.my-agency.com" }),
   schemas: {
     post: v.object({
       title: v.text({ min: 1 }),

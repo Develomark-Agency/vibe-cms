@@ -1,15 +1,16 @@
 import { expect } from "bun:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { defineConfig } from "vibe-cms";
-import { oidc } from "vibe-cms/auth";
+import { hub } from "vibe-cms/auth";
 import { createHandler } from "vibe-cms/handler";
 import v from "vibe-cms/schema";
 import { createD1 } from "../../../packages/vibe-cms/test/helpers.ts";
 import { handle, type Env } from "../src/server/index.ts";
 
-/** A mock identity provider, two sites (one trusting another provider) and a cookie-keeping panel client. */
+/** A mock identity provider, two sites (one trusting another hub) and a cookie-keeping panel client. */
 
 export const ISSUER = "https://idp.test";
+export const HUB = "https://panel.test";
 export const CLIENT_ID = "panel-client";
 const keys = await generateKeyPair("RS256");
 const jwk = { ...(await exportJWK(keys.publicKey)), kid: "k1", alg: "RS256" };
@@ -28,9 +29,9 @@ export async function idToken(claims: Record<string, unknown> = {}) {
     .sign(keys.privateKey);
 }
 
-export function site(issuer = ISSUER) {
+export function site(hubUrl = HUB) {
   const config = defineConfig({
-    auth: oidc({ issuer, clientId: CLIENT_ID }),
+    auth: hub({ url: hubUrl }),
     permissions: { roles: { editor: { post: ["read", "write"] } }, users: { "jane@agency.test": ["editor"] } },
     schemas: { post: v.object({ title: v.text() }) }
   });
@@ -41,7 +42,7 @@ export function site(issuer = ISSUER) {
 
 export const sites: Record<string, (request: Request) => Promise<Response>> = {
   "https://site-a.test": site(),
-  "https://site-b.test": site("https://other-idp.test")
+  "https://site-b.test": site("https://other-panel.test")
 };
 
 /** A mock site's ID, which the site makes for itself on first boot (as in production). */
@@ -74,6 +75,8 @@ export function installMock() {
         return Response.json({ id_token: await idToken(), refresh_token: "r1" });
       }
     }
+    // Sites fetch the hub's keys.
+    if(url.origin === HUB) return handle(request, env);
     const handler = sites[url.origin];
     if(handler) return handler(request);
     return realFetch(input, init);
@@ -89,7 +92,8 @@ export const env: Env = {
   OIDC_ISSUER: ISSUER,
   OIDC_CLIENT_ID: CLIENT_ID,
   OIDC_CLIENT_SECRET: "secret",
-  PANEL_ALLOW: "agency.test"
+  PANEL_ALLOW: "agency.test",
+  PANEL_URL: HUB
 };
 
 export const jar = new Map<string, string>();
@@ -97,7 +101,7 @@ export const jar = new Map<string, string>();
 export async function panel(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   headers.set("cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; "));
-  const response = await handle(new Request(`https://panel.test${path}`, { ...init, headers }), env);
+  const response = await handle(new Request(`${HUB}${path}`, { ...init, headers }), env);
   for(const header of response.headers.getSetCookie()) {
     const [pair] = header.split(";");
     const [name, value] = pair!.split("=");

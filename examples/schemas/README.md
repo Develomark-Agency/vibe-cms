@@ -10,7 +10,7 @@ Content type definitions for vibe-cms, one topic per file, plus the queries that
 | `src/media.ts` | `image()`, `video()`, `file()` and `v.asset()` |
 | `src/unions.ts` | Unions of objects told apart by a literal |
 | `src/localization.ts` | Locales, fallback, translator roles |
-| `src/permissions.ts` | `oidc()` sign-in, roles and users |
+| `src/permissions.ts` | `hub()` sign-in, roles and users |
 | `src/presets.ts` | Rich text, blocks and pages from `@vibe-cms/rich-text` and `@vibe-cms/blocks` |
 | `src/queries.ts` | Filtering, sorting, paging, counting, batching, drafts, `with` expansions, locales |
 | `src/backfill.ts` | A script that copies a field into a new one after a schema change |

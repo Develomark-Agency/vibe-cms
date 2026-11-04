@@ -18,7 +18,7 @@ export interface Env {
   PANEL_ICON?: string,
   /** The archive for scheduled backups. Without it, the panel doesn't back sites up. */
   BACKUPS?: R2Bucket,
-  /** The panel's public address, which sites name in `backups.panel`. Learned from requests when unset. */
+  /** The panel's public address, which sites name in `auth: hub({ url })`. Learned from requests when unset. */
   PANEL_URL?: string
 }
 
@@ -183,21 +183,6 @@ export async function freshIdToken(env: Env, session: SessionRow): Promise<strin
   await env.DB.prepare("UPDATE sessions SET id_token = ?, refresh_token = COALESCE(?, refresh_token) WHERE id = ?")
     .bind(tokens.id_token, tokens.refresh_token ?? null, session.id).run();
   return tokens.id_token;
-}
-
-/** Panel → site, server to server: provider ID token in, one-time code out. */
-export async function codeFor(env: Env, session: SessionRow, site: PanelSite): Promise<string> {
-  const endpoint = `${site.admin.replace(/\/admin\/?$/, "")}/api/session/code`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id_token: await freshIdToken(env, session) })
-  });
-  const data = await response.json().catch(() => ({})) as { code?: string, error?: string };
-  if(!response.ok || !data.code) {
-    throw new PanelError(response.status === 403 ? 403 : 502, data.error ?? `The site refused the sign-in (${response.status})`);
-  }
-  return data.code;
 }
 
 export async function siteById(env: Env, id: string): Promise<PanelSite | null> {

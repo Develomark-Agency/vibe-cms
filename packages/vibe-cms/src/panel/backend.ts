@@ -52,9 +52,10 @@ export interface SiteDescriptor {
   name: string,
   accent?: string | null,
   icon?: string | null,
-  auth: { issuer: string, clientId: string } | null,
-  /** The panel the site lets take and restore backups, if any. */
-  backups?: { panel: string } | null,
+  /** The hub the site trusts, from `auth: hub({ url })`; null for sites without one (development). */
+  hub: string | null,
+  /** Whether the site lets its hub take and restore backups. */
+  backups: boolean,
   admin: string
 }
 
@@ -101,11 +102,11 @@ export interface BackupRun {
 export interface SiteBackups {
   /** False when the panel has no archive bucket. */
   available: boolean,
-  /** This panel's address, which the site names in `backups.panel`. */
+  /** This panel's address, which the site names in `auth: hub({ url })`. */
   panel: string | null,
-  /** Whether the site trusts this panel for backups; null when the site couldn't be reached. */
+  /** Whether the site lets this panel back it up; null when the site couldn't be reached. */
   trusted: boolean | null,
-  /** The panel the site does trust, when it's another. */
+  /** The hub the site does trust, when it's another. */
   trustedPanel: string | null,
   /** The site's own policy; null when it follows the panel's defaults. */
   policy: BackupPolicy | null,

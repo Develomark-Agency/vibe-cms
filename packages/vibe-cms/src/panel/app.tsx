@@ -5,7 +5,6 @@ import {
   CheckIcon,
   ChevronsUpDownIcon,
   CopyIcon,
-  ExternalLinkIcon,
   GlobeIcon,
   KeyRoundIcon,
   LayoutGridIcon,
@@ -303,10 +302,6 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
     if(!site) document.title = `Sites · ${branding.name}`;
   }, [site, branding.name]);
 
-  function openExternally(target: PanelSite) {
-    window.open(backend.mode === "hosted" ? `/go/${encodeURIComponent(target.id)}` : `${target.admin}/`, "_blank", "noopener");
-  }
-
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-sidebar px-3">
@@ -326,10 +321,6 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
                 </Button>
               } />
               <TooltipContent>{site.favorite ? "Favorite" : "Add to favorites"}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Open in new tab" onClick={() => openExternally(site)}><ExternalLinkIcon /></Button>} />
-              <TooltipContent>Open the editor in a new tab</TooltipContent>
             </Tooltip>
             {backend.backups && (
               <Tooltip>
@@ -386,7 +377,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
       </header>
       <main className="relative min-h-0 flex-1">
         {siteId === null ? (
-          <SiteList backend={backend} sites={live} loading={sites.isLoading} onAdd={() => setAddOpen(true)} onOpenExternally={openExternally} onBackups={backend.backups ? openBackups : undefined} />
+          <SiteList backend={backend} sites={live} loading={sites.isLoading} onAdd={() => setAddOpen(true)} onBackups={backend.backups ? openBackups : undefined} />
         ) : site ? (
           <SiteFrame key={site.id} backend={backend} branding={branding} site={site} initialPath={rest} onShortcut={() => setPaletteOpen(true)} />
         ) : sites.isLoading ? (
@@ -486,12 +477,11 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: L
   );
 }
 
-function SiteList({ backend, sites, loading, onAdd, onOpenExternally, onBackups }: {
+function SiteList({ backend, sites, loading, onAdd, onBackups }: {
   backend: PanelBackend,
   sites: LiveSite[] | undefined,
   loading: boolean,
   onAdd(): void,
-  onOpenExternally(site: PanelSite): void,
   onBackups?(site: PanelSite): void
 }) {
   const [filter, setFilter] = useState("");
@@ -554,9 +544,9 @@ function SiteList({ backend, sites, loading, onAdd, onOpenExternally, onBackups 
             // One layout group, so a card that's starred flies from its grid to the other one.
             <MotionConfig reducedMotion="user"><LayoutGroup>
               <AnimatePresence initial={false} mode="popLayout">
-                {starred.length > 0 && <SiteGroup key="starred" title="Starred" sites={starred} backend={backend} portal={portal} onOpenExternally={onOpenExternally} onBackups={onBackups} />}
+                {starred.length > 0 && <SiteGroup key="starred" title="Starred" sites={starred} backend={backend} portal={portal} onBackups={onBackups} />}
                 {starred.length > 0 && others.length > 0 && <motion.hr key="divider" layout {...fade} />}
-                {others.length > 0 && <SiteGroup key="others" title={starred.length ? "Other sites" : "All sites"} sites={others} backend={backend} portal={portal} onOpenExternally={onOpenExternally} onBackups={onBackups} offset={starred.length} />}
+                {others.length > 0 && <SiteGroup key="others" title={starred.length ? "Other sites" : "All sites"} sites={others} backend={backend} portal={portal} onBackups={onBackups} offset={starred.length} />}
               </AnimatePresence>
             </LayoutGroup></MotionConfig>
           )}
@@ -656,12 +646,11 @@ function SitePortal({ state }: { state: PortalHover }) {
 const spring = { type: "spring", duration: 0.4, bounce: 0.12 } as const;
 const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: spring };
 
-function SiteGroup({ title, sites, backend, portal, onOpenExternally, onBackups, offset = 0, ref }: {
+function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }: {
   title: string,
   sites: LiveSite[],
   backend: PanelBackend,
   portal: PortalHover,
-  onOpenExternally(site: PanelSite): void,
   onBackups?(site: PanelSite): void,
   offset?: number,
   ref?: Ref<HTMLElement>
@@ -728,7 +717,6 @@ function SiteGroup({ title, sites, backend, portal, onOpenExternally, onBackups,
                 <DropdownMenu>
                   <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => onOpenExternally(site)}><ExternalLinkIcon /> Open in new tab</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
                     {onBackups && <DropdownMenuItem onClick={() => onBackups(site)}><ArchiveIcon /> Backups</DropdownMenuItem>}
                     <DropdownMenuSeparator />

@@ -18,7 +18,7 @@ vibe-cms does **not** run its own identity server. Logins belong to the identity
 
 Every site serves a standalone admin app at `/_vibe/admin`: the vibe-cms admin core at that site's version, plus its widgets and admin plugins. It runs on the site's own origin, so its code can only ever act on that site.
 
-The panel never loads a site's code into its own page. It shows the site's editor in a cross-origin **iframe** inside the panel's frame, or sends you to it as a full page.
+The panel never loads a site's code into its own page. It shows the site's editor in a cross-origin **iframe** inside the panel's frame, the only place a deployed editor runs.
 
 ```
 ┌─ edit.my-agency.com ─────────────────────────────────────┐
@@ -36,26 +36,40 @@ The panel never loads a site's code into its own page. It shows the site's edito
 
 Because each site brings its own editor, sites on different vibe-cms versions never have to agree with each other or with the panel. The only shared contract is the small message protocol below.
 
-## Sites trust an OIDC issuer
+## Sites trust the hub
 
-A site's config names one OIDC issuer and the panel's client ID at that provider. The site learns everything else (public keys, endpoints) through OIDC discovery at `<issuer>/.well-known/openid-configuration`, fetched at runtime and never stored at deploy time.
+The panel is the **hub**: the one thing a deployed site trusts. A site's config names the hub by its address. The site fetches the hub's public keys from `<hub>/.well-known/jwks.json` at runtime; nothing is stored at deploy time, and the site has no secret to configure.
 
 ```ts
 // vibe-cms.config.ts (site)
 import { defineConfig } from "vibe-cms";
-import { oidc } from "vibe-cms/auth";
+import { hub } from "vibe-cms/auth";
 
 export default defineConfig({
-  auth: oidc({
-    issuer: "https://accounts.google.com",
-    clientId: "1234.apps.googleusercontent.com", // the panel's client ID; expected `aud`
-    roles: "groups",                              // optional: claim to read roles from
+  auth: hub({
+    url: "https://edit.my-agency.com", // the hub's address; the expected `iss`
+    roles: "groups",                   // optional: identity provider claim to read roles from
   }),
   schemas: { /* … */ },
 });
 ```
 
-Every site trusts **exactly one** issuer and client ID.
+Every site trusts **exactly one** hub. Only the hub talks to the identity provider, so changing providers is a hub setting, not a change to every site.
+
+Every way in goes through the hub: the editor, the CLI (`vibe-cms login`), agents (`/mcp`) and scheduled backups. The hub signs a short-lived token (ES256, five minutes) for **one site at a time**, `aud` set to that site's ID. A user's token carries the provider identity as `sub` (`<issuer>|<sub>`) and the provider's other claims (email, `email_verified`, name, groups) passed through. The site verifies the token itself, without calling the hub, then works out roles from its own config.
+
+```ts
+// a hub token for one site
+{
+  "iss": "https://edit.my-agency.com",
+  "aud": "site-40",
+  "sub": "https://accounts.google.com|10498…",
+  "email": "jane@my-agency.com",
+  "email_verified": true,
+  "groups": ["agency-staff"],
+  "exp": 1793000300
+}
+```
 
 ## Permissions live on the site
 
@@ -64,7 +78,7 @@ Anyone allowed into the panel sees every site in the shared list. Whether they c
 ```ts
 // vibe-cms.config.ts (site)
 export default defineConfig({
-  auth: oidc({ issuer: "https://accounts.google.com", clientId: "1234.apps.googleusercontent.com" }),
+  auth: hub({ url: "https://edit.my-agency.com" }),
   permissions: {
     roles: {
       "agency-staff": { all: true },
@@ -98,15 +112,15 @@ The panel's backend is the OIDC client (the "backend for frontend" pattern). It 
 ## Opening a site: the one-time code handoff
 
 ```
-panel backend ──POST /_vibe/api/session/code (provider ID token)──▶ site-40
-                                        verifies via discovery, checks iss / aud / exp,
+hub backend ──POST /_vibe/api/session/code (hub token for site-40)──▶ site-40
+                                        verifies with the hub's keys, checks iss / aud / exp,
                                         maps identity → roles
               ◀──────────── one-time code (single use, ~30s) ─────────────
 panel ──code──▶ site-40's editor ──POST /_vibe/api/session (code)──▶ site-40
                                  ◀──────── site session token ───────────
 ```
 
-1. The panel backend sends the provider's ID token to the site, server to server.
+1. The hub backend refreshes the user's provider sign-in if it's about to expire (so someone the provider dropped stops getting in), signs a token for this site, and sends it, server to server.
 2. The site verifies it, works out the user's roles, and returns a **one-time code**.
 3. The code reaches the site's editor (see below), which immediately trades it for a **site session token** that only works on that site.
 
@@ -122,20 +136,15 @@ panel ──code──▶ site-40's editor ──POST /_vibe/api/session (code)�
 }
 ```
 
-### Two ways the code arrives
+### The editor only runs inside the hub
 
-The editor is the same standalone app either way; only the delivery differs.
+The code arrives by `postMessage` from the panel, addressed only to the site's origin, and the session lives **in memory**. A deployed editor opened on its own has no way to sign in: it shows a link to the site's page in the hub (`<hub>/s/<site id>/`). Bookmarks and second tabs use the hub's URLs, which mirror the editor's location. Development editors (`vite dev`) still open on their own, signed in as the developer.
 
-| Mode | How the code arrives | Session kept in |
-|---|---|---|
-| **Embedded** (default) | `postMessage` from the panel, addressed only to the site's origin | Memory |
-| **Full page** ("open in new tab", or a bookmark) | Redirect to `/_vibe/admin#code=…`; the fragment never reaches a server, and the editor strips it from the URL | httpOnly first-party cookie |
-
-The embedded session lives **in memory**, not in a cookie:
+The session lives in memory, not in a cookie:
 
 - Browsers block or partition cookies in cross-site iframes (Safari most strictly), so memory is the reliable option.
 - It makes clickjacking moot: if any other website frames the editor, the editor has no session there, so there is nothing to trick a user into doing.
-- If the iframe reloads, the editor asks the panel for a fresh code.
+- If the iframe reloads, or the session expires, the editor asks the panel for a fresh code, with nothing shown to the user.
 
 ## The message protocol
 
@@ -193,7 +202,7 @@ The editor's `ready` contains nothing sensitive, so it can be posted to any pare
 
 ## Switching sites
 
-The site dropdown lives in the panel frame. Switching swaps the iframe to the other site and runs a fresh handoff. In full-page mode, the editor shows a link back to the panel; `edit.my-agency.com/go/<siteId>` runs the handoff and redirects, without logging in again.
+The site dropdown lives in the panel frame. Switching swaps the iframe to the other site and runs a fresh handoff.
 
 ## UX trade-offs of the iframe
 
@@ -249,23 +258,23 @@ GET https://site-40.com/.well-known/vibe-cms
 {
   "id": "site-40",
   "name": "Client 40",
-  "auth": {
-    "issuer": "https://accounts.google.com",
-    "clientId": "1234.apps.googleusercontent.com"
-  },
+  "hub": "https://edit.my-agency.com",
+  "backups": false,
   "admin": "https://site-40.com/_vibe/admin"
 }
 ```
 
-You paste a URL into the panel. The panel fetches the descriptor and adds the site only if `auth.issuer` and `auth.clientId` match its own settings. Otherwise it refuses: "This site trusts a different identity provider."
+You paste a URL into the panel. The panel fetches the descriptor and adds the site only if `hub` is its own address. Otherwise it refuses: "This site trusts another hub."
 
-No secret is needed: the panel isn't proving who *owns* the site, only that the site *agreed* to trust the same identity provider and panel client. Only someone who controls the site's deployment can make that file say so, the same principle as file-based domain verification.
+No secret is needed: the panel isn't proving who *owns* the site, only that the site *agreed* to trust this hub. Only someone who controls the site's deployment can make that file say so, the same principle as file-based domain verification.
 
 ## Security model
 
 **Browser side: isolated.** Each site's editor runs on its own origin. A malicious or compromised plugin, widget or dependency on site 12 can act on site 12 (plugins are trusted code), but cannot touch the panel's page, the panel's session, or any other site. Provider tokens never reach the browser.
 
-**Server side: one remaining gap.** During the handoff, every site receives the provider's ID token, and its audience is the panel's client ID, so every site that trusts the same issuer would accept it. A compromised plugin's *server* code on site 12 could capture those tokens and replay them to another site's handoff endpoint while they are valid (about an hour for Google). Closing this needs tokens that only work on one site; providers with audience-specific access tokens (Auth0, Okta, Entra) can provide them, plain Google can't. Until then, this part assumes an agency's sites are one trust domain.
+**Server side: tokens for one site.** Sites never see a provider token. Each hub token is addressed to one site, so a compromised plugin's *server* code on site 12 can't replay what it receives to site 40. The hub's signing key is what every site trusts: it's generated on first use and kept in the hub's D1.
+
+**Revocation.** Sites don't check back with the hub, so a token works until it expires: five minutes for a hub token, 12 hours for the site session the editor or CLI trades it for. Removing someone from the identity provider stops new tokens at the next refresh of their provider sign-in.
 
 ## Shell forms
 
@@ -282,14 +291,15 @@ The panel holds no content and no identities.
 | State | After recreating the panel |
 |---|---|
 | Content | Never held by the panel |
-| Users and logins | Held by the identity provider; unaffected |
+| Users and logins | Held by the identity provider; unaffected. Editors, CLIs and agents sign in again |
+| Signing key | A new one is generated; sites fetch it from the same address |
 | Site permissions | Held by sites, keyed by provider identity; unaffected |
 | Shared site list | Lost; re-add sites by URL |
 | Favorites | Lost |
 
-## Moving a site to another identity provider
+## Moving a site to another hub
 
-Change `auth:` in the site's repo and redeploy. It fails safely: panels using the old provider can no longer hand off to the site, and panels using the new provider can add it by URL.
+Change `auth:` in the site's repo and redeploy. It fails safely: the old hub's tokens stop working on the site, and the new hub can add it by URL. Changing the identity provider doesn't touch sites at all: it's the hub's `OIDC_*` settings. A hub that moves to a new address needs every site's `auth` changed, so keep the old address serving its keys until they're redeployed.
 
 ## Local development
 
@@ -300,7 +310,7 @@ bunx vibe-cms admin
 # → http://localhost:5173/?site=http://localhost:8787
 ```
 
-A local panel avoids browser restrictions on public pages calling `localhost`, and works offline. Its site list is kept in `localStorage`. In dev, the local site skips token verification, so no identity provider is needed. The editor can also be opened directly at `http://localhost:8787/_vibe/admin`.
+A local panel avoids browser restrictions on public pages calling `localhost`, and works offline. Its site list is kept in `localStorage`. In dev, the local site skips token verification, so no identity provider is needed. The editor can also be opened directly at `http://localhost:8787/_vibe/admin` in development.
 
 ### Production-like local setup with portless
 
@@ -332,7 +342,6 @@ In the monorepo, the panel backend and its frontend are **one package**, `apps/p
 ## Open questions
 
 - **Session details:** site session lifetime and refresh, and the exact request and response shapes of the code endpoints.
-- **Expired sessions in full-page mode:** the site trusts a provider, not a panel, so it doesn't know where to send someone to log in. Options: remember the panel that handed you in, or an optional login URL in the site config.
 - **Who can remove sites** from the shared list (any panel user, or only whoever added it).
 - **Exporting and importing** the site list, so recreating a panel doesn't mean re-adding every site.
-- **Closing the server-side gap** with per-site tokens where providers support them.
+- **Simplifying agent sessions:** sites accept hub tokens as `Authorization: Bearer` directly, so the hub could send those instead of trading each for a cached site session (`agent_site_tokens`).

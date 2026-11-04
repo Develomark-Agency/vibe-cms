@@ -27,7 +27,7 @@ export async function backfill(actions: ReturnType<typeof createThrowingActionCl
 
 if(import.meta.main) {
   const site = process.env.VIBE_SITE ?? "http://localhost:1337";
-  // Development sites hand out a session; deployed sites need VIBE_TOKEN.
+  // Development sites hand out a session; deployed sites need VIBE_TOKEN (a site session token).
   const token = process.env.VIBE_TOKEN ?? (await (await fetch(`${site}/_vibe/api/session`, {
     method: "POST",
     headers: { "content-type": "application/json" },

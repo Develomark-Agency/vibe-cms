@@ -233,3 +233,37 @@ describe("refusals", () => {
     expect(response.headers.get("location")).toBe(`https://panel.test/auth/login?return=${encodeURIComponent(`/oauth/authorize?${params}`)}`);
   });
 });
+
+describe("the CLI: site tokens and revocation", () => {
+  async function siteTokenFor(token: string, site: string) {
+    const response = await panel("/site-token", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ site }) });
+    return { status: response.status, body: await response.json() as { token?: string, error?: string } };
+  }
+
+  test("a connection gets a session on a site by URL or id, which the site accepts", async () => {
+    const { access_token: token } = await connectWithTokens();
+    for(const site of ["https://site-a.test", "https://site-a.test/some/page", a]) {
+      const { status, body } = await siteTokenFor(token, site);
+      expect(status).toBe(200);
+      const me = await fetch("https://site-a.test/_vibe/api/session", { headers: { authorization: `Bearer ${body.token}` } });
+      expect(await me.json()).toMatchObject({ user: { sub: `${ISSUER}|u-jane`, roles: ["editor"] } });
+    }
+    expect((await siteTokenFor(token, "https://not-in-panel.test")).status).toBe(404);
+    expect((await siteTokenFor("vpa_nope", a)).status).toBe(401);
+  });
+
+  test("read-only connections can't get site tokens", async () => {
+    const { access_token: token } = await connectWithTokens({ readOnly: true });
+    expect((await siteTokenFor(token, a)).status).toBe(403);
+  });
+
+  test("revoking the refresh token ends the whole connection", async () => {
+    const { client, access_token: token, refresh_token: refresh } = await connectWithTokens();
+    const revoked = await panel("/oauth/revoke", form({ token: refresh, client_id: client.client_id }));
+    expect(revoked.status).toBe(200);
+    expect((await siteTokenFor(token, a)).status).toBe(401);
+    expect((await tokens({ grant_type: "refresh_token", refresh_token: refresh, client_id: client.client_id })).status).toBe(400);
+    // Unknown tokens get the same answer, so revocation can't probe for valid ones.
+    expect((await panel("/oauth/revoke", form({ token: "vpr_nope", client_id: client.client_id }))).status).toBe(200);
+  });
+});

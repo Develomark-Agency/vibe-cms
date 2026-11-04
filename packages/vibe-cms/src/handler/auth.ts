@@ -57,68 +57,49 @@ export async function verifySession(db: D1, token: string, siteId: string): Prom
   }
 }
 
-// --- Panel backups ---------------------------------------------------------
+// --- Hub tokens -----------------------------------------------------------
 
-const panelKeys = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+const hubKeys = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+/** The claims a hub token carries besides identity; everything else is the provider's, passed through. */
+const RESERVED = new Set(["iss", "aud", "exp", "iat", "nbf", "jti", "scope"]);
 
 /**
- * A backup token from the panel the config's `backups.panel` names: signed with the panel's
- * key, for this site, with the `backups` scope. Its session may only run backup actions.
+ * A token the hub in `auth` signed for this site: a user, whose roles the site works out
+ * here, or with `scope: "backups"` the hub itself, which may only run backup actions and
+ * only when the config sets `backups: true`. Null when it isn't one.
  */
-export async function sessionFromPanelToken(config: AnyConfig, token: string, siteId: string): Promise<Session | null> {
-  const panel = config.backups?.panel?.replace(/\/$/, "");
-  if(!panel) return null;
-  let jwks = panelKeys.get(panel);
+export async function sessionFromHubToken(config: AnyConfig, token: string, siteId: string): Promise<Session | null> {
+  const auth = config.auth;
+  if(!auth) return null;
+  let jwks = hubKeys.get(auth.url);
   if(!jwks) {
-    jwks = createRemoteJWKSet(new URL(`${panel}/.well-known/jwks.json`));
-    panelKeys.set(panel, jwks);
+    jwks = createRemoteJWKSet(new URL(`${auth.url}/.well-known/jwks.json`));
+    hubKeys.set(auth.url, jwks);
   }
+  let payload: JWTPayload;
   try {
-    const { payload } = await jwtVerify(token, jwks, { issuer: panel, audience: siteId, algorithms: ["ES256"] });
-    if(payload.scope !== "backups") return null;
-    return { sub: `panel|${panel}`, name: "Backups", roles: [], grants: ["backups"] };
+    ({ payload } = await jwtVerify(token, jwks, { issuer: auth.url, audience: siteId, algorithms: ["ES256"] }));
   } catch {
     return null;
   }
-}
-
-// --- OIDC ------------------------------------------------------------------
-
-interface Discovery {
-  issuer: string,
-  jwks_uri: string
-}
-
-const discoveries = new Map<string, { at: number, jwks: ReturnType<typeof createRemoteJWKSet>, doc: Discovery }>();
-
-async function discover(issuer: string) {
-  const cached = discoveries.get(issuer);
-  if(cached && Date.now() - cached.at < 60 * 60 * 1000) return cached;
-  const response = await fetch(`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`);
-  if(!response.ok) throw new HttpError(502, `OIDC discovery failed for ${issuer} (${response.status})`);
-  const doc = await response.json() as Discovery;
-  const entry = { at: Date.now(), doc, jwks: createRemoteJWKSet(new URL(doc.jwks_uri)) };
-  discoveries.set(issuer, entry);
-  return entry;
-}
-
-/** Verifies a provider ID token against the site's trusted issuer and maps it to a session. */
-export async function sessionFromIdToken(config: AnyConfig, idToken: string): Promise<Session> {
-  const auth = config.auth;
-  if(!auth) throw new HttpError(501, "This site has no `auth` configured");
-  const { jwks, doc } = await discover(auth.issuer);
-  let payload: JWTPayload;
-  try {
-    ({ payload } = await jwtVerify(idToken, jwks, { issuer: doc.issuer, audience: auth.clientId }));
-  } catch (error) {
-    throw new HttpError(401, `Invalid ID token: ${(error as Error).message}`);
+  if(payload.scope === "backups") {
+    if(config.backups !== true) return null;
+    return { sub: `hub|${auth.url}`, name: "Backups", roles: [], grants: ["backups"] };
   }
-  const sub = `${payload.iss}|${payload.sub}`;
-  const email = typeof payload.email === "string" ? payload.email : undefined;
-  const verifiedEmail = email && payload.email_verified === true ? email.toLowerCase() : undefined;
+  if(typeof payload.sub !== "string" || !payload.sub) return null;
+  const claims = Object.fromEntries(Object.entries(payload).filter(([key]) => !RESERVED.has(key)));
+  return identitySession(config, payload.sub, claims);
+}
+
+/** Maps a provider identity (`<issuer>|<sub>`) and its claims to this site's roles. */
+function identitySession(config: AnyConfig, sub: string, claims: Record<string, unknown>): Session {
+  const email = typeof claims.email === "string" ? claims.email : undefined;
+  const verifiedEmail = email && claims.email_verified === true ? email.toLowerCase() : undefined;
   const roles = new Set<string>();
-  if(auth.roles) {
-    const claim = payload[auth.roles];
+  const claimName = config.auth?.roles;
+  if(claimName) {
+    const claim = claims[claimName];
     for(const role of Array.isArray(claim) ? claim : typeof claim === "string" ? [claim] : []) roles.add(String(role));
   }
   const users = config.permissions?.users ?? {};
@@ -131,7 +112,7 @@ export async function sessionFromIdToken(config: AnyConfig, idToken: string): Pr
   return {
     sub,
     email: verifiedEmail ?? email,
-    name: typeof payload.name === "string" ? payload.name : undefined,
+    name: typeof claims.name === "string" ? claims.name : undefined,
     roles: granted
   };
 }

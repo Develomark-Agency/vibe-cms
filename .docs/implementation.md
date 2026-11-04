@@ -43,7 +43,7 @@ How the code settles questions the design docs leave open, and where it delibera
 - **Permission:** the `siteSettings: true` role rule (or `all`). Writing content doesn't imply it.
 - **The accent is one colour.** `styles.css` derives the brand gradient, ring and foreground from `--accent-source` with relative colour syntax; dark text takes over once the accent is lighter than L 0.7, and dark mode lifts dark accents to L 0.68.
 - **Panel white-labelling:** `PANEL_NAME`, `PANEL_ACCENT` and `PANEL_ICON` on the hosted panel (`--name`, `--accent`, `--icon` for `vibe-cms admin`). The panel's accent is also the fallback for framed sites without their own.
-- **Theme sync:** the panel and the editors it frames keep one light/dark/system choice through the frame protocol: the panel sends `vibe:appearance` (theme and accent) when an editor is ready and on every change, and editors send `vibe:theme` when the user changes it there. Editors also send `vibe:site` after saving site settings, so the panel updates without refetching. A full-page editor keeps its own choice in its origin's storage.
+- **Theme sync:** the panel and the editors it frames keep one light/dark/system choice through the frame protocol: the panel sends `vibe:appearance` (theme and accent) when an editor is ready and on every change, and editors send `vibe:theme` when the user changes it there. Editors also send `vibe:site` after saving site settings, so the panel updates without refetching. A development editor opened on its own keeps its own choice in its origin's storage.
 
 ## Pages and blocks
 
@@ -68,7 +68,7 @@ How the code settles questions the design docs leave open, and where it delibera
 ## Auth
 
 - **Dev sessions:** with `dev` (default: Vite's `import.meta.env.DEV`), `POST /_vibe/api/session { dev: true }` signs in a local developer with every permission. An embedded editor in dev mode also posts navigation and title messages to any parent, since no code tells it who the panel is.
-- **Session lifetime:** site sessions last 12 hours. Embedded editors ask the panel for a fresh code on 401; full-page editors show the sign-in screen.
+- **Session lifetime:** site sessions last 12 hours. Editors ask the panel for a fresh code on 401, without a word to the user; deployed editors only run framed by the panel.
 - **Roles** come from the configured claim and from `permissions.users`; only roles defined in `permissions.roles` count, and a user with none gets 403 at the code endpoint, which the panel shows as "No access".
 - `write: { locales }` grants writing (translating) every readable type in those locales.
 

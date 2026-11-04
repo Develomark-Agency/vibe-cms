@@ -80,7 +80,7 @@ export interface ConfigInput {
   locales?: readonly string[],
   /** The locale reads fall back to. Defaults to the first of `locales`, else `"en"`. */
   defaultLocale?: string,
-  /** How editors sign in once deployed: `oidc({ issuer, clientId })` from `vibe-cms/auth`. */
+  /** How editors sign in once deployed: `hub({ url })` from `vibe-cms/auth`. */
   auth?: AuthDescriptor,
   /** Roles and users. See `vibe-cms docs permissions`. */
   permissions?: Permissions,
@@ -89,10 +89,10 @@ export interface ConfigInput {
   /** Deleted documents and files stay restorable this long, then the cron trigger purges them. Defaults to 30 days. */
   trash?: { days?: number },
   /**
-   * Scheduled backups from an agency panel: the panel at this URL may take snapshots and
-   * restore them, and nothing else. See `vibe-cms docs backups`.
+   * Scheduled backups: `true` lets the hub in `auth` take snapshots and restore them as
+   * itself, and nothing else. See `vibe-cms docs backups`.
    */
-  backups?: { panel: string }
+  backups?: boolean
 }
 
 /** A column's path into the document and its field type. */

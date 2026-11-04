@@ -1,14 +1,14 @@
-import { exportJWK, generateKeyPair, importJWK, SignJWT, type JWK } from "jose";
 import { httpCaller, type ActionCaller } from "vibe-cms/actions";
 import { BackupError, packSnapshot, readSnapshot, restoreSnapshot, takeSnapshot, verifyRestore, type BackupStore, type Progress, type SnapshotFile } from "vibe-cms/backups";
 import { fetchDescriptor, PanelError, type BackupPolicy, type PanelSite, type SiteBackups } from "vibe-cms/panel";
 import { randomString } from "./oidc.ts";
-import { codeFor, json, siteById, type Env, type SessionRow } from "./shared.ts";
+import { backupToken, codeFor, hubOrigin } from "./hub.ts";
+import { json, siteById, type Env, type SessionRow } from "./shared.ts";
 
 /**
  * Scheduled backups. The panel holds the policy (when, how many to keep) and the archive
- * (the `BACKUPS` bucket); each site holds the data and decides, with `backups: { panel }` in its
- * config, that this panel may snapshot and restore it.
+ * (the `BACKUPS` bucket); each site holds the data and decides, with `backups: true` in its
+ * config, that its hub may snapshot and restore it.
  *
  * Work is a queue of runs in D1. A run holds a lease it renews while it works; the cron trigger
  * picks up queued runs and runs whose lease lapsed (the Worker was stopped), and the backup runner
@@ -95,58 +95,6 @@ interface SnapshotRow {
   files: number,
   bytes: number,
   warnings: string
-}
-
-// --- Identity ------------------------------------------------------------------
-
-async function meta(env: Env, key: string): Promise<string | null> {
-  return (await env.DB.prepare("SELECT value FROM panel_meta WHERE key = ?").bind(key).first<{ value: string }>())?.value ?? null;
-}
-
-/** The panel's address, which sites name in `backups.panel`. Cron runs have no request to read it from. */
-export async function panelOrigin(env: Env): Promise<string | null> {
-  if(env.PANEL_URL) return env.PANEL_URL.replace(/\/$/, "");
-  return meta(env, "origin");
-}
-
-let knownOrigin: string | undefined;
-
-/** Remembers the address requests arrive at, for cron runs. */
-export async function rememberOrigin(env: Env, origin: string) {
-  if(env.PANEL_URL || knownOrigin === origin) return;
-  knownOrigin = origin;
-  await env.DB.prepare("INSERT INTO panel_meta (key, value) VALUES ('origin', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(origin).run();
-}
-
-/** The panel's signing key pair, made on first use and kept in D1. */
-async function signingKey(env: Env): Promise<{ kid: string, privateJwk: JWK, publicJwk: JWK }> {
-  const stored = await meta(env, "signing_key");
-  if(stored) return JSON.parse(stored);
-  const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: true });
-  const kid = randomString(8);
-  const key = { kid, privateJwk: await exportJWK(privateKey), publicJwk: { ...(await exportJWK(publicKey)), kid, alg: "ES256", use: "sig" } };
-  await env.DB.prepare("INSERT OR IGNORE INTO panel_meta (key, value) VALUES ('signing_key', ?)").bind(JSON.stringify(key)).run();
-  return JSON.parse((await meta(env, "signing_key"))!);
-}
-
-export async function jwks(env: Env): Promise<Response> {
-  const { publicJwk } = await signingKey(env);
-  return json({ keys: [publicJwk] }, { headers: { "cache-control": "public, max-age=300", "access-control-allow-origin": "*" } });
-}
-
-/** A short-lived token that lets this panel run backup actions on one site, and nothing else. */
-export async function backupToken(env: Env, siteId: string): Promise<string> {
-  const issuer = await panelOrigin(env);
-  if(!issuer) throw new PanelError(500, "The panel doesn't know its own address yet. Set PANEL_URL, or open the panel once.");
-  const { kid, privateJwk } = await signingKey(env);
-  return new SignJWT({ scope: "backups" })
-    .setProtectedHeader({ alg: "ES256", kid })
-    .setIssuer(issuer)
-    .setAudience(siteId)
-    .setSubject("panel")
-    .setIssuedAt()
-    .setExpirationTime("15m")
-    .sign(await importJWK(privateJwk, "ES256"));
 }
 
 function apiParts(site: PanelSite) {
@@ -374,7 +322,7 @@ function explain(error: unknown, origin: string | null): string {
   const message = (error as Error).message;
   const tag = (error as BackupError).details && ((error as BackupError).details as { tag?: string }).tag;
   if(tag === "Unauthorized" || tag === "Forbidden") {
-    return `${message}. The site has to trust this panel for backups: add \`backups: { panel: "${origin}" }\` to its config and deploy it.`;
+    return `${message}. The site has to let this panel back it up: it needs \`auth: hub({ url: "${origin}" })\` and \`backups: true\` in its config.`;
   }
   return message;
 }
@@ -431,7 +379,7 @@ export async function processBackups(env: Env, options: { budget?: number, siteI
   const started = Date.now();
   const budget = options.budget ?? 10 * 60 * 1000;
   if(options.schedule !== false) await enqueueDue(env, started);
-  const origin = await panelOrigin(env);
+  const origin = await hubOrigin(env);
   while(Date.now() - started < budget) {
     const run = await claim(env, Date.now(), options.siteId);
     if(!run) return;
@@ -471,16 +419,16 @@ async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
   const [own, effective, origin, snapshots, runs, trusted] = await Promise.all([
     storedPolicy(env, site.id),
     effectivePolicy(env, site.id),
-    panelOrigin(env),
+    hubOrigin(env),
     env.DB.prepare("SELECT * FROM backup_snapshots WHERE site_id = ? ORDER BY taken_at DESC").bind(site.id).all<SnapshotRow>(),
     env.DB.prepare("SELECT * FROM backup_runs WHERE site_id = ? ORDER BY created_at DESC LIMIT 20").bind(site.id).all<RunRow>(),
-    fetchDescriptor(site.url).then(d => d.backups?.panel ?? null, () => undefined)
+    fetchDescriptor(site.url).then(d => ({ hub: d.hub, backups: d.backups }), () => undefined)
   ]);
   return {
     available: Boolean(env.BACKUPS),
     panel: origin,
-    trusted: trusted === undefined ? null : trusted === origin,
-    trustedPanel: trusted ?? null,
+    trusted: trusted === undefined ? null : trusted.hub === origin && trusted.backups,
+    trustedPanel: trusted?.hub && trusted.hub !== origin ? trusted.hub : null,
     policy: own,
     effective,
     nextAt: effective.enabled ? lastSlot(Date.now(), effective.hour) + DAY : null,
@@ -521,7 +469,7 @@ export async function backupsApi(request: Request, env: Env, session: SessionRow
   };
 
   if(path === "/backups" && method === "GET") {
-    return json({ available: Boolean(env.BACKUPS), panel: await panelOrigin(env), defaults: await defaultPolicy(env) });
+    return json({ available: Boolean(env.BACKUPS), panel: await hubOrigin(env), defaults: await defaultPolicy(env) });
   }
   if(path === "/backups/download" && method === "GET") {
     const id = new URL(request.url).searchParams.get("snapshot") ?? "";

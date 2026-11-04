@@ -1,7 +1,7 @@
 import { HttpError, serializeConfig, type AnyConfig } from "../config.ts";
 import type { SerializedQuery } from "../query/index.ts";
 import type { Session } from "../server/index.ts";
-import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, sessionFromIdToken, sessionFromPanelToken, verifySession } from "./auth.ts";
+import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, sessionFromHubToken, verifySession } from "./auth.ts";
 import { coreActions, type CoreActions } from "../actions/core.ts";
 import { runAction, type AnyAction } from "../actions/define.ts";
 import { errorJson, fromHttpError, httpStatus, type ActionError } from "../actions/errors.ts";
@@ -21,8 +21,6 @@ export interface ApiContext {
   ctx: ExecutionContext
 }
 
-const COOKIE = "vibe_session";
-
 export function json(data: unknown, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
   headers.set("content-type", "application/json; charset=utf-8");
@@ -39,12 +37,13 @@ export function readCookie(request: Request, name: string): string | undefined {
   return undefined;
 }
 
-async function readSession(request: Request, api: ApiContext, url: URL): Promise<Session | null> {
+/** A site session token, or a token the hub signed for this site, as `Authorization: Bearer`. */
+async function readSession(request: Request, api: ApiContext): Promise<Session | null> {
   const header = request.headers.get("authorization");
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : readCookie(request, COOKIE);
-  if(!token) return null;
+  if(!header?.startsWith("Bearer ")) return null;
+  const token = header.slice(7);
   return await verifySession(api.state.db, token, api.state.siteId)
-    ?? (header ? sessionFromPanelToken(api.state.config, token, api.state.siteId) : null);
+    ?? await sessionFromHubToken(api.state.config, token, api.state.siteId);
 }
 
 async function body<T>(request: Request): Promise<T> {
@@ -70,8 +69,8 @@ export function descriptor(config: AnyConfig, url: URL, prefix: string, site: Si
     name: site.name,
     accent: site.accent,
     icon: site.icon?.url ?? site.favicon,
-    auth: config.auth ? { issuer: config.auth.issuer, clientId: config.auth.clientId } : null,
-    backups: config.backups ? { panel: config.backups.panel.replace(/\/$/, "") } : null,
+    hub: config.auth?.url ?? null,
+    backups: config.backups === true,
     admin: `${url.origin}${prefix}/admin`
   };
 }
@@ -99,7 +98,7 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
       const key = path.slice(19).split("/").map(decodeURIComponent).join("/");
       return cors(await transferRoute(request, api.state.db, api.state.storage, url, key));
     }
-    const session = await readSession(request, api, url);
+    const session = await readSession(request, api);
     const engine = new Engine(api.state, { origin: url.origin, session, trusted: false, ctx: api.ctx });
 
     if(path.startsWith("/media/") && method === "GET") return await engine.serveAsset(path.slice(7), request);
@@ -166,7 +165,7 @@ async function editorRoute(
       ...serializeConfig(config),
       prefix: api.state.prefix,
       dev: api.dev,
-      auth: config.auth ? { issuer: config.auth.issuer } : null,
+      hub: config.auth?.url ?? null,
       site: descriptor(config, url, api.state.prefix, site),
       settings: site
     });
@@ -176,14 +175,13 @@ async function editorRoute(
     if(method === "GET") {
       if(!session) {
         // No credentials at all is a normal "not signed in", not an error; a bad token is.
-        const sent = request.headers.has("authorization") || readCookie(request, COOKIE) !== undefined;
-        if(sent) throw new HttpError(401, "Session expired");
+        if(request.headers.has("authorization")) throw new HttpError(401, "Session expired");
         return json({ user: null });
       }
       return json({ user: session, permissions: permissionSummary(config, session) });
     }
     if(method === "POST") {
-      const input = await body<{ code?: string, dev?: boolean, cookie?: boolean }>(request);
+      const input = await body<{ code?: string, dev?: boolean }>(request);
       let next: Session;
       if(input.dev) {
         if(!api.dev) throw new HttpError(403, "Dev sessions are only available in development");
@@ -193,27 +191,19 @@ async function editorRoute(
       } else {
         throw new HttpError(400, "Expected a code");
       }
+      // Kept in the editor's memory: it only ever runs framed by the hub, or locally in development.
       const { token, expiresAt } = await issueSession(db, next, api.state.siteId, url.origin);
-      const headers = new Headers();
-      if(input.cookie) {
-        const secure = url.protocol === "https:" ? "; Secure" : "";
-        headers.append(
-          "set-cookie",
-          `${COOKIE}=${token}; Path=${api.state.prefix}; HttpOnly; SameSite=Strict; Max-Age=${expiresAt - Math.floor(Date.now() / 1000)}${secure}`
-        );
-      }
-      return json({ token: input.cookie ? undefined : token, expiresAt, user: next, permissions: permissionSummary(config, next) }, { headers });
+      return json({ token, expiresAt, user: next, permissions: permissionSummary(config, next) });
     }
-    if(method === "DELETE") {
-      return json({ ok: true }, { headers: { "set-cookie": `${COOKIE}=; Path=${api.state.prefix}; HttpOnly; SameSite=Strict; Max-Age=0` } });
-    }
+    if(method === "DELETE") return json({ ok: true });
   }
 
   if(route === "/session/code" && method === "POST") {
-    // Panel backend → site, server to server.
-    const input = await body<{ id_token?: string }>(request);
-    if(!input.id_token) throw new HttpError(400, "Expected id_token");
-    const next = await sessionFromIdToken(config, input.id_token);
+    // Hub → site, server to server: a token the hub signed for this site in, a one-time code out.
+    const input = await body<{ token?: string }>(request);
+    if(!input.token) throw new HttpError(400, "Expected token");
+    const next = await sessionFromHubToken(config, input.token, api.state.siteId);
+    if(!next || next.grants) throw new HttpError(401, "Not a sign-in token from this site's hub");
     return json({ code: await createCode(db, next), expiresIn: 30 });
   }
 

@@ -8,13 +8,13 @@ A snapshot, in the panel or in a `.vibe` file, holds everything editors can chan
 
 An agency panel (`apps/panel` in the vibe-cms repository) can back up every site in it on a schedule, keep the snapshots in its own R2 bucket, and restore them from the site's Backups dialog.
 
-1. Let the panel in. In the site's config, add:
+1. Let the panel in. The site already trusts it with `auth: hub({ url })`; in the site's config, also add:
 
    ```ts
-   backups: { panel: "https://panel.my-agency.com" }
+   backups: true
    ```
 
-   The site then accepts short-lived tokens signed with that panel's key (published at `/.well-known/jwks.json`) for this site, and only for backup actions. They can't read or edit content through any other action, change settings, or sign anyone in.
+   The site then accepts short-lived backup tokens its hub signs for this site, and only for backup actions. They can't read or edit content through any other action, change settings, or sign anyone in.
 2. Give the panel an archive: an R2 bucket bound as `BACKUPS`, `PANEL_URL` set to its address, and the cron trigger. The panel's `wrangler.jsonc` has all three.
 3. Set the schedule under the account menu's **Backup schedule**: the hour (UTC), and how many daily, weekly and monthly snapshots to keep. The defaults are 14 daily, 8 weekly and 12 monthly. Any site can have its own schedule in its Backups dialog.
 
@@ -32,8 +32,9 @@ The CLI moves a site's content as one file. A `.vibe` file is a gzipped tar of o
 
 ```sh
 bunx vibe-cms export --site http://localhost:4321
-bunx vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com --token $VIBE_TOKEN --dry-run
-bunx vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com --token $VIBE_TOKEN
+bunx vibe-cms login https://edit.my-agency.com
+bunx vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com --dry-run
+bunx vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com
 ```
 
 - `export` writes `<site name>-<date>-<time>.vibe` in the current folder (`--file` chooses the name). It works in a temporary folder and only renames the finished file into place, so an interrupted export leaves nothing behind.
@@ -74,4 +75,4 @@ The runner the CLI and the panel share is exported from `vibe-cms/backups`: `tak
 
 ## Who may
 
-`backups: true` on a role (`vibe-cms docs permissions`) allows every backup action. So does the panel named in `backups.panel`, with its own tokens and for nothing else. A snapshot reads every document and file, drafts included, and a restore replaces them all, so no other rule implies it except `all`. Development sessions have it.
+`backups: true` on a role (`vibe-cms docs permissions`) allows every backup action. So does the site's hub when the config sets `backups: true`, with its own tokens and for nothing else. A snapshot reads every document and file, drafts included, and a restore replaces them all, so no other rule implies it except `all`. Development sessions have it.

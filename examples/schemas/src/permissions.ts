@@ -1,13 +1,12 @@
 import { defineConfig } from "vibe-cms";
-import { oidc } from "vibe-cms/auth";
+import { hub } from "vibe-cms/auth";
 import v from "vibe-cms/schema";
 
 export default defineConfig({
-  // Editors sign in through the agency panel with this identity provider. Development sites don't need it.
-  auth: oidc({
-    issuer: "https://accounts.google.com",
-    clientId: "1234.apps.googleusercontent.com",
-    // Optional: read roles from this ID token claim as well.
+  // Editors, the CLI and agents sign in through the agency's hub (panel). Development sites don't need it.
+  auth: hub({
+    url: "https://edit.my-agency.com",
+    // Optional: read roles from this identity provider claim as well; the hub passes it through.
     roles: "groups"
   }),
   permissions: {

@@ -13,7 +13,8 @@ import { notifyPreview } from "./preview.ts";
 export interface SiteInfo extends SerializedConfig {
   prefix: string,
   dev: boolean,
-  auth: { issuer: string } | null,
+  /** The hub the site trusts, from `auth: hub({ url })`. */
+  hub: string | null,
   site: { id: string, name: string, admin: string },
   /** As of page load; the editor keeps the live copy under the "site" query. */
   settings: SiteSettings

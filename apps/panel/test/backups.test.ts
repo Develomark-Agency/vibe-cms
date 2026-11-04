@@ -1,15 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { defineConfig } from "vibe-cms";
-import { oidc } from "vibe-cms/auth";
+import { hub } from "vibe-cms/auth";
 import { createThrowingActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
 import { createHandler } from "vibe-cms/handler";
 import { unpackSnapshot } from "vibe-cms/backups";
 import type { SiteBackups } from "vibe-cms/panel";
 import v from "vibe-cms/schema";
 import { createD1, createR2 } from "../../../packages/vibe-cms/test/helpers.ts";
-import { backupToken, DEFAULT_POLICY, processBackups, retained } from "../src/server/backups.ts";
+import { DEFAULT_POLICY, processBackups, retained } from "../src/server/backups.ts";
+import { backupToken } from "../src/server/hub.ts";
 import { handle } from "../src/server/index.ts";
-import { CLIENT_ID, env, idp, installMock, ISSUER, panel, removeMock, signIn, sites } from "./mock.ts";
+import { env, HUB, idp, installMock, panel, removeMock, signIn, sites } from "./mock.ts";
 
 /** Enough of an R2 bucket for the archive. */
 function bucket() {
@@ -56,10 +57,10 @@ function bucket() {
 
 const archive = bucket();
 
-function backupSite(origin: string, panelUrl: string | undefined) {
+function backupSite(origin: string, allowBackups: boolean) {
   const config = defineConfig({
-    auth: oidc({ issuer: ISSUER, clientId: CLIENT_ID }),
-    backups: panelUrl ? { panel: panelUrl } : undefined,
+    auth: hub({ url: HUB }),
+    backups: allowBackups,
     permissions: {
       roles: { editor: { post: ["read", "write"] }, ops: { post: ["read"], backups: true } },
       users: { "jane@agency.test": ["editor"], "ops@agency.test": ["ops"] }
@@ -67,7 +68,7 @@ function backupSite(origin: string, panelUrl: string | undefined) {
     schemas: { post: v.object({ title: v.text() }) }
   });
   const siteEnv = { DB: createD1(), MEDIA: createR2() };
-  // Development mode only so the test can seed content with a dev session; panel users still sign in through OIDC.
+  // Development mode only so the test can seed content with a dev session; panel users still sign in through the hub.
   const vibe = createHandler(config, { dev: true, bindings: (e: typeof siteEnv) => ({ db: e.DB, storage: e.MEDIA }) });
   const handler = (request: Request) => vibe.handle(request, siteEnv, { waitUntil() {} });
   sites[origin] = handler;
@@ -107,8 +108,8 @@ beforeAll(async () => {
   installMock();
   env.BACKUPS = archive as unknown as R2Bucket;
   sites["https://panel.test"] = request => handle(request, env);
-  siteC = backupSite("https://site-c.test", "https://panel.test");
-  siteD = backupSite("https://site-d.test", undefined);
+  siteC = backupSite("https://site-c.test", true);
+  siteD = backupSite("https://site-d.test", false);
   await siteC.seed(["First", "Second"]);
   idp.email = "jane@agency.test";
   idp.sub = "u-jane";
@@ -175,7 +176,7 @@ describe("panel backups", () => {
     await processBackups(env, { schedule: false });
     const [run] = (await backups(d)).runs;
     expect(run!.status).toBe("failed");
-    expect(run!.error).toContain("backups: { panel: \"https://panel.test\" }");
+    expect(run!.error).toContain("backups: true");
   });
 
   test("a backup token can't do anything but backups", async () => {
@@ -188,7 +189,12 @@ describe("panel backups", () => {
     expect((await call("backups.manifest", {})).status).toBe(200);
     expect((await call("documents.list", { type: "post" })).status).toBe(403);
     expect((await call("site.update", { name: "Taken over" })).status).toBe(403);
-    // Tokens are for one site: site D doesn't trust the panel, and C's token names C.
+    // Tokens are for one site, and site D doesn't let the hub back it up.
+    expect((await sites["https://site-d.test"]!(new Request("https://site-d.test/_vibe/api/actions/backups.manifest", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${await backupToken(env, d)}` },
+      body: "{}"
+    }))).status).toBe(401);
     expect((await call("backups.manifest", {}, "not-a-token")).status).toBe(401);
   });
 
@@ -215,7 +221,7 @@ describe("panel backups", () => {
 
   test("scheduled snapshots come due at the policy's hour, once a day", async () => {
     const hour = new Date().getUTCHours();
-    const fresh = backupSite("https://site-e.test", "https://panel.test");
+    const fresh = backupSite("https://site-e.test", true);
     await fresh.seed(["Hello"]);
     const e = await addSite("https://site-e.test");
     await panel(`/api/sites/${c}/backups/policy`, { method: "PUT", body: JSON.stringify({ policy: { ...DEFAULT_POLICY, enabled: false } }) });

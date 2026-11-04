@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { idp, installMock, ISSUER, jar, panel, removeMock, signIn, siteId, sites } from "./mock.ts";
+import { env, HUB, idp, idToken, installMock, ISSUER, jar, panel, removeMock, signIn, siteId, sites } from "./mock.ts";
 
 beforeAll(installMock);
 afterAll(removeMock);
@@ -17,7 +17,7 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   expect(added.status).toBe(201);
   const refused = await panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://site-b.test" }) });
   expect(refused.status).toBe(422);
-  expect((await refused.json() as { error: string }).error).toBe("This site trusts a different identity provider");
+  expect((await refused.json() as { error: string }).error).toBe("This site trusts another hub (https://other-panel.test)");
 
   await panel(`/api/sites/${a}/favorite`, { method: "PUT" });
   expect(await (await panel("/api/sites")).json()).toEqual([
@@ -37,9 +37,30 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   const replay = await siteA(new Request("https://site-a.test/_vibe/api/session", { method: "POST", body: JSON.stringify({ code }) }));
   expect(replay.status).toBe(401);
 
-  // Full-page mode: the code travels in the fragment.
-  const go = await panel(`/go/${a}`);
-  expect(go.headers.get("location")).toMatch(/^https:\/\/site-a\.test\/_vibe\/admin\/#code=.+/);
+  // The site only takes sign-in tokens from its hub: a provider ID token is no good.
+  const forged = await siteA(new Request("https://site-a.test/_vibe/api/session/code", { method: "POST", body: JSON.stringify({ token: await idToken() }) }));
+  expect(forged.status).toBe(401);
+
+  // There's no full-page handoff: editors only open inside the hub.
+  expect((await panel(`/go/${a}`)).status).not.toBe(302);
+});
+
+test("hub tokens are addressed to one site and only work there", async () => {
+  idp.email = "jane@agency.test";
+  idp.sub = "u-jane";
+  await signIn();
+  const a = await siteId("https://site-a.test");
+  const { userToken } = await import("../src/server/hub.ts");
+  const { currentSession } = await import("../src/server/shared.ts");
+  const session = await currentSession(new Request(HUB, { headers: { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join("; ") } }), env);
+  const token = await userToken(env, session!, a);
+  const siteA = sites["https://site-a.test"]!;
+  const me = await siteA(new Request("https://site-a.test/_vibe/api/session", { headers: { authorization: `Bearer ${token}` } }));
+  expect(await me.json()).toMatchObject({ user: { sub: `${ISSUER}|u-jane`, email: "jane@agency.test", roles: ["editor"] } });
+  // The same token on a site it wasn't addressed to: refused.
+  const b = await siteId("https://site-b.test");
+  const wrongSite = await userToken(env, session!, b);
+  expect((await siteA(new Request("https://site-a.test/_vibe/api/session", { headers: { authorization: `Bearer ${wrongSite}` } }))).status).toBe(401);
 });
 
 test("a site refuses users it gives no role", async () => {

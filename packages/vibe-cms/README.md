@@ -65,7 +65,7 @@ Read `bunx vibe-cms docs <topic>` before changing a site's `vibe-cms.config.ts`,
 | `vibe-cms` | `defineConfig`, `definePlugin`, `defineWidget`, `Infer`, `InferOutput` |
 | `vibe-cms/schema` | The `v` schema builder |
 | `vibe-cms/media` | `image()`, `video()`, `file()` |
-| `vibe-cms/auth` | `oidc()` |
+| `vibe-cms/auth` | `hub()` |
 | `vibe-cms/handler` | `createHandler`: mounts the CMS in your Worker |
 | `vibe-cms/query` | Query operators (`eq`, `and`, `desc`, …) |
 | `vibe-cms/client` | `createClient`: queries over HTTP |

@@ -1,6 +1,6 @@
 # Deploying
 
-Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep the cron trigger, build so the editor is in the static assets, and set up sign-in through `auth: oidc(...)` and a panel.
+Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep the cron trigger, build so the editor is in the static assets, and set up sign-in through `auth: hub(...)` and an agency panel.
 
 ## Checklist
 
@@ -17,15 +17,15 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 
 3. **Keep the assets binding.** The editor is static files under `/_vibe/admin/`. The CMS serves its deep links (`/_vibe/admin/documents/post`) through the assets binding: `env.ASSETS`, or whatever you pass as `bindings.assets`.
 
-4. **Set up sign-in.** Production sites have no dev sign-in and no password form: editors open the site from a panel, which signs them in with your identity provider and hands the site a one-time code.
+4. **Set up sign-in.** Production sites have no dev sign-in and no password form: everyone signs in to the agency panel (the hub), which signs them in with your identity provider and vouches for them to each site.
 
    ```ts
-   import { oidc } from "vibe-cms/auth";
+   import { hub } from "vibe-cms/auth";
 
-   auth: oidc({ issuer: "https://accounts.google.com", clientId: "<the panel's client ID>" })
+   auth: hub({ url: "https://edit.my-agency.com" })
    ```
 
-   The site verifies ID tokens from that issuer for that client ID; `roles` names a claim to read roles from (for example `"groups"`). Who may do what is the config's `permissions` (`vibe-cms docs permissions`). Give the site a stable `id` in the config so the panel keeps recognising it if its hostname changes.
+   The site accepts tokens that hub signed for this site, checked against its keys at `/.well-known/jwks.json`; `roles` names an identity provider claim to read roles from (for example `"groups"`). Who may do what is the config's `permissions` (`vibe-cms docs permissions`). Give the site a stable `id` in the config so the panel keeps recognising it if its hostname changes.
 
 5. **Build and deploy.**
 
@@ -39,11 +39,11 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 
 ## After deploying
 
-- `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, the issuer and client ID, and the editor's URL.
-- `https://<site>/_vibe/admin/` shows "Open this editor from your agency's panel" until someone is signed in.
-- Add the site to the panel by its URL. Running a panel (`apps/panel` in the vibe-cms repository) needs its own D1 database and OIDC client; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
+- `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, its hub, and the editor's URL.
+- The editor only opens inside the hub. `https://<site>/_vibe/admin/` on its own links to the site's page in the hub.
+- Add the site to the hub by its URL; the hub checks the site trusts it. Running a hub (`apps/panel` in the vibe-cms repository) needs its own D1 database and OIDC client; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
 - Agents connect to the panel's `/mcp`, not to each site (`vibe-cms docs agents`).
-- To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
+- To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms login <hub>` and `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
 
 ## Environments
 

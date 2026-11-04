@@ -94,13 +94,17 @@ interface SessionResponse extends Omit<SessionState, "token"> {
   token?: string
 }
 
-async function exchange(prefix: string, input: { code?: string, dev?: boolean }, cookie: boolean): Promise<SessionState> {
-  const session = await request<SessionResponse>(prefix, "/session", { method: "POST", json: { ...input, cookie } });
+async function exchange(prefix: string, input: { code?: string, dev?: boolean }): Promise<SessionState> {
+  const session = await request<SessionResponse>(prefix, "/session", { method: "POST", json: input });
   setToken(session.token);
   return session;
 }
 
-/** Works out how this editor was opened and establishes a session. */
+/**
+ * Works out how this editor was opened and establishes a session. Deployed editors only run
+ * framed by the hub, which hands over codes; on their own they show the way to the hub.
+ * Development editors sign in as the developer, framed or not.
+ */
 export async function startSession(info: SiteInfo): Promise<SessionState | null> {
   const { prefix } = info;
   if(embedded) {
@@ -108,32 +112,17 @@ export async function startSession(info: SiteInfo): Promise<SessionState | null>
     // Local development needs no identity provider, so no code ever tells us who the panel is.
     if(info.dev) {
       panelOrigin = "*";
-      return exchange(prefix, { dev: true }, false);
+      return exchange(prefix, { dev: true });
     }
-    return exchange(prefix, { code: await requestCode() }, false);
+    return exchange(prefix, { code: await requestCode() });
   }
-  const hash = new URLSearchParams(location.hash.slice(1));
-  const code = hash.get("code");
-  if(code) {
-    // The fragment never reached a server; strip it before anything else can read it.
-    history.replaceState(history.state, "", location.pathname + location.search);
-    return exchange(prefix, { code }, true);
-  }
-  try {
-    const existing = await request<SessionResponse | { user: null }>(prefix, "/session");
-    if(existing.user) return existing as SessionResponse;
-  } catch {
-    // No cookie session.
-  }
-  if(info.dev) return exchange(prefix, { dev: true }, true);
+  if(info.dev) return exchange(prefix, { dev: true });
   return null;
 }
 
-/** After expiry: embedded editors ask the panel again; full-page ones have to sign in again. */
-export async function renewSession(info: SiteInfo): Promise<SessionState | null> {
-  if(embedded) return startSession(info);
-  if(info.dev) return exchange(info.prefix, { dev: true }, true);
-  return null;
+/** After expiry: the same again, so a framed editor asks the hub for a fresh code without a word to the user. */
+export function renewSession(info: SiteInfo): Promise<SessionState | null> {
+  return startSession(info);
 }
 
 export async function signOut(prefix: string) {

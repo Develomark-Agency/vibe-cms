@@ -39,13 +39,10 @@ import { defineConfig } from "vibe-cms";
 import v from "vibe-cms/schema";
 import { richText } from "@acme/rich-text";
 import { SearchPlugin } from "@acme/search";
-import { oidc } from "vibe-cms/auth";
+import { hub } from "vibe-cms/auth";
 
 export default defineConfig({
-  auth: oidc({
-    issuer: "https://accounts.google.com",
-    clientId: "1234.apps.googleusercontent.com",
-  }),
+  auth: hub({ url: "https://edit.my-agency.com" }),
   plugins: [SearchPlugin()],
   schemas: {
     post: v.object({

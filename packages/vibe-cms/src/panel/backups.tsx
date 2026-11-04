@@ -95,11 +95,12 @@ function TrustNotice({ trusted, panel, trustedPanel }: { trusted: boolean | null
   if(trusted === null) {
     return <p className="flex gap-2 rounded-[10px] well px-3 py-2 text-sm text-muted-foreground"><TriangleAlertIcon className="mt-0.5 size-4 shrink-0" /> The site can't be reached, so whether it allows backups is unknown.</p>;
   }
-  const snippet = `backups: { panel: "${panel ?? "https://your-panel"}" }`;
+  // A site on another hub would also need its `auth` changed, which isn't a one-line fix.
+  const snippet = trustedPanel ? `auth: hub({ url: "${panel ?? "https://your-panel"}" }), backups: true` : "backups: true";
   return (
     <div className="grid gap-2 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
       <p className="flex gap-2"><ShieldAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
-        <span>{trustedPanel ? `This site lets another panel (${trustedPanel}) back it up, not this one.` : "This site doesn't let this panel back it up yet."} Add this to its <code className="font-mono text-xs whitespace-nowrap">vibe-cms.config.ts</code> and deploy:</span>
+        <span>{trustedPanel ? `This site trusts another hub (${trustedPanel}), not this one.` : "This site doesn't let this panel back it up yet."} Add this to its <code className="font-mono text-xs whitespace-nowrap">vibe-cms.config.ts</code> and deploy:</span>
       </p>
       <div className="flex gap-2">
         <Input readOnly value={snippet} className="font-mono text-xs" onFocus={e => e.currentTarget.select()} aria-label="Config to add" />
@@ -292,7 +293,7 @@ export function BackupDefaultsDialog({ backups, open, onOpenChange }: { backups:
           <DialogTitle>Backup schedule</DialogTitle>
           <DialogDescription>
             The default for every site in this panel. A site can have its own from its Backups.
-            {status.data?.panel && <> Sites allow backups with <code className="font-mono text-xs">backups: {"{"} panel: "{status.data.panel}" {"}"}</code>.</>}
+            {" "}Sites allow backups with <code className="font-mono text-xs">backups: true</code> in their config.
           </DialogDescription>
         </DialogHeader>
         {!status.data || !policy ? <Delayed><div className="flex justify-center p-6"><Spinner /></div></Delayed>

@@ -1,7 +1,8 @@
 import { actionTools, CONTENT_INSTRUCTIONS, coreActions, errorResult, serveMcp, textResult, toolName, type AnyAction, type McpTool } from "vibe-cms/actions";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
 import { resourceUrl, SCOPE_READ, type GrantRow } from "./oauth.ts";
-import { codeFor, siteById, type Env, type SessionRow } from "./shared.ts";
+import { apiBase, codeFor } from "./hub.ts";
+import { siteById, type Env, type SessionRow } from "./shared.ts";
 
 /**
  * The panel's MCP server: the same tools as a site's own, plus `sites_list`, with
@@ -37,13 +38,8 @@ function allTools(): McpTool[] {
   return [sitesList, ...siteTools];
 }
 
-/** `https://site.com/_vibe/admin` → `https://site.com/_vibe`. */
-function apiBase(site: PanelSite): string {
-  return site.admin.replace(/\/admin\/?$/, "");
-}
-
-/** A site session for the agent's user: cached, or from the same handoff the editor uses. */
-async function siteToken(env: Env, grant: GrantRow, session: SessionRow, site: PanelSite, fresh = false): Promise<string> {
+/** A site session for the agent's (or CLI's) user: cached, or from the same handoff the editor uses. */
+export async function siteToken(env: Env, grant: GrantRow, session: SessionRow, site: PanelSite, fresh = false): Promise<string> {
   if(!fresh) {
     const cached = await env.DB.prepare("SELECT token, expires_at FROM agent_site_tokens WHERE grant_id = ? AND site_id = ?")
       .bind(grant.id, site.id).first<{ token: string, expires_at: number }>();
