@@ -1,15 +1,16 @@
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { Result } from "better-result";
 import type { AnyAction } from "./define.ts";
 import { describeActions } from "./describe.ts";
 import type { ActionError } from "./errors.ts";
 
 /**
- * MCP over Streamable HTTP without sessions or streaming: just tools. Shared by a
- * site's own `/_vibe/api/mcp` and the panel's `/mcp`, which differ only in where
- * tools come from and how a call runs.
+ * MCP over Streamable HTTP, served by the official SDK without sessions: just tools.
+ * Shared by a site's own `/_vibe/api/mcp` and the panel's `/mcp`, which differ only in
+ * where tools come from and how a call runs.
  */
-
-const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 /** A tool as MCP's `tools/list` returns it. */
 export interface McpTool {
@@ -108,61 +109,36 @@ export function toolResult(result: Result<unknown, ActionError>): ToolResult {
   return result.isOk() ? textResult(result.value) : errorResult(result.error);
 }
 
-interface JsonRpcRequest {
-  jsonrpc: "2.0",
-  id?: string | number | null,
-  method: string,
-  params?: Record<string, unknown>
+function forbidden(): Response {
+  return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Cross-origin requests aren't allowed" } }, { status: 403 });
 }
 
-function reply(id: JsonRpcRequest["id"], result: unknown): Response {
-  return Response.json({ jsonrpc: "2.0", id, result });
-}
-
-function fail(id: JsonRpcRequest["id"] | undefined, code: number, message: string, status = 200): Response {
-  return Response.json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } }, { status });
-}
-
-/** Answers one MCP request. Authenticate before calling it. */
-export async function serveMcp(request: Request, server: McpServer): Promise<Response> {
-  if(request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } });
+/**
+ * Answers one MCP request through the official SDK, statelessly: a server and transport
+ * per request, JSON responses, no sessions. Authenticate before calling it.
+ */
+export async function serveMcp(request: Request, tools: McpServer): Promise<Response> {
   // Browsers on other sites must not drive it through a signed-in user (DNS rebinding included).
   const origin = request.headers.get("origin");
-  if(origin && origin !== new URL(request.url).origin) return fail(null, -32600, "Cross-origin requests aren't allowed", 403);
+  if(origin && origin !== new URL(request.url).origin) return forbidden();
 
-  let message: JsonRpcRequest;
+  const server = new Server(
+    { name: tools.name, title: tools.name, version: tools.version },
+    { capabilities: { tools: { listChanged: false } }, instructions: tools.instructions }
+  );
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await tools.tools() as never }));
+  server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+    const result = await tools.call(params.name, params.arguments ?? {});
+    if(!result) throw new McpError(ErrorCode.InvalidParams, `Unknown tool "${params.name}"`);
+    return result as never;
+  });
+
+  const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
+  await server.connect(transport);
   try {
-    message = await request.json() as JsonRpcRequest;
-  } catch {
-    return fail(null, -32700, "Parse error", 400);
-  }
-  if(typeof message !== "object" || message === null || Array.isArray(message) || message.jsonrpc !== "2.0") {
-    return fail(null, -32600, "Expected one JSON-RPC 2.0 message", 400);
-  }
-  // Notifications and responses need no answer.
-  if(message.id === undefined || typeof message.method !== "string") return new Response(null, { status: 202 });
-
-  const params = message.params ?? {};
-  switch(message.method) {
-    case "initialize": {
-      const asked = String(params.protocolVersion ?? "");
-      return reply(message.id, {
-        protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
-        capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: server.name, title: server.name, version: server.version },
-        instructions: server.instructions
-      });
-    }
-    case "ping":
-      return reply(message.id, {});
-    case "tools/list":
-      return reply(message.id, { tools: await server.tools() });
-    case "tools/call": {
-      const args = typeof params.arguments === "object" && params.arguments !== null ? params.arguments as Record<string, unknown> : {};
-      const result = await server.call(String(params.name), args);
-      return result ? reply(message.id, result) : fail(message.id, -32602, `Unknown tool "${String(params.name)}"`);
-    }
-    default:
-      return fail(message.id, -32601, `Method not found: ${message.method}`);
+    return await transport.handleRequest(request);
+  } finally {
+    // JSON responses are complete by now.
+    await server.close();
   }
 }

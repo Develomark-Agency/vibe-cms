@@ -880,7 +880,7 @@ describe("mcp", () => {
 
   test("notifications get no reply; other origins and anonymous production requests are refused", async () => {
     const note = await t.vibe.handle(
-      new Request("https://site.test/_vibe/api/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }),
+      new Request("https://site.test/_vibe/api/mcp", { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) }),
       t.env,
       ctx
     );
