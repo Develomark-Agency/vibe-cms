@@ -31,7 +31,7 @@ import { Toaster } from "../components/ui/sonner.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { TooltipProvider } from "../components/ui/tooltip.tsx";
 import { createAdminClient, request, setUnauthorizedHandler, type SessionState, type SiteInfo } from "./client.ts";
-import { AdminContext, collectionLabel, collectionSettings, documentTitle, localeName, useAdmin, type AdminContextValue } from "./context.tsx";
+import { AdminContext, collectionLabel, collectionSettings, localeName, useAdmin, type AdminContextValue } from "./context.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
 import { setAccent, setFavicon, startTheme, useTheme, type Theme } from "./theme.ts";
 import { Delayed } from "./delayed.tsx";
@@ -571,7 +571,7 @@ function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boo
   const searching = query.length > 0 && (query !== debounced || found.isFetching);
   const groups = query
     ? [matchedCommands.filter(c => c.group === "Go to"), "documents", matchedCommands.filter(c => c.group !== "Go to")] as const
-    : [...(["Go to", "Site", "Create", "Commands"] as const).map(group => commands.filter(c => c.group === group))];
+    : (["Go to", "Site", "Create", "Commands"] as const).map(group => commands.filter(c => c.group === group));
   const nothing = query && !searching && !documents.length && !matchedCommands.length;
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
@@ -581,20 +581,22 @@ function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boo
         <CommandList>
           {nothing && <div className="py-6 text-center text-sm text-muted-foreground">{found.isError ? "Search isn’t available right now." : `No results for “${query}”.`}</div>}
           {groups.map((group, i) => {
-            if(group === "documents") return (documents.length > 0 || searching) && (
-              <CommandGroup key="documents" heading={<span className="flex items-center gap-2">Documents {searching && <Spinner className="size-3" />}</span>}>
-                {documents.map(doc => (
-                  <CommandItem key={`${doc.type}/${doc.id}`} value={`doc-${doc.type}-${doc.id}`} onSelect={() => go(`/content/${doc.type}/${doc.id}`)}>
-                    <FileTextIcon className={doc.excerpt ? "mt-0.5 self-start" : undefined} />
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate"><Marked text={doc.title ? markTitle(doc.title, debounced) : "Untitled"} /></span>
-                      {doc.excerpt && <span className="truncate text-xs text-muted-foreground"><Marked text={doc.excerpt} /></span>}
-                    </span>
-                    <CommandShortcut className={doc.excerpt ? "self-start" : undefined}>{collectionLabel(config, doc.type, false)}</CommandShortcut>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            );
+            if(group === "documents") {
+              return (documents.length > 0 || searching) && (
+                <CommandGroup key="documents" heading={<span className="flex items-center gap-2">Documents {searching && <Spinner className="size-3" />}</span>}>
+                  {documents.map(doc => (
+                    <CommandItem key={`${doc.type}/${doc.id}`} value={`doc-${doc.type}-${doc.id}`} onSelect={() => go(`/content/${doc.type}/${doc.id}`)}>
+                      <FileTextIcon className={doc.excerpt ? "mt-0.5 self-start" : undefined} />
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate"><Marked text={doc.title ? markTitle(doc.title, debounced) : "Untitled"} /></span>
+                        {doc.excerpt && <span className="truncate text-xs text-muted-foreground"><Marked text={doc.excerpt} /></span>}
+                      </span>
+                      <CommandShortcut className={doc.excerpt ? "self-start" : undefined}>{collectionLabel(config, doc.type, false)}</CommandShortcut>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              );
+            }
             return group.length > 0 && (
               <CommandGroup key={i} heading={query && group[0]!.group !== "Go to" ? "Actions" : group[0]!.group}>
                 {group.map(command => (

@@ -3,7 +3,11 @@ import { BackupError, packSnapshot, readSnapshot, restoreSnapshot, takeSnapshot,
 import { fetchDescriptor, PanelError, type BackupPolicy, type PanelSite, type SiteBackups } from "vibe-cms/panel";
 import { randomString } from "./oidc.ts";
 import { backupToken, codeFor, hubOrg } from "./hub.ts";
-import { json, siteById, type Env, type SessionRow } from "./shared.ts";
+import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { max } from "drizzle-orm";
+import * as t from "./schema.ts";
+import type { RunRow, SnapshotRow } from "./schema.ts";
+import { db, json, siteById, type Env, type SessionRow } from "./shared.ts";
 
 /**
  * Scheduled backups. The panel holds the policy (when, how many to keep) and the archive
@@ -16,50 +20,6 @@ import { json, siteById, type Env, type SessionRow } from "./shared.ts";
  * restore picks up its staging on the site.
  */
 
-export const backupSchema = [
-  `CREATE TABLE IF NOT EXISTS panel_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  )`,
-  // site_id '*' is the default for every site; a site's own row overrides it.
-  `CREATE TABLE IF NOT EXISTS backup_policies (
-    site_id TEXT PRIMARY KEY,
-    policy TEXT NOT NULL,
-    updated_by TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS backup_runs (
-    id TEXT PRIMARY KEY,
-    site_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    snapshot TEXT,
-    status TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    next_at INTEGER NOT NULL,
-    lease_until INTEGER,
-    progress TEXT,
-    state TEXT,
-    error TEXT,
-    requested_by TEXT,
-    created_at INTEGER NOT NULL,
-    started_at INTEGER,
-    finished_at INTEGER
-  )`,
-  "CREATE INDEX IF NOT EXISTS backup_runs_site ON backup_runs (site_id, created_at)",
-  "CREATE INDEX IF NOT EXISTS backup_runs_due ON backup_runs (status, next_at)",
-  `CREATE TABLE IF NOT EXISTS backup_snapshots (
-    id TEXT PRIMARY KEY,
-    site_id TEXT NOT NULL,
-    taken_at INTEGER NOT NULL,
-    kind TEXT NOT NULL,
-    documents INTEGER NOT NULL,
-    files INTEGER NOT NULL,
-    bytes INTEGER NOT NULL,
-    warnings TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS backup_snapshots_site ON backup_snapshots (site_id, taken_at)"
-];
-
 export const DEFAULT_POLICY: BackupPolicy = { enabled: true, hour: 3, keepDaily: 14, keepWeekly: 8, keepMonthly: 12 };
 
 const LEASE = 2 * 60 * 1000;
@@ -67,35 +27,6 @@ const MAX_ATTEMPTS = 5;
 /** Safety snapshots (taken before a restore) are kept this long whatever the policy says. */
 const SAFETY_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
-
-interface RunRow {
-  id: string,
-  site_id: string,
-  kind: "scheduled" | "manual" | "restore",
-  snapshot: string | null,
-  status: "queued" | "running" | "done" | "failed",
-  attempts: number,
-  next_at: number,
-  lease_until: number | null,
-  progress: string | null,
-  state: string | null,
-  error: string | null,
-  requested_by: string | null,
-  created_at: number,
-  started_at: number | null,
-  finished_at: number | null
-}
-
-interface SnapshotRow {
-  id: string,
-  site_id: string,
-  taken_at: number,
-  kind: "scheduled" | "manual" | "safety",
-  documents: number,
-  files: number,
-  bytes: number,
-  warnings: string
-}
 
 function apiParts(site: PanelSite) {
   const admin = new URL(site.admin);
@@ -170,7 +101,9 @@ async function deletePrefix(bucket: R2Bucket, prefix: string, keep?: (key: strin
 
 function cleanPolicy(input: unknown): BackupPolicy {
   const value = (input ?? {}) as Partial<Record<keyof BackupPolicy, unknown>>;
-  const count = (n: unknown, fallback: number) => (Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 1000 ? n as number : fallback);
+  function count(n: unknown, fallback: number) {
+    return Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 1000 ? n as number : fallback;
+  }
   return {
     enabled: typeof value.enabled === "boolean" ? value.enabled : DEFAULT_POLICY.enabled,
     hour: Number.isInteger(value.hour) && (value.hour as number) >= 0 && (value.hour as number) <= 23 ? value.hour as number : DEFAULT_POLICY.hour,
@@ -181,7 +114,7 @@ function cleanPolicy(input: unknown): BackupPolicy {
 }
 
 async function storedPolicy(env: Env, siteId: string): Promise<BackupPolicy | null> {
-  const row = await env.DB.prepare("SELECT policy FROM backup_policies WHERE site_id = ?").bind(siteId).first<{ policy: string }>();
+  const [row] = await db(env).select({ policy: t.backupPolicies.policy }).from(t.backupPolicies).where(eq(t.backupPolicies.site_id, siteId));
   return row ? cleanPolicy(JSON.parse(row.policy)) : null;
 }
 
@@ -195,13 +128,11 @@ async function effectivePolicy(env: Env, siteId: string): Promise<BackupPolicy> 
 
 async function savePolicy(env: Env, siteId: string, policy: BackupPolicy | null, user: string) {
   if(policy === null) {
-    await env.DB.prepare("DELETE FROM backup_policies WHERE site_id = ?").bind(siteId).run();
+    await db(env).delete(t.backupPolicies).where(eq(t.backupPolicies.site_id, siteId));
     return;
   }
-  await env.DB.prepare(
-    `INSERT INTO backup_policies (site_id, policy, updated_by, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT (site_id) DO UPDATE SET policy = excluded.policy, updated_by = excluded.updated_by, updated_at = excluded.updated_at`
-  ).bind(siteId, JSON.stringify(cleanPolicy(policy)), user, Date.now()).run();
+  const row = { policy: JSON.stringify(cleanPolicy(policy)), updated_by: user, updated_at: Date.now() };
+  await db(env).insert(t.backupPolicies).values({ site_id: siteId, ...row }).onConflictDoUpdate({ target: t.backupPolicies.site_id, set: row });
 }
 
 /** The latest time today's (or yesterday's) scheduled snapshot was due. */
@@ -243,12 +174,13 @@ export function retained(snapshots: Array<{ id: string, taken_at: number, kind: 
 async function prune(env: Env, siteId: string) {
   const bucket = env.BACKUPS!;
   const policy = await effectivePolicy(env, siteId);
-  const { results } = await env.DB.prepare("SELECT id, taken_at, kind FROM backup_snapshots WHERE site_id = ?").bind(siteId).all<SnapshotRow>();
+  const results = await db(env).select({ id: t.backupSnapshots.id, taken_at: t.backupSnapshots.taken_at, kind: t.backupSnapshots.kind })
+    .from(t.backupSnapshots).where(eq(t.backupSnapshots.site_id, siteId));
   const keep = retained(results, policy, Date.now());
   const doomed = results.filter(s => !keep.has(s.id));
   for(const s of doomed) {
     await deletePrefix(bucket, `${s.id}/`);
-    await env.DB.prepare("DELETE FROM backup_snapshots WHERE id = ?").bind(s.id).run();
+    await db(env).delete(t.backupSnapshots).where(eq(t.backupSnapshots.id, s.id));
   }
   if(!doomed.length) return;
   const store = bucketStore(bucket);
@@ -265,49 +197,64 @@ async function prune(env: Env, siteId: string) {
 async function enqueue(env: Env, siteId: string, kind: RunRow["kind"], options: { snapshot?: string, user?: string } = {}): Promise<string> {
   if(kind !== "restore") {
     // One snapshot at a time: asking again while one is queued or running joins it.
-    const active = await env.DB.prepare("SELECT id FROM backup_runs WHERE site_id = ? AND kind != 'restore' AND status IN ('queued', 'running')").bind(siteId).first<{ id: string }>();
+    const [active] = await db(env).select({ id: t.backupRuns.id }).from(t.backupRuns)
+      .where(and(eq(t.backupRuns.site_id, siteId), ne(t.backupRuns.kind, "restore"), inArray(t.backupRuns.status, ["queued", "running"])));
     if(active) return active.id;
   } else {
-    const restoring = await env.DB.prepare("SELECT 1 FROM backup_runs WHERE site_id = ? AND kind = 'restore' AND status IN ('queued', 'running')").bind(siteId).first();
+    const [restoring] = await db(env).select({ id: t.backupRuns.id }).from(t.backupRuns)
+      .where(and(eq(t.backupRuns.site_id, siteId), eq(t.backupRuns.kind, "restore"), inArray(t.backupRuns.status, ["queued", "running"])));
     if(restoring) throw new PanelError(409, "A restore of this site is already under way");
   }
   const id = `run_${randomString(12)}`;
-  await env.DB.prepare("INSERT INTO backup_runs (id, site_id, kind, snapshot, status, next_at, requested_by, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)")
-    .bind(id, siteId, kind, options.snapshot ?? null, Date.now(), options.user ?? null, Date.now()).run();
+  await db(env).insert(t.backupRuns).values({
+    id,
+    site_id: siteId,
+    kind,
+    snapshot: options.snapshot ?? null,
+    status: "queued",
+    next_at: Date.now(),
+    requested_by: options.user ?? null,
+    created_at: Date.now()
+  });
   return id;
 }
 
 /** Queues the scheduled snapshot of every site whose time has come and has none since. */
 async function enqueueDue(env: Env, now: number) {
-  const { results: sites } = await env.DB.prepare(
-    `SELECT s.id, max(b.taken_at) AS last FROM sites s
-     LEFT JOIN backup_snapshots b ON b.site_id = s.id AND b.kind IN ('scheduled', 'manual')
-     GROUP BY s.id`
-  ).all<{ id: string, last: number | null }>();
+  const sites = await db(env)
+    .select({ id: t.sites.id, last: max(t.backupSnapshots.taken_at) })
+    .from(t.sites)
+    .leftJoin(t.backupSnapshots, and(eq(t.backupSnapshots.site_id, t.sites.id), inArray(t.backupSnapshots.kind, ["scheduled", "manual"])))
+    .groupBy(t.sites.id);
   for(const site of sites) {
     const policy = await effectivePolicy(env, site.id);
     if(!policy.enabled || (site.last ?? 0) >= lastSlot(now, policy.hour)) continue;
     // A run that failed for good waits for the next slot rather than retrying all day.
-    const failed = await env.DB.prepare("SELECT 1 FROM backup_runs WHERE site_id = ? AND kind = 'scheduled' AND status = 'failed' AND created_at >= ?")
-      .bind(site.id, lastSlot(now, policy.hour)).first();
+    const [failed] = await db(env).select({ id: t.backupRuns.id }).from(t.backupRuns)
+      .where(and(eq(t.backupRuns.site_id, site.id), eq(t.backupRuns.kind, "scheduled"), eq(t.backupRuns.status, "failed"), gte(t.backupRuns.created_at, lastSlot(now, policy.hour))));
     if(!failed) await enqueue(env, site.id, "scheduled");
   }
 }
 
 /** Takes the next run that's due, or whose worker stopped, if no other run on its site is active. */
 async function claim(env: Env, now: number, siteId?: string): Promise<RunRow | null> {
-  return env.DB.prepare(
-    `UPDATE backup_runs SET status = 'running', lease_until = ?1, attempts = attempts + 1, started_at = COALESCE(started_at, ?2)
-     WHERE id = (
-       SELECT r.id FROM backup_runs r
-       WHERE ((r.status = 'queued' AND r.next_at <= ?2) OR (r.status = 'running' AND r.lease_until < ?2))
-         AND (?3 IS NULL OR r.site_id = ?3)
-         AND NOT EXISTS (SELECT 1 FROM backup_runs o WHERE o.site_id = r.site_id AND o.id != r.id AND o.status = 'running' AND o.lease_until >= ?2)
-       ORDER BY CASE r.kind WHEN 'restore' THEN 0 WHEN 'manual' THEN 1 ELSE 2 END, r.next_at
-       LIMIT 1
-     )
-     RETURNING *`
-  ).bind(now + LEASE, now, siteId ?? null).first<RunRow>();
+  const r = t.backupRuns;
+  // One statement, so two workers can't claim the same run. The pick is a subquery, which Drizzle has
+  // no builder for; the table and columns it touches still come from the schema.
+  const [run] = await db(env).update(r).set({
+    status: "running",
+    lease_until: now + LEASE,
+    attempts: sql`${r.attempts} + 1`,
+    started_at: sql`COALESCE(${r.started_at}, ${now})`
+  }).where(sql`${r.id} = (
+    SELECT p.id FROM ${r} p
+    WHERE ((p.status = 'queued' AND p.next_at <= ${now}) OR (p.status = 'running' AND p.lease_until < ${now}))
+      ${siteId ? sql`AND p.site_id = ${siteId}` : sql``}
+      AND NOT EXISTS (SELECT 1 FROM ${r} o WHERE o.site_id = p.site_id AND o.id != p.id AND o.status = 'running' AND o.lease_until >= ${now})
+    ORDER BY CASE p.kind WHEN 'restore' THEN 0 WHEN 'manual' THEN 1 ELSE 2 END, p.next_at
+    LIMIT 1
+  )`).returning();
+  return run ?? null;
 }
 
 /** Errors no retry will fix: the site refusing the panel, a snapshot that doesn't fit. */
@@ -328,9 +275,24 @@ function explain(error: unknown, origin: string | null): string {
 }
 
 async function recordSnapshot(env: Env, siteId: string, kind: SnapshotRow["kind"], taken: Awaited<ReturnType<typeof takeSnapshot>>) {
-  await env.DB.prepare("INSERT OR REPLACE INTO backup_snapshots (id, site_id, taken_at, kind, documents, files, bytes, warnings) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(taken.path, siteId, taken.manifest.takenAt, kind, taken.manifest.tables.documents, taken.manifest.files.count, taken.manifest.files.bytes, JSON.stringify(taken.warnings))
-    .run();
+  await db(env).insert(t.backupSnapshots).values({
+    id: taken.path,
+    site_id: siteId,
+    taken_at: taken.manifest.takenAt,
+    kind,
+    documents: taken.manifest.tables.documents,
+    files: taken.manifest.files.count,
+    bytes: taken.manifest.files.bytes,
+    warnings: JSON.stringify(taken.warnings)
+  }).onConflictDoUpdate({ target: t.backupSnapshots.id, set: {
+    site_id: siteId,
+    taken_at: taken.manifest.takenAt,
+    kind,
+    documents: taken.manifest.tables.documents,
+    files: taken.manifest.files.count,
+    bytes: taken.manifest.files.bytes,
+    warnings: JSON.stringify(taken.warnings)
+  } });
 }
 
 async function execute(env: Env, run: RunRow) {
@@ -339,18 +301,20 @@ async function execute(env: Env, run: RunRow) {
   const store = bucketStore(env.BACKUPS!);
   const call = panelCaller(env, site);
   let beat = 0;
-  const onProgress = (progress: Progress) => {
+  function onProgress(progress: Progress) {
     if(Date.now() - beat < 10_000) return;
     beat = Date.now();
-    void env.DB.prepare("UPDATE backup_runs SET lease_until = ?, progress = ? WHERE id = ?").bind(Date.now() + LEASE, JSON.stringify(progress), run.id).run();
-  };
+    void db(env).update(t.backupRuns).set({ lease_until: Date.now() + LEASE, progress: JSON.stringify(progress) }).where(eq(t.backupRuns.id, run.id));
+  }
   const state = JSON.parse(run.state ?? "{}") as { safety?: string };
-  const save = () => env.DB.prepare("UPDATE backup_runs SET state = ? WHERE id = ?").bind(JSON.stringify(state), run.id).run();
+  function save() {
+    return db(env).update(t.backupRuns).set({ state: JSON.stringify(state) }).where(eq(t.backupRuns.id, run.id));
+  }
 
   if(run.kind !== "restore") {
     const taken = await takeSnapshot({ call, store, onProgress });
     await recordSnapshot(env, site.id, run.kind, taken);
-    await env.DB.prepare("UPDATE backup_runs SET snapshot = ? WHERE id = ?").bind(taken.path, run.id).run();
+    await db(env).update(t.backupRuns).set({ snapshot: taken.path }).where(eq(t.backupRuns.id, run.id));
     await prune(env, site.id);
     return;
   }
@@ -366,7 +330,7 @@ async function execute(env: Env, run: RunRow) {
   await restoreSnapshot({ call, store, path: source, onProgress });
   const verified = await verifyRestore({ call, store, path: source });
   if(!verified.ok) {
-    await env.DB.prepare("UPDATE backup_runs SET progress = ? WHERE id = ?").bind(JSON.stringify({ step: "verified", differences: verified.differences }), run.id).run();
+    await db(env).update(t.backupRuns).set({ progress: JSON.stringify({ step: "verified", differences: verified.differences }) }).where(eq(t.backupRuns.id, run.id));
   }
 }
 
@@ -385,13 +349,18 @@ export async function processBackups(env: Env, options: { budget?: number, siteI
     if(!run) return;
     try {
       await execute(env, run);
-      await env.DB.prepare("UPDATE backup_runs SET status = 'done', finished_at = ?, lease_until = NULL, error = NULL WHERE id = ?").bind(Date.now(), run.id).run();
+      await db(env).update(t.backupRuns).set({ status: "done", finished_at: Date.now(), lease_until: null, error: null }).where(eq(t.backupRuns.id, run.id));
     } catch (error) {
       console.error("vibe-panel: backup run failed", run.id, error);
       const final = permanent(error) || run.attempts >= MAX_ATTEMPTS;
       const retryIn = Math.min(60, 2 ** run.attempts) * 60_000;
-      await env.DB.prepare("UPDATE backup_runs SET status = ?, next_at = ?, lease_until = NULL, error = ?, finished_at = ? WHERE id = ?")
-        .bind(final ? "failed" : "queued", Date.now() + retryIn, explain(error, origin), final ? Date.now() : null, run.id).run();
+      await db(env).update(t.backupRuns).set({
+        status: final ? "failed" : "queued",
+        next_at: Date.now() + retryIn,
+        lease_until: null,
+        error: explain(error, origin),
+        finished_at: final ? Date.now() : null
+      }).where(eq(t.backupRuns.id, run.id));
     }
   }
 }
@@ -420,8 +389,8 @@ async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
     storedPolicy(env, site.id),
     effectivePolicy(env, site.id),
     Promise.resolve(hubOrg(env)),
-    env.DB.prepare("SELECT * FROM backup_snapshots WHERE site_id = ? ORDER BY taken_at DESC").bind(site.id).all<SnapshotRow>(),
-    env.DB.prepare("SELECT * FROM backup_runs WHERE site_id = ? ORDER BY created_at DESC LIMIT 20").bind(site.id).all<RunRow>(),
+    db(env).select().from(t.backupSnapshots).where(eq(t.backupSnapshots.site_id, site.id)).orderBy(desc(t.backupSnapshots.taken_at)),
+    db(env).select().from(t.backupRuns).where(eq(t.backupRuns.site_id, site.id)).orderBy(desc(t.backupRuns.created_at)).limit(20),
     fetchDescriptor(site.url).then(d => ({ org: d.org, backups: d.backups }), () => undefined)
   ]);
   return {
@@ -432,7 +401,7 @@ async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
     policy: own,
     effective,
     nextAt: effective.enabled ? lastSlot(Date.now(), effective.hour) + DAY : null,
-    snapshots: snapshots.results.map(s => ({
+    snapshots: snapshots.map(s => ({
       id: s.id,
       takenAt: s.taken_at,
       kind: s.kind,
@@ -441,7 +410,7 @@ async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
       bytes: s.bytes,
       warnings: JSON.parse(s.warnings) as string[]
     })),
-    runs: runs.results.map(toRun)
+    runs: runs.map(toRun)
   };
 }
 
@@ -463,17 +432,17 @@ async function canRestore(env: Env, session: SessionRow, site: PanelSite) {
 /** `/api/backups…` and `/api/sites/<id>/backups…`. Returns null for other paths. */
 export async function backupsApi(request: Request, env: Env, session: SessionRow, path: string, ctx?: ExecutionContext): Promise<Response | null> {
   const method = request.method;
-  const kick = (siteId: string) => {
+  function kick(siteId: string) {
     // Starts at once; if this Worker stops first, the cron trigger takes the run over.
     if(ctx) ctx.waitUntil(processBackups(env, { siteId, schedule: false, budget: 25_000 }).catch(error => console.error(error)));
-  };
+  }
 
   if(path === "/backups" && method === "GET") {
     return json({ available: Boolean(env.BACKUPS), panel: env.VIBE_ORG ? hubOrg(env) : null, defaults: await defaultPolicy(env) });
   }
   if(path === "/backups/download" && method === "GET") {
     const id = new URL(request.url).searchParams.get("snapshot") ?? "";
-    const row = await env.DB.prepare("SELECT * FROM backup_snapshots WHERE id = ?").bind(id).first<SnapshotRow>();
+    const [row] = await db(env).select().from(t.backupSnapshots).where(eq(t.backupSnapshots.id, id));
     if(!row || !env.BACKUPS) return json({ error: "Unknown snapshot" }, { status: 404 });
     const site = await siteById(env, row.site_id);
     const slug = (site?.name ?? row.site_id).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "site";
@@ -512,7 +481,7 @@ export async function backupsApi(request: Request, env: Env, session: SessionRow
   }
   if(m[2] === "/restore" && method === "POST") {
     const { snapshot } = await request.json() as { snapshot?: string };
-    const row = snapshot ? await env.DB.prepare("SELECT * FROM backup_snapshots WHERE id = ?").bind(snapshot).first<SnapshotRow>() : null;
+    const [row] = snapshot ? await db(env).select().from(t.backupSnapshots).where(eq(t.backupSnapshots.id, snapshot)) : [];
     if(!row) return json({ error: "Unknown snapshot" }, { status: 404 });
     await canRestore(env, session, site);
     const id = await enqueue(env, site.id, "restore", { snapshot: row.id, user: session.email ?? session.sub });

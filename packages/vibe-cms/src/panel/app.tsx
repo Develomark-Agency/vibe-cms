@@ -131,17 +131,17 @@ function siteProblem(error: unknown): LiveSite["problem"] {
 // A long list would open a connection per site at once; check a few at a time, with a breath between.
 const CHECKS_AT_ONCE = 6;
 let checksRunning = 0;
-const checkQueue: (() => void)[] = [];
+const checkQueue: Array<() => void> = [];
 
 function throttledCheck<T>(task: () => Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
-    const run = () => {
+    function run() {
       checksRunning++;
       task().then(resolve, reject).finally(() => setTimeout(() => {
         checksRunning--;
         checkQueue.shift()?.();
       }, 100));
-    };
+    }
     if(checksRunning < CHECKS_AT_ONCE) run();
     else checkQueue.push(run);
   });
@@ -568,13 +568,13 @@ function usePortalHover() {
   const leave = useRef<ReturnType<typeof setTimeout>>(undefined);
   const x = useMotionValue(0);
   const y = useMotionValue(0);
-  const place = (e: { clientX: number, clientY: number }) => {
+  function place(e: { clientX: number, clientY: number }) {
     // Right of and below the cursor, flipped when that would leave the viewport.
     const right = e.clientX + PORTAL.gap + PORTAL.width > window.innerWidth;
     const below = e.clientY + PORTAL.gap + PORTAL.height > window.innerHeight;
     x.set(right ? e.clientX - PORTAL.gap - PORTAL.width : e.clientX + PORTAL.gap);
     y.set(below ? Math.max(8, e.clientY - PORTAL.gap - PORTAL.height) : e.clientY + PORTAL.gap);
-  };
+  }
   return {
     site, x, y,
     enter(next: LiveSite, e: React.PointerEvent) {
@@ -882,7 +882,9 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
   const host = new URL(site.url).host;
   // A site the list already saw answering is framed at once; anything else is checked first, so a
   // site that's down shows as down within a second instead of after the editor's handshake times out.
-  const knownUp = () => !!queryClient.getQueryState(["descriptor", site.id])?.data && !site.problem;
+  function knownUp() {
+    return !!queryClient.getQueryState(["descriptor", site.id])?.data && !site.problem;
+  }
   const [state, setState] = useState<"connecting" | "trouble" | "loading" | "ready" | "denied" | "unreachable">(() => knownUp() ? "loading" : site.problem ? "trouble" : "connecting");
   const [error, setError] = useState<string | null>(null);
   // Bumped by Retry: checks again from the start and reloads the frame.

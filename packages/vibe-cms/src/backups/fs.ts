@@ -7,11 +7,11 @@ import type { BackupStore } from "./index.ts";
 
 /** Snapshots in a local folder, for the CLI. Writes go to a temporary file first, so nothing is ever half there. */
 export function folderStore(root: string): BackupStore {
-  const resolve = (p: string) => {
+  function resolve(p: string) {
     const full = path.resolve(root, p);
     if(full !== path.resolve(root) && !full.startsWith(path.resolve(root) + path.sep)) throw new Error(`${p} is outside the backup folder`);
     return full;
-  };
+  }
   async function atomically(target: string, write: (temp: string) => Promise<void>) {
     await mkdir(path.dirname(target), { recursive: true });
     const temp = `${target}.${process.pid}.${Date.now()}.part`;

@@ -194,7 +194,7 @@ describe("search", () => {
   async function search(query: string) {
     const { status, body } = await t.api("/api/actions/documents.search", { method: "POST", json: { query } });
     expect(status).toBe(200);
-    return body.results as { id: string, type: string, title: string | null, excerpt: string | null }[];
+    return body.results as Array<{ id: string, type: string, title: string | null, excerpt: string | null }>;
   }
 
   test("ranks title matches first, finds body text, follows edits and deletes", async () => {

@@ -1,4 +1,6 @@
 import { HttpError } from "../config.ts";
+import { createDb } from "../db/client.ts";
+import { oauthClients, oauthCodes, oauthGrants, oauthRequests } from "../db/schema.ts";
 import { OAuthServer, SCOPE_READ } from "../oauth/index.ts";
 import type { Session } from "../server/index.ts";
 import type { EngineState } from "./engine.ts";
@@ -28,8 +30,8 @@ function server(state: State): OAuthServer {
   let found = servers.get(state.db);
   if(!found) {
     found = new OAuthServer({
-      db: state.db,
-      tables: "vibe_",
+      db: createDb(state.db),
+      tables: { clients: oauthClients, requests: oauthRequests, codes: oauthCodes, grants: oauthGrants },
       tokens: "vs",
       issuer: url => `${url.origin}${state.prefix}`,
       resource: url => `${url.origin}${state.prefix}/api/mcp`,

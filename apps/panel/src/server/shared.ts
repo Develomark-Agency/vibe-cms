@@ -1,7 +1,9 @@
 import { decodeJwt } from "jose";
-import { oauthSchema } from "vibe-cms/oauth";
+import { eq, lt } from "drizzle-orm";
+import { createDb, runMigrations } from "vibe-cms/db";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
-import { backupSchema } from "./backups.ts";
+import { migrations } from "../../migrations/index.ts";
+import { logins, sessions, sites } from "./schema.ts";
 import { authorizationUrl, randomString, refresh, verifyIdToken, type OidcConfig } from "./oidc.ts";
 
 export interface Env {
@@ -32,62 +34,19 @@ export interface Env {
   OIDC_ROLES_CLAIM?: string
 }
 
-export interface SessionRow {
-  id: string,
-  sub: string,
-  email: string | null,
-  name: string | null,
-  id_token: string,
-  refresh_token: string | null,
-  expires_at: number
-}
+export type { SessionRow } from "./schema.ts";
+import type { SessionRow } from "./schema.ts";
 
 export const SESSION_COOKIE = "panel_session";
 export const LOGIN_COOKIE = "panel_login";
 export const SESSION_TTL = 30 * 24 * 3600 * 1000;
 
-export const schema = [
-  `CREATE TABLE IF NOT EXISTS sites (
-    id TEXT PRIMARY KEY,
-    url TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    admin TEXT NOT NULL,
-    org TEXT,
-    added_by TEXT NOT NULL,
-    added_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS favorites (
-    user TEXT NOT NULL,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-    PRIMARY KEY (user, site_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    sub TEXT NOT NULL,
-    email TEXT,
-    name TEXT,
-    id_token TEXT NOT NULL,
-    refresh_token TEXT,
-    expires_at INTEGER NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS logins (
-    state TEXT PRIMARY KEY,
-    verifier TEXT NOT NULL,
-    nonce TEXT NOT NULL,
-    return_to TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`,
-  // Agents and the CLI: the panel's OAuth server (vibe-cms/oauth). A connection's `payload` is its own provider session's id.
-  ...oauthSchema(""),
-  // Site sessions the panel holds for an agent, one per site, until they expire.
-  `CREATE TABLE IF NOT EXISTS agent_site_tokens (
-    grant_id TEXT NOT NULL,
-    site_id TEXT NOT NULL,
-    token TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    PRIMARY KEY (grant_id, site_id)
-  )`
-];
+type D1Like = Parameters<typeof createDb>[0];
+
+/** The typed query builder over the panel's D1 binding. */
+export function db(env: Env) {
+  return createDb(env.DB as unknown as D1Like);
+}
 
 /** Tokens and codes are stored as hashes, so a leaked database doesn't leak working credentials. */
 export async function sha256(value: string): Promise<string> {
@@ -97,16 +56,16 @@ export async function sha256(value: string): Promise<string> {
 
 const migrated = new WeakSet<D1Database>();
 
-export async function migrate(db: D1Database) {
-  if(migrated.has(db)) return;
-  await db.batch([...schema, ...backupSchema].map(sql => db.prepare(sql)));
+export async function migrate(d1: D1Database) {
+  if(migrated.has(d1)) return;
+  await runMigrations(d1 as unknown as D1Like, migrations, "panel_migrations");
   // Panels made before sites recorded their org.
-  await db.prepare("ALTER TABLE sites ADD COLUMN org TEXT").run().catch(() => {});
+  await d1.prepare("ALTER TABLE sites ADD COLUMN org TEXT").run().catch(() => {});
   // The signing key is a Worker secret now; one left in the database is only a liability.
-  await db.prepare("DELETE FROM panel_meta WHERE key = 'signing_key'").run();
+  await d1.prepare("DELETE FROM panel_meta WHERE key = 'signing_key'").run();
   // Connections moved to oauth_grants (vibe-cms/oauth); agents connected before reconnect once.
-  await db.prepare("DROP TABLE IF EXISTS agent_grants").run();
-  migrated.add(db);
+  await d1.prepare("DROP TABLE IF EXISTS agent_grants").run();
+  migrated.add(d1);
 }
 
 export function oidcConfig(env: Env): OidcConfig {
@@ -141,7 +100,7 @@ export function setCookie(url: URL, name: string, value: string, maxAge: number,
 export async function currentSession(request: Request, env: Env): Promise<SessionRow | null> {
   const id = cookie(request, SESSION_COOKIE);
   if(!id) return null;
-  const row = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(id).first<SessionRow>();
+  const [row] = await db(env).select().from(sessions).where(eq(sessions.id, id));
   if(!row || row.expires_at < Date.now()) return null;
   return row;
 }
@@ -156,13 +115,15 @@ export async function freshIdToken(env: Env, session: SessionRow): Promise<strin
     throw new PanelError(401, "Your sign-in expired. Sign in again.");
   });
   await verifyIdToken(config, tokens.id_token);
-  await env.DB.prepare("UPDATE sessions SET id_token = ?, refresh_token = COALESCE(?, refresh_token) WHERE id = ?")
-    .bind(tokens.id_token, tokens.refresh_token ?? null, session.id).run();
+  await db(env).update(sessions)
+    .set({ id_token: tokens.id_token, refresh_token: tokens.refresh_token ?? session.refresh_token })
+    .where(eq(sessions.id, session.id));
   return tokens.id_token;
 }
 
 export async function siteById(env: Env, id: string): Promise<PanelSite | null> {
-  return env.DB.prepare("SELECT id, url, name, admin, 0 AS favorite FROM sites WHERE id = ?").bind(id).first<PanelSite>();
+  const [row] = await db(env).select({ id: sites.id, url: sites.url, name: sites.name, admin: sites.admin }).from(sites).where(eq(sites.id, id));
+  return row ? { ...row, favorite: false } : null;
 }
 
 /**
@@ -174,9 +135,8 @@ export async function beginLogin(env: Env, url: URL, returnTo: string, loginHint
   const state = randomString();
   const nonce = randomString();
   const verifier = randomString(48);
-  await env.DB.prepare("DELETE FROM logins WHERE expires_at < ?").bind(Date.now()).run();
-  await env.DB.prepare("INSERT INTO logins (state, verifier, nonce, return_to, expires_at) VALUES (?, ?, ?, ?, ?)")
-    .bind(state, verifier, nonce, returnTo, Date.now() + 600_000).run();
+  await db(env).delete(logins).where(lt(logins.expires_at, Date.now()));
+  await db(env).insert(logins).values({ state, verifier, nonce, return_to: returnTo, expires_at: Date.now() + 600_000 });
   const location = await authorizationUrl(config, { redirectUri: `${url.origin}/auth/callback`, state, nonce, verifier, loginHint });
   return new Response(null, {
     status: 302,

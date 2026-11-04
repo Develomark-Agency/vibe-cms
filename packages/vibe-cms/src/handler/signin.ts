@@ -12,7 +12,10 @@ import type { EmailSender } from "./email.ts";
 import { authorizationUrl, exchangeCode, isAllowed, randomString, verifyIdToken, type OidcConfig } from "../oidc/index.ts";
 import type { Session } from "../server/index.ts";
 import { identitySession, OWNER } from "./auth.ts";
-import { all, first, getMeta, newId, run, sha256 } from "./db.ts";
+import { count, eq, getTableColumns, like, lt, or, sql } from "drizzle-orm";
+import { createDb } from "../db/client.ts";
+import { challenges, invites, meta, passkeys, signins, users } from "../db/schema.ts";
+import { getMeta, newId, sha256 } from "./db.ts";
 import type { EngineState } from "./engine.ts";
 
 /**
@@ -83,14 +86,14 @@ export interface Identity {
   claimRoles?: string[]
 }
 
-interface UserRow {
-  id: string,
-  email: string,
-  name: string | null,
-  roles: string,
-  created_at: number,
-  created_by: string,
-  last_sign_in_at: number | null
+type UserRow = typeof users.$inferSelect;
+
+/** Roles are a JSON array in a text column, so "is an owner" is a substring match. */
+const ownerPattern = `%"${OWNER}"%`;
+
+async function userBy(state: State, where: ReturnType<typeof eq>): Promise<UserRow | null> {
+  const [row] = await createDb(state.db).select().from(users).where(where).limit(1);
+  return row ?? null;
 }
 
 /**
@@ -99,7 +102,7 @@ interface UserRow {
  */
 export async function standaloneSession(state: State, identity: Identity): Promise<Session> {
   const email = identity.email?.toLowerCase();
-  const user = email && identity.emailVerified ? await first<UserRow>(state.db, "SELECT * FROM vibe_users WHERE email = ?", [email]) : null;
+  const user = email && identity.emailVerified ? await userBy(state, eq(users.email, email)) : null;
   return identitySession(state.config, identity.sub, {
     email: identity.email,
     email_verified: identity.emailVerified,
@@ -113,7 +116,7 @@ export async function standaloneSession(state: State, identity: Identity): Promi
 /** Whether nobody owns the site yet, so the setup link works. */
 export async function needsSetup(state: State): Promise<boolean> {
   if(await signInMode(state) === "hub") return false;
-  const owner = await first<{ id: string }>(state.db, "SELECT id FROM vibe_users WHERE roles LIKE ? LIMIT 1", [`%"${OWNER}"%`]);
+  const [owner] = await createDb(state.db).select({ id: users.id }).from(users).where(like(users.roles, ownerPattern)).limit(1);
   return !owner;
 }
 
@@ -129,7 +132,7 @@ export async function announceSetup(state: State, origin: string) {
   announced.add(state.db);
   let token = await getMeta(state.db, "setup_token");
   if(!token) {
-    await run(state.db, "INSERT OR IGNORE INTO vibe_meta (key, value) VALUES ('setup_token', ?)", [randomString(24)]);
+    await createDb(state.db).insert(meta).values({ key: "setup_token", value: randomString(24) }).onConflictDoNothing();
     token = await getMeta(state.db, "setup_token");
   }
   console.log(`vibe-cms: nobody can sign in to this site yet. Open this link to become its owner (it works once):\n  ${origin}${state.prefix}/admin/#setup=${token}`);
@@ -142,7 +145,7 @@ async function checkSetupToken(state: State, token: string | undefined) {
 
 async function finishSetup(state: State, email: string, name: string | undefined): Promise<UserRow> {
   const user = await upsertUser(state, email, [OWNER], "setup", name);
-  await run(state.db, "DELETE FROM vibe_meta WHERE key = 'setup_token'");
+  await createDb(state.db).delete(meta).where(eq(meta.key, "setup_token"));
   return user;
 }
 
@@ -163,21 +166,18 @@ function checkRoles(state: State, roles: unknown): string[] {
 }
 
 async function upsertUser(state: State, email: string, roles: string[], by: string, name?: string): Promise<UserRow> {
-  await run(
-    state.db,
-    `INSERT INTO vibe_users (id, email, name, roles, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT (email) DO UPDATE SET roles = excluded.roles, name = COALESCE(excluded.name, vibe_users.name)`,
-    [newId("user"), email, name ?? null, JSON.stringify(roles), Date.now(), by]
-  );
-  return (await first<UserRow>(state.db, "SELECT * FROM vibe_users WHERE email = ?", [email]))!;
+  await createDb(state.db).insert(users)
+    .values({ id: newId("user"), email, name: name ?? null, roles: JSON.stringify(roles), created_at: Date.now(), created_by: by })
+    .onConflictDoUpdate({ target: users.email, set: { roles: sql`excluded.roles`, name: sql`coalesce(excluded.name, ${users.name})` } });
+  return (await userBy(state, eq(users.email, email)))!;
 }
 
 export async function listUsers(state: State) {
-  const users = await all<UserRow & { passkeys: number }>(
-    state.db,
-    "SELECT u.*, (SELECT COUNT(*) FROM vibe_passkeys p WHERE p.user_id = u.id) AS passkeys FROM vibe_users u ORDER BY u.email"
-  );
-  return users.map(user => ({
+  const rows = await createDb(state.db)
+    .select({ ...getTableColumns(users), passkeys: sql<number>`(SELECT COUNT(*) FROM vibe_passkeys p WHERE p.user_id = vibe_users.id)` })
+    .from(users)
+    .orderBy(users.email);
+  return rows.map(user => ({
     id: user.id,
     email: user.email,
     name: user.name,
@@ -202,8 +202,9 @@ export async function invite(state: State, origin: string, by: Session, input: {
   let link = `${origin}${state.prefix}/admin/`;
   if(mode === "passkey") {
     const token = randomString(24);
-    await run(state.db, "DELETE FROM vibe_invites WHERE user_id = ? OR expires_at < ?", [user.id, Date.now()]);
-    await run(state.db, "INSERT INTO vibe_invites (hash, user_id, created_by, expires_at) VALUES (?, ?, ?, ?)", [await sha256(token), user.id, by.email ?? by.sub, Date.now() + INVITE_TTL]);
+    const orm = createDb(state.db);
+    await orm.delete(invites).where(or(eq(invites.user_id, user.id), lt(invites.expires_at, Date.now())));
+    await orm.insert(invites).values({ hash: await sha256(token), user_id: user.id, created_by: by.email ?? by.sub, expires_at: Date.now() + INVITE_TTL });
     link = `${origin}${state.prefix}/admin/#invite=${token}`;
   }
   let emailed = false;
@@ -229,27 +230,28 @@ export async function invite(state: State, origin: string, by: Session, input: {
 
 export async function updateUser(state: State, id: string, input: { roles?: unknown }) {
   const roles = checkRoles(state, input.roles);
-  const user = await first<UserRow>(state.db, "SELECT * FROM vibe_users WHERE id = ?", [id]);
+  const user = await userBy(state, eq(users.id, id));
   if(!user) throw new HttpError(404, "No such user");
   if(!roles.includes(OWNER) && await isLastOwner(state, user)) throw new HttpError(409, "The site needs at least one owner");
-  await run(state.db, "UPDATE vibe_users SET roles = ? WHERE id = ?", [JSON.stringify(roles), id]);
+  await createDb(state.db).update(users).set({ roles: JSON.stringify(roles) }).where(eq(users.id, id));
   return { id, roles };
 }
 
 export async function removeUser(state: State, id: string) {
-  const user = await first<UserRow>(state.db, "SELECT * FROM vibe_users WHERE id = ?", [id]);
+  const user = await userBy(state, eq(users.id, id));
   if(!user) throw new HttpError(404, "No such user");
   if(await isLastOwner(state, user)) throw new HttpError(409, "The site needs at least one owner");
-  await state.db.batch([
-    state.db.prepare("DELETE FROM vibe_passkeys WHERE user_id = ?").bind(id),
-    state.db.prepare("DELETE FROM vibe_invites WHERE user_id = ?").bind(id),
-    state.db.prepare("DELETE FROM vibe_users WHERE id = ?").bind(id)
+  const orm = createDb(state.db);
+  await orm.batch([
+    orm.delete(passkeys).where(eq(passkeys.user_id, id)),
+    orm.delete(invites).where(eq(invites.user_id, id)),
+    orm.delete(users).where(eq(users.id, id))
   ]);
 }
 
 async function isLastOwner(state: State, user: UserRow): Promise<boolean> {
   if(!(JSON.parse(user.roles) as string[]).includes(OWNER)) return false;
-  const owners = await first<{ n: number }>(state.db, "SELECT COUNT(*) AS n FROM vibe_users WHERE roles LIKE ?", [`%"${OWNER}"%`]);
+  const [owners] = await createDb(state.db).select({ n: count() }).from(users).where(like(users.roles, ownerPattern));
   return (owners?.n ?? 0) <= 1;
 }
 
@@ -264,16 +266,17 @@ async function signIn(state: State, url: URL, identity: Identity, userId?: strin
   // Fails here, before a cookie exists, for someone with no role on the site.
   await standaloneSession(state, identity);
   const token = randomString(32);
-  await run(state.db, "DELETE FROM vibe_signins WHERE expires_at < ?", [Date.now()]);
-  await run(state.db, "INSERT INTO vibe_signins (hash, identity, expires_at) VALUES (?, ?, ?)", [await sha256(token), JSON.stringify(identity), Date.now() + SIGNIN_TTL]);
-  if(userId) await run(state.db, "UPDATE vibe_users SET last_sign_in_at = ? WHERE id = ?", [Date.now(), userId]);
+  const orm = createDb(state.db);
+  await orm.delete(signins).where(lt(signins.expires_at, Date.now()));
+  await orm.insert(signins).values({ hash: await sha256(token), identity: JSON.stringify(identity), expires_at: Date.now() + SIGNIN_TTL });
+  if(userId) await orm.update(users).set({ last_sign_in_at: Date.now() }).where(eq(users.id, userId));
   return signinCookie(state, url, token, SIGNIN_TTL / 1000);
 }
 
 /** Who the signed-in browser's cookie belongs to. */
 export async function cookieIdentity(state: State, cookie: string | undefined): Promise<Identity | null> {
   if(!cookie) return null;
-  const row = await first<{ identity: string, expires_at: number }>(state.db, "SELECT identity, expires_at FROM vibe_signins WHERE hash = ?", [await sha256(cookie)]);
+  const [row] = await createDb(state.db).select({ identity: signins.identity, expires_at: signins.expires_at }).from(signins).where(eq(signins.hash, await sha256(cookie)));
   if(!row || row.expires_at < Date.now()) return null;
   return JSON.parse(row.identity) as Identity;
 }
@@ -285,7 +288,7 @@ export async function resume(state: State, cookie: string | undefined): Promise<
 }
 
 export async function signOut(state: State, url: URL, cookie: string | undefined): Promise<string> {
-  if(cookie) await run(state.db, "DELETE FROM vibe_signins WHERE hash = ?", [await sha256(cookie)]);
+  if(cookie) await createDb(state.db).delete(signins).where(eq(signins.hash, await sha256(cookie)));
   return signinCookie(state, url, "", 0);
 }
 
@@ -302,16 +305,17 @@ function fromB64url(value: string): Uint8Array<ArrayBuffer> {
 
 async function saveChallenge(state: State, payload: Record<string, unknown>): Promise<string> {
   const id = randomString(16);
-  await run(state.db, "DELETE FROM vibe_challenges WHERE expires_at < ?", [Date.now()]);
-  await run(state.db, "INSERT INTO vibe_challenges (id, payload, expires_at) VALUES (?, ?, ?)", [id, JSON.stringify(payload), Date.now() + CHALLENGE_TTL]);
+  const orm = createDb(state.db);
+  await orm.delete(challenges).where(lt(challenges.expires_at, Date.now()));
+  await orm.insert(challenges).values({ id, payload: JSON.stringify(payload), expires_at: Date.now() + CHALLENGE_TTL });
   return id;
 }
 
 /** Single use: deleted as it's read. */
 async function takeChallenge<T>(state: State, id: unknown): Promise<T> {
-  const row = typeof id === "string"
-    ? await first<{ payload: string, expires_at: number }>(state.db, "DELETE FROM vibe_challenges WHERE id = ? RETURNING payload, expires_at", [id])
-    : null;
+  const [row] = typeof id === "string"
+    ? await createDb(state.db).delete(challenges).where(eq(challenges.id, id)).returning({ payload: challenges.payload, expires_at: challenges.expires_at })
+    : [];
   if(!row || row.expires_at < Date.now()) throw new HttpError(400, "This sign-in took too long. Try again.");
   return JSON.parse(row.payload) as T;
 }
@@ -344,18 +348,18 @@ export async function registrationOptions(state: State, url: URL, input: { invit
     pending = { email: normalizeEmail(input.email), setup: input.setup, name: typeof input.name === "string" && input.name.trim() ? input.name.trim() : undefined };
   } else if(typeof input.invite === "string") {
     const hash = await sha256(input.invite);
-    const found = await first<{ user_id: string, expires_at: number, email: string }>(
-      state.db,
-      "SELECT i.user_id, i.expires_at, u.email FROM vibe_invites i JOIN vibe_users u ON u.id = i.user_id WHERE i.hash = ?",
-      [hash]
-    );
+    const [found] = await createDb(state.db)
+      .select({ user_id: invites.user_id, expires_at: invites.expires_at, email: users.email })
+      .from(invites)
+      .innerJoin(users, eq(users.id, invites.user_id))
+      .where(eq(invites.hash, hash));
     if(!found || found.expires_at < Date.now()) throw new HttpError(403, "This invite link expired or was already used. Ask for a new one.");
     pending = { email: found.email, userId: found.user_id, inviteHash: hash };
-    existing = await all(state.db, "SELECT id, transports FROM vibe_passkeys WHERE user_id = ?", [found.user_id]);
+    existing = await createDb(state.db).select({ id: passkeys.id, transports: passkeys.transports }).from(passkeys).where(eq(passkeys.user_id, found.user_id));
   } else {
     throw new HttpError(400, "Expected an invite or the setup link");
   }
-  const site = (await first<{ value: string }>(state.db, "SELECT value FROM vibe_meta WHERE key = 'site'"))?.value;
+  const site = await getMeta(state.db, "site");
   const options = await generateRegistrationOptions({
     rpName: site ? (JSON.parse(site) as { name?: string }).name ?? url.host : url.host,
     rpID: url.hostname,
@@ -388,19 +392,19 @@ export async function register(state: State, url: URL, input: { challengeId?: un
     await checkSetupToken(state, pending.setup);
     userId = (await finishSetup(state, pending.email, pending.name)).id;
   } else {
-    const used = await first<{ hash: string }>(state.db, "DELETE FROM vibe_invites WHERE hash = ? RETURNING hash", [pending.inviteHash ?? ""]);
+    const [used] = await createDb(state.db).delete(invites).where(eq(invites.hash, pending.inviteHash ?? "")).returning({ hash: invites.hash });
     if(!used) throw new HttpError(403, "This invite link was already used. Ask for a new one.");
   }
   const { credential } = verification.registrationInfo;
-  await run(state.db, "INSERT INTO vibe_passkeys (id, user_id, public_key, counter, transports, created_at) VALUES (?, ?, ?, ?, ?, ?)", [
-    credential.id,
-    userId!,
-    b64url(credential.publicKey),
-    credential.counter,
-    credential.transports ? JSON.stringify(credential.transports) : null,
-    Date.now()
-  ]);
-  const user = (await first<UserRow>(state.db, "SELECT * FROM vibe_users WHERE id = ?", [userId!]))!;
+  await createDb(state.db).insert(passkeys).values({
+    id: credential.id,
+    user_id: userId!,
+    public_key: b64url(credential.publicKey),
+    counter: credential.counter,
+    transports: credential.transports ? JSON.stringify(credential.transports) : null,
+    created_at: Date.now()
+  });
+  const user = (await userBy(state, eq(users.id, userId!)))!;
   return { cookie: await signIn(state, url, { sub: `vibe|${user.id}`, email: user.email, emailVerified: true, name: user.name ?? undefined }, user.id) };
 }
 
@@ -415,11 +419,7 @@ export async function authenticate(state: State, url: URL, input: { challengeId?
   await requirePasskeyMode(state);
   const { challenge } = await takeChallenge<{ challenge: string }>(state, input.challengeId);
   const response = input.response as AuthenticationResponseJSON;
-  const key = await first<{ id: string, user_id: string, public_key: string, counter: number, transports: string | null }>(
-    state.db,
-    "SELECT * FROM vibe_passkeys WHERE id = ?",
-    [typeof response?.id === "string" ? response.id : ""]
-  );
+  const [key] = await createDb(state.db).select().from(passkeys).where(eq(passkeys.id, typeof response?.id === "string" ? response.id : ""));
   if(!key) throw new HttpError(401, "This passkey isn't registered on this site");
   const verification = await verifyAuthenticationResponse({
     response,
@@ -435,8 +435,8 @@ export async function authenticate(state: State, url: URL, input: { challengeId?
     requireUserVerification: false
   }).catch(() => ({ verified: false as const, authenticationInfo: undefined }));
   if(!verification.verified) throw new HttpError(401, "The passkey couldn't be checked");
-  await run(state.db, "UPDATE vibe_passkeys SET counter = ?, last_used_at = ? WHERE id = ?", [verification.authenticationInfo!.newCounter, Date.now(), key.id]);
-  const user = await first<UserRow>(state.db, "SELECT * FROM vibe_users WHERE id = ?", [key.user_id]);
+  await createDb(state.db).update(passkeys).set({ counter: verification.authenticationInfo!.newCounter, last_used_at: Date.now() }).where(eq(passkeys.id, key.id));
+  const user = await userBy(state, eq(users.id, key.user_id));
   if(!user) throw new HttpError(401, "This passkey's user was removed");
   return { cookie: await signIn(state, url, { sub: `vibe|${user.id}`, email: user.email, emailVerified: true, name: user.name ?? undefined }, user.id) };
 }
@@ -507,7 +507,7 @@ export async function oidcCallback(state: State, url: URL, loginCookie: string |
   const claim = config.rolesClaim ? claims[config.rolesClaim] : undefined;
   const claimRoles = config.rolesClaim ? (Array.isArray(claim) ? claim.map(String) : typeof claim === "string" ? [claim] : []) : undefined;
   const identity: Identity = { sub: `${claims.iss}|${claims.sub}`, email, emailVerified, name, claimRoles };
-  const user = email && emailVerified ? await first<{ id: string }>(state.db, "SELECT id FROM vibe_users WHERE email = ?", [email.toLowerCase()]) : null;
+  const user = email && emailVerified ? await userBy(state, eq(users.email, email.toLowerCase())) : null;
   try {
     const cookie = await signIn(state, url, identity, user?.id);
     const headers = new Headers({ location: admin, "cache-control": "no-store" });

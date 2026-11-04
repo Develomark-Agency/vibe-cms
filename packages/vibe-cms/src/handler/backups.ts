@@ -1,6 +1,9 @@
 import { HttpError, serializeConfig } from "../config.ts";
 import pkg from "../../package.json" with { type: "json" };
 import { require, signValue } from "./auth.ts";
+import { count, eq, inArray } from "drizzle-orm";
+import { createDb } from "../db/client.ts";
+import { documents as documentsTable, meta } from "../db/schema.ts";
 import { all, first, getMeta, newId, run, searchRebuild, sha256 } from "./db.ts";
 import type { Engine } from "./engine.ts";
 import type { D1, R2 } from "./platform.ts";
@@ -119,12 +122,20 @@ function decodeCursor(cursor: string, length: number): unknown[] {
   throw new HttpError(400, "Invalid cursor: pass back `next` from the previous page");
 }
 
+/** A Drizzle query as a D1 statement, to join a `db.batch` with the raw statements around it. */
+function prepared(db: D1, query: { toSQL(): { sql: string, params: unknown[] } }) {
+  const { sql, params } = query.toSQL();
+  return db.prepare(sql).bind(...params);
+}
+
+// Left raw: the restore's staging tables, the file list's UNION over assets and trash, and everything
+// generic over BACKUP_TABLES (table and column names are data there, and staging tables aren't in the schema).
 async function counts(db: D1, tables: (name: BackupTable) => string): Promise<Record<BackupTable, number>> {
   const rows = await db.batch(BACKUP_TABLE_NAMES.map(name => {
     const spec: TableSpec = BACKUP_TABLES[name];
     return db.prepare(`SELECT count(*) AS n FROM ${tables(name)}${spec.where ? ` WHERE ${spec.where}` : ""}`);
   }));
-  return Object.fromEntries(BACKUP_TABLE_NAMES.map((name, i) => [name, Number((rows[i]!.results?.[0] as { n: number }).n)])) as Record<BackupTable, number>;
+  return Object.fromEntries(BACKUP_TABLE_NAMES.map((name, i) => [name, Number((rows[i]!.results?.[0] as { n: number } | undefined)?.n ?? 0)])) as Record<BackupTable, number>;
 }
 
 /** Every file the backup needs: the library's, and trashed ones, which can still be restored. */
@@ -146,7 +157,7 @@ export async function manifest(engine: Engine): Promise<BackupManifest> {
     fileTotals(db),
     typeHashes(engine),
     engine.site(),
-    all<{ type: string, n: number }>(db, "SELECT type, count(*) AS n FROM vibe_documents GROUP BY type")
+    createDb(db).select({ type: documentsTable.type, n: count() }).from(documentsTable).groupBy(documentsTable.type)
   ]);
   const documents = new Map(perType.map(row => [row.type, row.n]));
   const types: BackupManifest["types"] = {};
@@ -299,7 +310,8 @@ export async function restoreBegin(engine: Engine, input: { manifest: BackupMani
   };
   await engine.db.batch([
     ...stagingStatements(engine.db, true),
-    engine.db.prepare("INSERT INTO vibe_meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(RESTORE_KEY, JSON.stringify(next))
+    prepared(engine.db, createDb(engine.db).insert(meta).values({ key: RESTORE_KEY, value: JSON.stringify(next) })
+      .onConflictDoUpdate({ target: meta.key, set: { value: JSON.stringify(next) } }))
   ]);
   return { restoreId: next.id, resumed: false, warnings: result.warnings };
 }
@@ -397,7 +409,7 @@ export async function restoreCommit(engine: Engine, input: { restoreId: string, 
   await db.batch([
     ...swap,
     // The favicon is detected again for the restored settings.
-    db.prepare("DELETE FROM vibe_meta WHERE key IN ('site_detected', ?)").bind(RESTORE_KEY),
+    prepared(db, createDb(db).delete(meta).where(inArray(meta.key, ["site_detected", RESTORE_KEY]))),
     ...searchRebuild(engine.config).map(sql => db.prepare(sql)),
     ...dropStatements(db)
   ]);
@@ -408,7 +420,7 @@ export async function restoreCommit(engine: Engine, input: { restoreId: string, 
 export async function restoreCancel(engine: Engine, input: { restoreId: string }) {
   guard(engine, "write");
   await activeRestore(engine, input.restoreId);
-  await engine.db.batch([...dropStatements(engine.db), engine.db.prepare("DELETE FROM vibe_meta WHERE key = ?").bind(RESTORE_KEY)]);
+  await engine.db.batch([...dropStatements(engine.db), prepared(engine.db, createDb(engine.db).delete(meta).where(eq(meta.key, RESTORE_KEY)))]);
   return { cancelled: true as const };
 }
 

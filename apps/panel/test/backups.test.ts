@@ -14,13 +14,15 @@ import { env, idp, installMock, ORG, panel, removeMock, signIn, sites } from "./
 /** Enough of an R2 bucket for the archive. */
 function bucket() {
   const objects = new Map<string, { data: Uint8Array, uploaded: Date }>();
-  const object = (key: string, data: Uint8Array, uploaded: Date) => ({
-    key,
-    size: data.byteLength,
-    uploaded,
-    body: new Response(data as Uint8Array<ArrayBuffer>).body,
-    text: async () => new TextDecoder().decode(data)
-  });
+  function object(key: string, data: Uint8Array, uploaded: Date) {
+    return ({
+      key,
+      size: data.byteLength,
+      uploaded,
+      body: new Response(data as Uint8Array<ArrayBuffer>).body,
+      text: async () => new TextDecoder().decode(data)
+    });
+  }
   return {
     objects,
     async get(key: string) {
@@ -68,7 +70,9 @@ function backupSite(origin: string, allowBackups: boolean) {
   const siteEnv = { DB: createD1(), MEDIA: createR2(), VIBE_ORG: ORG };
   // Development mode only so the test can seed content with a dev session; panel users still sign in through the hub.
   const vibe = createHandler(config, { dev: true, bindings: (e: typeof siteEnv) => ({ db: e.DB, storage: e.MEDIA }) });
-  const handler = (request: Request) => vibe.handle(request, siteEnv, { waitUntil() {} });
+  function handler(request: Request) {
+    return vibe.handle(request, siteEnv, { waitUntil() {} });
+  }
   sites[origin] = handler;
   async function dev() {
     const response = await handler(new Request(`${origin}/_vibe/api/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dev: true }) }));
@@ -179,11 +183,13 @@ describe("panel backups", () => {
 
   test("a backup token can't do anything but backups", async () => {
     const token = await backupToken(env, c);
-    const call = (action: string, input: unknown, bearer = token) => sites["https://site-c.test"]!(new Request(`https://site-c.test/_vibe/api/actions/${action}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
-      body: JSON.stringify(input)
-    }));
+    function call(action: string, input: unknown, bearer = token) {
+      return sites["https://site-c.test"]!(new Request(`https://site-c.test/_vibe/api/actions/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+        body: JSON.stringify(input)
+      }));
+    }
     expect((await call("backups.manifest", {})).status).toBe(200);
     expect((await call("documents.list", { type: "post" })).status).toBe(403);
     expect((await call("site.update", { name: "Taken over" })).status).toBe(403);

@@ -1,11 +1,15 @@
+import { and, desc, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import type { BatchItem } from "drizzle-orm/batch";
+import type { Db } from "../db/client.ts";
 import { pkceChallenge, randomString } from "../oidc/index.ts";
+import type { OAuthTables } from "./schema.ts";
 
 /**
  * An OAuth 2.1 authorization server for agents (MCP clients) and the CLI: discovery, dynamic client
  * registration (RFC 7591), authorization codes with S256 PKCE, rotating refresh tokens, revocation
  * (RFC 7009). The hub and sites without an org each run one; they differ only in what's plugged in:
  *
- * - where its tables live (a prefix) and what its tokens start with;
+ * - where its tables live (`oauthTables(prefix)`) and what its tokens start with;
  * - how the user approves: the caller validates a request here, then asks the user however it likes,
  *   and calls `approve` or `deny` with the answer;
  * - what a connection carries (`payload`, opaque here) and what its tokens turn into, which the caller
@@ -25,106 +29,14 @@ const REFRESH_TTL = 30 * 24 * 3600 * 1000;
 const CODE_TTL = 60 * 1000;
 const REQUEST_TTL = 10 * 60 * 1000;
 
-/** The parts of a D1 database this uses; the hub's and a site's both fit. */
-export interface OAuthStatement {
-  bind(...values: unknown[]): OAuthStatement,
-  first(): Promise<unknown>,
-  run(): Promise<unknown>,
-  all(): Promise<{ results?: unknown[] }>
-}
-
-export interface OAuthDb {
-  prepare(query: string): OAuthStatement,
-  batch(statements: never[]): Promise<unknown>
-}
-
-/** The tables, named `<prefix>oauth_clients` and so on. Add them to the database's schema. */
-export function oauthSchema(prefix: string): string[] {
-  return [
-    `CREATE TABLE IF NOT EXISTS ${prefix}oauth_clients (
-      id TEXT PRIMARY KEY,
-      secret_hash TEXT,
-      name TEXT NOT NULL,
-      uri TEXT,
-      redirect_uris TEXT NOT NULL,
-      auth_method TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    )`,
-    // An authorization in progress: from the client's /oauth/authorize to the user's answer.
-    `CREATE TABLE IF NOT EXISTS ${prefix}oauth_requests (
-      id TEXT PRIMARY KEY,
-      client_id TEXT NOT NULL,
-      redirect_uri TEXT NOT NULL,
-      challenge TEXT NOT NULL,
-      state TEXT,
-      scope TEXT NOT NULL,
-      user TEXT,
-      expires_at INTEGER NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${prefix}oauth_codes (
-      hash TEXT PRIMARY KEY,
-      grant_id TEXT NOT NULL,
-      client_id TEXT NOT NULL,
-      redirect_uri TEXT NOT NULL,
-      challenge TEXT NOT NULL,
-      expires_at INTEGER NOT NULL
-    )`,
-    // A connection: who approved it, what it may do, and whatever the server keeps with it (`payload`).
-    `CREATE TABLE IF NOT EXISTS ${prefix}oauth_grants (
-      id TEXT PRIMARY KEY,
-      client_id TEXT NOT NULL,
-      user TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      access_hash TEXT UNIQUE,
-      access_expires_at INTEGER,
-      refresh_hash TEXT UNIQUE,
-      refresh_expires_at INTEGER,
-      created_at INTEGER NOT NULL,
-      last_used_at INTEGER
-    )`
-  ];
-}
-
-export interface ClientRow {
-  id: string,
-  secret_hash: string | null,
-  name: string,
-  uri: string | null,
-  redirect_uris: string,
-  auth_method: "none" | "client_secret_post" | "client_secret_basic",
-  created_at: number
-}
-
-export interface RequestRow {
-  id: string,
-  client_id: string,
-  redirect_uri: string,
-  challenge: string,
-  state: string | null,
-  scope: string,
-  user: string | null,
-  expires_at: number
-}
-
-export interface GrantRow {
-  id: string,
-  client_id: string,
-  user: string,
-  payload: string,
-  scope: string,
-  access_hash: string | null,
-  access_expires_at: number | null,
-  refresh_hash: string | null,
-  refresh_expires_at: number | null,
-  created_at: number,
-  last_used_at: number | null
-}
+export type ClientRow = OAuthTables["clients"]["$inferSelect"];
+export type RequestRow = OAuthTables["requests"]["$inferSelect"];
+export type GrantRow = OAuthTables["grants"]["$inferSelect"];
 
 export interface OAuthOptions {
-  db: OAuthDb,
-  /** Table name prefix: `""` for the hub, `"vibe_"` for a site. */
-  tables: string,
+  db: Db,
+  /** The tables, from `oauthTables(prefix)`: `""` for the hub, `"vibe_"` for a site. */
+  tables: OAuthTables,
   /** Token and id prefix, e.g. `"vp"`: clients are `vpc_…`, access tokens `vpa_…`, refresh tokens `vpr_…`. */
   tokens: string,
   /** The server's issuer for a request's URL; its endpoints are `<issuer>/oauth/…`. */
@@ -134,7 +46,7 @@ export interface OAuthOptions {
   /** Where the protected resource metadata is, for the 401's `WWW-Authenticate`. */
   resourceMetadata(url: URL): string,
   /** Called before a grant is deleted, to remove whatever the server keeps with it. */
-  onRemove?(grant: GrantRow): OAuthStatement[]
+  onRemove?(grant: GrantRow): Array<BatchItem<"sqlite">>
 }
 
 /** Discovery documents and the token endpoint are called from browser-based clients too. */
@@ -200,8 +112,8 @@ export function corsPreflight(): Response {
 export class OAuthServer {
   constructor(private options: OAuthOptions) {}
 
-  #t(name: string) {
-    return `${this.options.tables}${name}`;
+  get #t() {
+    return this.options.tables;
   }
 
   get #db() {
@@ -271,8 +183,15 @@ export class OAuthServer {
     const uri = typeof input.client_uri === "string" && input.client_uri.startsWith("https://") ? input.client_uri : null;
     const id = `${this.options.tokens}c_${randomString(16)}`;
     const secret = method === "none" ? null : `${this.options.tokens}s_${randomString(32)}`;
-    await this.#db.prepare(`INSERT INTO ${this.#t("oauth_clients")} (id, secret_hash, name, uri, redirect_uris, auth_method, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .bind(id, secret ? await sha256(secret) : null, name, uri, JSON.stringify(redirects), method, Date.now()).run();
+    await this.#db.insert(this.#t.clients).values({
+      id,
+      secret_hash: secret ? await sha256(secret) : null,
+      name,
+      uri,
+      redirect_uris: JSON.stringify(redirects),
+      auth_method: method,
+      created_at: Date.now()
+    });
     return json({
       client_id: id,
       ...(secret ? { client_secret: secret, client_secret_expires_at: 0 } : {}),
@@ -288,7 +207,8 @@ export class OAuthServer {
 
   async client(id: string | null): Promise<ClientRow | null> {
     if(!id) return null;
-    return this.#db.prepare(`SELECT * FROM ${this.#t("oauth_clients")} WHERE id = ?`).bind(id).first() as Promise<ClientRow | null>;
+    const [row] = await this.#db.select().from(this.#t.clients).where(eq(this.#t.clients.id, id));
+    return row ?? null;
   }
 
   /** The client's return address with these parameters, and `iss` (RFC 9207). */
@@ -328,16 +248,24 @@ export class OAuthServer {
   /** Keeps a validated request while the user decides; `user` when it's already known who must answer. */
   async saveRequest(params: AuthorizeParams, user?: string): Promise<string> {
     const id = randomString(16);
-    await this.#db.prepare(`DELETE FROM ${this.#t("oauth_requests")} WHERE expires_at < ?`).bind(Date.now()).run();
-    await this.#db.prepare(`INSERT INTO ${this.#t("oauth_requests")} (id, client_id, redirect_uri, challenge, state, scope, user, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(id, params.client.id, params.redirectUri, params.challenge, params.state, params.readOnlyOnly ? SCOPE_READ : SCOPE_WRITE, user ?? null, Date.now() + REQUEST_TTL).run();
+    await this.#db.delete(this.#t.requests).where(lt(this.#t.requests.expires_at, Date.now()));
+    await this.#db.insert(this.#t.requests).values({
+      id,
+      client_id: params.client.id,
+      redirect_uri: params.redirectUri,
+      challenge: params.challenge,
+      state: params.state,
+      scope: params.readOnlyOnly ? SCOPE_READ : SCOPE_WRITE,
+      user: user ?? null,
+      expires_at: Date.now() + REQUEST_TTL
+    });
     return id;
   }
 
   /** A request still awaiting an answer, with its client. */
   async pending(id: unknown): Promise<{ request: RequestRow, client: ClientRow } | null> {
     if(typeof id !== "string") return null;
-    const request = await this.#db.prepare(`SELECT * FROM ${this.#t("oauth_requests")} WHERE id = ?`).bind(id).first() as RequestRow | null;
+    const [request] = await this.#db.select().from(this.#t.requests).where(eq(this.#t.requests.id, id));
     if(!request || request.expires_at < Date.now()) return null;
     const found = await this.client(request.client_id);
     return found ? { request, client: found } : null;
@@ -345,12 +273,12 @@ export class OAuthServer {
 
   /** Makes a pending request read only, when the user ticked that. */
   async limitToReading(id: string) {
-    await this.#db.prepare(`UPDATE ${this.#t("oauth_requests")} SET scope = ? WHERE id = ?`).bind(SCOPE_READ, id).run();
+    await this.#db.update(this.#t.requests).set({ scope: SCOPE_READ }).where(eq(this.#t.requests.id, id));
   }
 
   /** The user said no: the request is gone, and the client hears `access_denied`. */
   async deny(url: URL, id: string): Promise<string | null> {
-    const request = await this.#db.prepare(`DELETE FROM ${this.#t("oauth_requests")} WHERE id = ? RETURNING *`).bind(id).first() as RequestRow | null;
+    const [request] = await this.#db.delete(this.#t.requests).where(eq(this.#t.requests.id, id)).returning();
     if(!request) return null;
     return this.redirect(url, request.redirect_uri, { error: "access_denied", error_description: "The user cancelled", state: request.state });
   }
@@ -360,7 +288,7 @@ export class OAuthServer {
    * browser goes next, or null for a request that's gone, expired, or was meant for someone else.
    */
   async approve(url: URL, id: string, answer: { user: string, payload: string, readOnly?: boolean }): Promise<string | null> {
-    const request = await this.#db.prepare(`DELETE FROM ${this.#t("oauth_requests")} WHERE id = ? RETURNING *`).bind(id).first() as RequestRow | null;
+    const [request] = await this.#db.delete(this.#t.requests).where(eq(this.#t.requests.id, id)).returning();
     if(!request || request.expires_at < Date.now()) return null;
     if(request.user && request.user !== answer.user) {
       return this.redirect(url, request.redirect_uri, { error: "access_denied", error_description: "Signed in as a different account", state: request.state });
@@ -368,13 +296,25 @@ export class OAuthServer {
     const grantId = `${this.options.tokens}g_${randomString(16)}`;
     const code = randomString(32);
     const now = Date.now();
-    const db = this.#db;
-    await db.batch(<never[]>[
-      db.prepare(`DELETE FROM ${this.#t("oauth_grants")} WHERE refresh_hash IS NULL AND created_at < ?`).bind(now - REQUEST_TTL),
-      db.prepare(`INSERT INTO ${this.#t("oauth_grants")} (id, client_id, user, payload, scope, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
-        .bind(grantId, request.client_id, answer.user, answer.payload, answer.readOnly ? SCOPE_READ : request.scope, now),
-      db.prepare(`INSERT INTO ${this.#t("oauth_codes")} (hash, grant_id, client_id, redirect_uri, challenge, expires_at) VALUES (?, ?, ?, ?, ?, ?)`)
-        .bind(await sha256(code), grantId, request.client_id, request.redirect_uri, request.challenge, now + CODE_TTL)
+    const t = this.#t;
+    await this.#db.batch([
+      this.#db.delete(t.grants).where(and(isNull(t.grants.refresh_hash), lt(t.grants.created_at, now - REQUEST_TTL))),
+      this.#db.insert(t.grants).values({
+        id: grantId,
+        client_id: request.client_id,
+        user: answer.user,
+        payload: answer.payload,
+        scope: answer.readOnly ? SCOPE_READ : request.scope,
+        created_at: now
+      }),
+      this.#db.insert(t.codes).values({
+        hash: await sha256(code),
+        grant_id: grantId,
+        client_id: request.client_id,
+        redirect_uri: request.redirect_uri,
+        challenge: request.challenge,
+        expires_at: now + CODE_TTL
+      })
     ]);
     return this.redirect(url, request.redirect_uri, { code, state: request.state });
   }
@@ -400,8 +340,12 @@ export class OAuthServer {
     const access = `${this.options.tokens}a_${randomString(32)}`;
     const refresh = `${this.options.tokens}r_${randomString(32)}`;
     const now = Date.now();
-    await this.#db.prepare(`UPDATE ${this.#t("oauth_grants")} SET access_hash = ?, access_expires_at = ?, refresh_hash = ?, refresh_expires_at = ? WHERE id = ?`)
-      .bind(await sha256(access), now + ACCESS_TTL, await sha256(refresh), now + REFRESH_TTL, grant.id).run();
+    await this.#db.update(this.#t.grants).set({
+      access_hash: await sha256(access),
+      access_expires_at: now + ACCESS_TTL,
+      refresh_hash: await sha256(refresh),
+      refresh_expires_at: now + REFRESH_TTL
+    }).where(eq(this.#t.grants.id, grant.id));
     return json({ access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL / 1000, refresh_token: refresh, scope: grant.scope }, { headers: { pragma: "no-cache" } });
   }
 
@@ -410,20 +354,19 @@ export class OAuthServer {
     const form = new URLSearchParams(await request.text());
     const found = await this.#authenticate(request, form);
     if(!found) return oauthError("invalid_client", "Unknown client or wrong secret", 401);
-    const grants = this.#t("oauth_grants");
+    const grants = this.#t.grants;
     if(form.get("grant_type") === "authorization_code") {
-      const code = await this.#db.prepare(`DELETE FROM ${this.#t("oauth_codes")} WHERE hash = ? RETURNING *`).bind(await sha256(form.get("code") ?? ""))
-        .first() as { grant_id: string, client_id: string, redirect_uri: string, challenge: string, expires_at: number } | null;
+      const [code] = await this.#db.delete(this.#t.codes).where(eq(this.#t.codes.hash, await sha256(form.get("code") ?? ""))).returning();
       if(!code || code.expires_at < Date.now() || code.client_id !== found.id) return oauthError("invalid_grant", "Unknown or expired code");
       if(form.get("redirect_uri") && form.get("redirect_uri") !== code.redirect_uri) return oauthError("invalid_grant", "redirect_uri doesn't match");
       const verifier = form.get("code_verifier");
       if(!verifier || (await pkceChallenge(verifier)) !== code.challenge) return oauthError("invalid_grant", "PKCE verification failed");
-      const grant = await this.#db.prepare(`SELECT * FROM ${grants} WHERE id = ?`).bind(code.grant_id).first() as GrantRow | null;
+      const [grant] = await this.#db.select().from(grants).where(eq(grants.id, code.grant_id));
       if(!grant) return oauthError("invalid_grant", "This connection was removed");
       return this.#issue(grant);
     }
     if(form.get("grant_type") === "refresh_token") {
-      const grant = await this.#db.prepare(`SELECT * FROM ${grants} WHERE refresh_hash = ?`).bind(await sha256(form.get("refresh_token") ?? "")).first() as GrantRow | null;
+      const [grant] = await this.#db.select().from(grants).where(eq(grants.refresh_hash, await sha256(form.get("refresh_token") ?? "")));
       if(!grant || grant.client_id !== found.id || (grant.refresh_expires_at ?? 0) < Date.now()) return oauthError("invalid_grant", "Unknown or expired refresh token");
       return this.#issue(grant);
     }
@@ -436,8 +379,8 @@ export class OAuthServer {
     const found = await this.#authenticate(request, form);
     if(!found) return oauthError("invalid_client", "Unknown client or wrong secret", 401);
     const hash = await sha256(form.get("token") ?? "");
-    const grant = await this.#db.prepare(`SELECT * FROM ${this.#t("oauth_grants")} WHERE (access_hash = ? OR refresh_hash = ?) AND client_id = ?`)
-      .bind(hash, hash, found.id).first() as GrantRow | null;
+    const g = this.#t.grants;
+    const [grant] = await this.#db.select().from(g).where(and(or(eq(g.access_hash, hash), eq(g.refresh_hash, hash)), eq(g.client_id, found.id)));
     if(grant) await this.remove(grant);
     return new Response(null, { status: 200, headers: CORS });
   }
@@ -445,10 +388,10 @@ export class OAuthServer {
   /** The grant behind an access token, if it's still valid. Marks it used, at most once a minute. */
   async grantFor(accessToken: string | null | undefined): Promise<GrantRow | null> {
     if(!accessToken?.startsWith(`${this.options.tokens}a_`)) return null;
-    const grant = await this.#db.prepare(`SELECT * FROM ${this.#t("oauth_grants")} WHERE access_hash = ?`).bind(await sha256(accessToken)).first() as GrantRow | null;
+    const [grant] = await this.#db.select().from(this.#t.grants).where(eq(this.#t.grants.access_hash, await sha256(accessToken)));
     if(!grant || (grant.access_expires_at ?? 0) < Date.now()) return null;
     if(!grant.last_used_at || grant.last_used_at < Date.now() - 60_000) {
-      await this.#db.prepare(`UPDATE ${this.#t("oauth_grants")} SET last_used_at = ? WHERE id = ?`).bind(Date.now(), grant.id).run();
+      await this.#db.update(this.#t.grants).set({ last_used_at: Date.now() }).where(eq(this.#t.grants.id, grant.id));
     }
     return grant;
   }
@@ -461,26 +404,29 @@ export class OAuthServer {
 
   /** One of a user's grants, by id. */
   async userGrant(user: string, id: string): Promise<GrantRow | null> {
-    return this.#db.prepare(`SELECT * FROM ${this.#t("oauth_grants")} WHERE id = ? AND user = ?`).bind(id, user).first() as Promise<GrantRow | null>;
+    const [row] = await this.#db.select().from(this.#t.grants).where(and(eq(this.#t.grants.id, id), eq(this.#t.grants.user, user)));
+    return row ?? null;
   }
 
   /** Removes a connection, and whatever the server keeps with it. */
   async remove(grant: GrantRow) {
-    const db = this.#db;
-    await db.batch(<never[]>[
+    const statements = [
       ...this.options.onRemove?.(grant) ?? [],
-      db.prepare(`DELETE FROM ${this.#t("oauth_codes")} WHERE grant_id = ?`).bind(grant.id),
-      db.prepare(`DELETE FROM ${this.#t("oauth_grants")} WHERE id = ?`).bind(grant.id)
-    ]);
+      this.#db.delete(this.#t.codes).where(eq(this.#t.codes.grant_id, grant.id)),
+      this.#db.delete(this.#t.grants).where(eq(this.#t.grants.id, grant.id))
+    ] as Array<BatchItem<"sqlite">>;
+    await this.#db.batch(statements as [BatchItem<"sqlite">, ...Array<BatchItem<"sqlite">>]);
   }
 
   /** The connections a user made, newest first. */
   async list(user: string) {
-    const { results = [] } = await this.#db.prepare(
-      `SELECT g.id, g.scope, g.created_at, g.last_used_at, c.name FROM ${this.#t("oauth_grants")} g
-       JOIN ${this.#t("oauth_clients")} c ON c.id = g.client_id
-       WHERE g.user = ? AND g.refresh_hash IS NOT NULL ORDER BY g.created_at DESC`
-    ).bind(user).all() as { results?: Array<{ id: string, scope: string, created_at: number, last_used_at: number | null, name: string }> };
+    const g = this.#t.grants;
+    const results = await this.#db
+      .select({ id: g.id, scope: g.scope, created_at: g.created_at, last_used_at: g.last_used_at, name: this.#t.clients.name })
+      .from(g)
+      .innerJoin(this.#t.clients, eq(this.#t.clients.id, g.client_id))
+      .where(and(eq(g.user, user), isNotNull(g.refresh_hash)))
+      .orderBy(desc(g.created_at));
     return results.map(row => ({ id: row.id, name: row.name, readOnly: row.scope === SCOPE_READ, connectedAt: row.created_at, lastUsedAt: row.last_used_at }));
   }
 }

@@ -7,7 +7,7 @@ How the code settles questions the design docs leave open, and where it delibera
 - **Table names are prefixed** (`vibe_documents`, `vibe_versions`, …) so the CMS can share a D1 database with the site's own tables.
 - **`vibe_documents.published`** holds a copy of the published snapshot next to `published_ver`. Published reads and their expression indexes work on one table without a join; `versions` stays the append-only history.
 - **Status** is derived: `draft` (never published), `published` (draft equals published) or `changed`.
-- **Engine migrations run on the first request each isolate handles.** Every statement is `CREATE … IF NOT EXISTS`, including the expression indexes for `indexed: true` fields, so concurrent isolates are harmless.
+- **Engine migrations run on the first request each isolate handles.** The tables are generated Drizzle migrations (see `storage.md`), recorded in `vibe_migrations`; the expression indexes for `indexed: true` fields and the search table are `CREATE … IF NOT EXISTS`. Both are safe to repeat, so concurrent isolates are harmless.
 - **The session signing key** is generated on first use and stored in `vibe_meta`, so sites need no secret binding.
 - **`updated_at` only ever increases** (by at least 1 ms per write), so `baseUpdatedAt` reliably detects concurrent edits; the editor offers "load theirs" or "overwrite".
 - **Bound parameters are chunked** to stay under D1's 100-per-statement limit.

@@ -2,7 +2,9 @@ import { actionTools, CONTENT_INSTRUCTIONS, coreActions, errorResult, serveMcp, 
 import { PanelError, type PanelSite } from "vibe-cms/panel";
 import { SCOPE_READ, type GrantRow } from "./oauth.ts";
 import { apiBase, codeFor } from "./hub.ts";
-import { siteById, type Env, type SessionRow } from "./shared.ts";
+import { and, eq } from "drizzle-orm";
+import * as t from "./schema.ts";
+import { db, siteById, type Env, type SessionRow } from "./shared.ts";
 
 /**
  * The panel's MCP server: the same tools as a site's own, plus `sites_list`, with
@@ -41,8 +43,8 @@ function allTools(): McpTool[] {
 /** A site session for the agent's (or CLI's) user: cached, or from the same handoff the editor uses. */
 export async function siteToken(env: Env, grant: GrantRow, session: SessionRow, site: PanelSite, fresh = false): Promise<string> {
   if(!fresh) {
-    const cached = await env.DB.prepare("SELECT token, expires_at FROM agent_site_tokens WHERE grant_id = ? AND site_id = ?")
-      .bind(grant.id, site.id).first<{ token: string, expires_at: number }>();
+    const [cached] = await db(env).select({ token: t.agentSiteTokens.token, expires_at: t.agentSiteTokens.expires_at }).from(t.agentSiteTokens)
+      .where(and(eq(t.agentSiteTokens.grant_id, grant.id), eq(t.agentSiteTokens.site_id, site.id)));
     if(cached && cached.expires_at > Date.now() + 60_000) return cached.token;
   }
   const code = await codeFor(env, session, site);
@@ -53,10 +55,10 @@ export async function siteToken(env: Env, grant: GrantRow, session: SessionRow, 
   });
   const data = await response.json().catch(() => ({})) as { token?: string, expiresAt?: number, error?: string };
   if(!response.ok || !data.token) throw new PanelError(502, data.error ?? `The site refused the sign-in (${response.status})`);
-  await env.DB.prepare(
-    `INSERT INTO agent_site_tokens (grant_id, site_id, token, expires_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT (grant_id, site_id) DO UPDATE SET token = excluded.token, expires_at = excluded.expires_at`
-  ).bind(grant.id, site.id, data.token, (data.expiresAt ?? 0) * 1000).run();
+  const expiresAt = (data.expiresAt ?? 0) * 1000;
+  await db(env).insert(t.agentSiteTokens)
+    .values({ grant_id: grant.id, site_id: site.id, token: data.token, expires_at: expiresAt })
+    .onConflictDoUpdate({ target: [t.agentSiteTokens.grant_id, t.agentSiteTokens.site_id], set: { token: data.token, expires_at: expiresAt } });
   return data.token;
 }
 
@@ -86,7 +88,7 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
     tools: () => allTools().filter(tool => !readOnly || tool.annotations.readOnlyHint),
     async call(name, args) {
       if(name === sitesList.name) {
-        const { results } = await env.DB.prepare("SELECT id, name, url FROM sites ORDER BY name").all<{ id: string, name: string, url: string }>();
+        const results = await db(env).select({ id: t.sites.id, name: t.sites.name, url: t.sites.url }).from(t.sites).orderBy(t.sites.name);
         return textResult({ sites: results });
       }
       const action = actions.get(name);
@@ -98,7 +100,7 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
       if(typeof siteId !== "string" || !siteId) return errorResult({ _tag: "InvalidInput", message: "site: pass a site's id from sites_list" });
       const site = await siteById(env, siteId);
       if(!site) return errorResult({ _tag: "NotFound", message: `No site "${siteId}" in this panel. sites_list lists them.` });
-      const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.payload).first<SessionRow>();
+      const [session] = await db(env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
       if(!session) return errorResult({ _tag: "Unauthorized", message: "This connection's sign-in is gone. Reconnect the agent." });
       try {
         return await forward(env, grant, session, site, action.name, input);

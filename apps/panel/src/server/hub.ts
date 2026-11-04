@@ -1,7 +1,9 @@
+import { eq, isNull, ne, or } from "drizzle-orm";
 import { decodeJwt, importJWK, SignJWT, type JWK } from "jose";
 import { fetchDescriptor, PanelError, type PanelSite } from "vibe-cms/panel";
 import { normalizeOrg, ORG_MOVE_SCOPE, ORG_MOVE_TOKEN_TTL } from "vibe-cms/org";
-import { freshIdToken, json, type Env, type SessionRow } from "./shared.ts";
+import { freshIdToken, db, json, type Env, type SessionRow } from "./shared.ts";
+import * as t from "./schema.ts";
 
 /**
  * The panel as the hub of an org. Sites trust the org (`VIBE_ORG`), find this hub through the
@@ -19,11 +21,12 @@ const TOKEN_TTL = "5m";
 const PROVIDER_ONLY = new Set(["iss", "sub", "aud", "exp", "iat", "nbf", "jti", "nonce", "at_hash", "c_hash", "azp", "auth_time", "acr", "amr", "sid", "scope", "roles"]);
 
 async function meta(env: Env, key: string): Promise<string | null> {
-  return (await env.DB.prepare("SELECT value FROM panel_meta WHERE key = ?").bind(key).first<{ value: string }>())?.value ?? null;
+  const [row] = await db(env).select({ value: t.panelMeta.value }).from(t.panelMeta).where(eq(t.panelMeta.key, key));
+  return row?.value ?? null;
 }
 
 async function setMeta(env: Env, key: string, value: string) {
-  await env.DB.prepare("INSERT INTO panel_meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").bind(key, value).run();
+  await db(env).insert(t.panelMeta).values({ key, value }).onConflictDoUpdate({ target: t.panelMeta.key, set: { value } });
 }
 
 /** The hub's own address, for links and OAuth. Cron runs have no request to read it from. */
@@ -109,7 +112,8 @@ export async function jwks(env: Env): Promise<Response> {
 
 /** The org a site trusts, as last seen in its descriptor. */
 export async function siteOrg(env: Env, siteId: string): Promise<string | null> {
-  return (await env.DB.prepare("SELECT org FROM sites WHERE id = ?").bind(siteId).first<{ org: string | null }>())?.org ?? null;
+  const [row] = await db(env).select({ org: t.sites.org }).from(t.sites).where(eq(t.sites.id, siteId));
+  return row?.org ?? null;
 }
 
 /** Signs as the org the site trusts: the current one, or one this hub used to be while the site's move is pending. */
@@ -165,7 +169,7 @@ export function apiBase(site: Pick<PanelSite, "admin">): string {
 export async function refreshSiteOrg(env: Env, site: Pick<PanelSite, "id" | "url">): Promise<{ org: string | null, move: { to: string, effectiveAt: number } | null } | null> {
   const descriptor = await fetchDescriptor(site.url).catch(() => null);
   if(!descriptor || descriptor.id !== site.id) return null;
-  await env.DB.prepare("UPDATE sites SET org = ? WHERE id = ?").bind(descriptor.org, site.id).run();
+  await db(env).update(t.sites).set({ org: descriptor.org }).where(eq(t.sites.id, site.id));
   return { org: descriptor.org, move: descriptor.orgMove };
 }
 
@@ -202,8 +206,10 @@ export interface OrgSiteStatus {
  */
 export async function moveSites(env: Env): Promise<{ org: string, previous: string[], sites: OrgSiteStatus[] }> {
   const { org, previous } = await syncOrg(env);
-  const { results } = await env.DB.prepare("SELECT id, url, name, admin, org FROM sites WHERE org IS NULL OR org != ?").bind(org)
-    .all<{ id: string, url: string, name: string, admin: string, org: string | null }>();
+  const results = await db(env)
+    .select({ id: t.sites.id, url: t.sites.url, name: t.sites.name, admin: t.sites.admin, org: t.sites.org })
+    .from(t.sites)
+    .where(or(isNull(t.sites.org), ne(t.sites.org, org)));
   const sites: OrgSiteStatus[] = [];
   for(const site of results) {
     const seen = await refreshSiteOrg(env, site);

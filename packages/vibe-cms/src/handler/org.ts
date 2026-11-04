@@ -1,7 +1,10 @@
 import { calculateJwkThumbprint, createLocalJWKSet, decodeProtectedHeader, jwtVerify, type JSONWebKeySet, type JWK, type JWTPayload } from "jose";
 import { HttpError } from "../config.ts";
 import { normalizeOrg, ORG_MOVE_DELAY_SECONDS, ORG_MOVE_SCOPE, OrgLookupError, resolveHub, type OrgStatus } from "../org/index.ts";
-import { getMeta, run } from "./db.ts";
+import { eq } from "drizzle-orm";
+import { createDb } from "../db/client.ts";
+import { meta } from "../db/schema.ts";
+import { getMeta } from "./db.ts";
 import type { D1 } from "./platform.ts";
 
 /**
@@ -210,8 +213,9 @@ export class SiteOrg {
   }
 
   async #meta(key: string, value: string | null) {
-    if(value === null) await run(this.db, "DELETE FROM vibe_meta WHERE key = ?", [key]);
-    else await run(this.db, "INSERT OR REPLACE INTO vibe_meta (key, value) VALUES (?, ?)", [key, value]);
+    const orm = createDb(this.db);
+    if(value === null) await orm.delete(meta).where(eq(meta.key, key));
+    else await orm.insert(meta).values({ key, value }).onConflictDoUpdate({ target: meta.key, set: { value } });
   }
 }
 

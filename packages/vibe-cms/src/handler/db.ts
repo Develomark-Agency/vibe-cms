@@ -1,191 +1,18 @@
 import type { AnyConfig, Collection } from "../config.ts";
-import { oauthSchema } from "../oauth/index.ts";
+import { migrations } from "../db/migrations/index.ts";
+import { runMigrations } from "../db/migrate.ts";
 import type { AnySchema, ArraySchema, ObjectSchema, OptionalSchema, UnionSchema } from "../schema/types.ts";
 import type { D1 } from "./platform.ts";
 import { jsonPath } from "./sql.ts";
 import { titleField } from "../title.ts";
 
-export interface DocumentRow {
-  id: string,
-  type: string,
-  locale: string,
-  draft: string,
-  published: string | null,
-  published_ver: number | null,
-  schema_hash: string,
-  created_at: number,
-  updated_at: number,
-  published_at: number | null,
-  updated_by: string | null
-}
+export type { AssetRow, DocumentRow, ScheduleRow, TrashRow, VersionRow } from "../db/schema.ts";
 
-export interface VersionRow {
-  id: string,
-  locale: string,
-  ver: number,
-  data: string,
-  author: string,
-  created_at: number
-}
-
-export interface ScheduleRow {
-  id: string,
-  locale: string,
-  ver: number | null,
-  action: "publish" | "unpublish",
-  run_at: number,
-  created_by: string
-}
-
-export interface AssetRow {
-  id: string,
-  key: string,
-  folder: string | null,
-  filename: string,
-  mime: string,
-  size: number,
-  meta: string,
-  created_at: number,
-  created_by: string
-}
-
-/** A deleted document (or one translation of it) or media file, kept until it's restored or purged. */
-export interface TrashRow {
-  id: string,
-  kind: "document" | "asset",
-  /** Content type for documents; null for assets. */
-  type: string | null,
-  item_id: string,
-  /** The one translation that was deleted; null when the whole document or a file was. */
-  locale: string | null,
-  label: string,
-  /** JSON: the removed `vibe_documents` rows, or the `vibe_assets` row. */
-  payload: string,
-  deleted_at: number,
-  deleted_by: string
-}
-
-const tables = [
-  `CREATE TABLE IF NOT EXISTS vibe_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS vibe_documents (
-    id TEXT NOT NULL,
-    type TEXT NOT NULL,
-    locale TEXT NOT NULL,
-    draft TEXT NOT NULL,
-    published TEXT,
-    published_ver INTEGER,
-    schema_hash TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    published_at INTEGER,
-    updated_by TEXT,
-    PRIMARY KEY (id, locale)
-  )`,
-  "CREATE INDEX IF NOT EXISTS vibe_documents_type ON vibe_documents (type, locale, updated_at)",
-  `CREATE TABLE IF NOT EXISTS vibe_versions (
-    id TEXT NOT NULL,
-    locale TEXT NOT NULL,
-    ver INTEGER NOT NULL,
-    data TEXT NOT NULL,
-    author TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (id, locale, ver)
-  )`,
-  `CREATE TABLE IF NOT EXISTS vibe_schedules (
-    id TEXT NOT NULL,
-    locale TEXT NOT NULL,
-    ver INTEGER,
-    action TEXT NOT NULL,
-    run_at INTEGER NOT NULL,
-    created_by TEXT NOT NULL,
-    PRIMARY KEY (id, locale, action)
-  )`,
-  "CREATE INDEX IF NOT EXISTS vibe_schedules_run_at ON vibe_schedules (run_at)",
-  `CREATE TABLE IF NOT EXISTS vibe_assets (
-    id TEXT PRIMARY KEY,
-    key TEXT NOT NULL,
-    folder TEXT,
-    filename TEXT NOT NULL,
-    mime TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    meta TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    created_by TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS vibe_assets_folder ON vibe_assets (folder, created_at)",
-  // Folders that exist on their own, so empty ones survive. Asset folders and their ancestors exist implicitly too.
-  `CREATE TABLE IF NOT EXISTS vibe_folders (
-    path TEXT PRIMARY KEY,
-    created_at INTEGER NOT NULL
-  )`,
-  // Deleting moves rows here. Versions and R2 objects stay where they are until the item is purged.
-  `CREATE TABLE IF NOT EXISTS vibe_trash (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    type TEXT,
-    item_id TEXT NOT NULL,
-    locale TEXT,
-    label TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    deleted_at INTEGER NOT NULL,
-    deleted_by TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS vibe_trash_deleted_at ON vibe_trash (deleted_at)",
-  "CREATE INDEX IF NOT EXISTS vibe_trash_item ON vibe_trash (item_id)",
-  `CREATE TABLE IF NOT EXISTS vibe_codes (
-    code TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`,
-  // Sign-in for sites without an org (VIBE_ORG): people who may sign in, by email, with roles given in the editor.
-  `CREATE TABLE IF NOT EXISTS vibe_users (
-    id TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    name TEXT,
-    roles TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    created_by TEXT NOT NULL,
-    last_sign_in_at INTEGER
-  )`,
-  `CREATE TABLE IF NOT EXISTS vibe_passkeys (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    public_key TEXT NOT NULL,
-    counter INTEGER NOT NULL,
-    transports TEXT,
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER
-  )`,
-  // Invite links, stored as hashes: one registers a passkey for that user.
-  `CREATE TABLE IF NOT EXISTS vibe_invites (
-    hash TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`,
-  // Signed-in browsers: an httpOnly cookie names one, and the editor trades it for a session token.
-  `CREATE TABLE IF NOT EXISTS vibe_signins (
-    hash TEXT PRIMARY KEY,
-    identity TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`,
-  // The site as an OAuth server for agents and the CLI, when it signs people in itself (vibe-cms/oauth).
-  ...oauthSchema("vibe_"),
-  // Passkey challenges and OIDC logins in progress.
-  `CREATE TABLE IF NOT EXISTS vibe_challenges (
-    id TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
-    expires_at INTEGER NOT NULL
-  )`,
-  // Full-text search over working copies, one row per document and locale. Triggers keep it current.
-  `CREATE VIRTUAL TABLE IF NOT EXISTS vibe_search USING fts5(
-    id UNINDEXED, locale UNINDEXED, type UNINDEXED, title, body,
-    tokenize = 'unicode61 remove_diacritics 2'
-  )`
-];
+/** Full-text search over working copies, one row per document and locale. Triggers keep it current. */
+const searchTable = `CREATE VIRTUAL TABLE IF NOT EXISTS vibe_search USING fts5(
+  id UNINDEXED, locale UNINDEXED, type UNINDEXED, title, body,
+  tokenize = 'unicode61 remove_diacritics 2'
+)`;
 
 /** Expression indexes for every `indexed: true` field, on both the working copy and the published copy. */
 export function indexStatements(config: AnyConfig): string[] {
@@ -242,7 +69,9 @@ function searchBody(config: AnyConfig, row: string): string {
 
 /** The triggers that keep `vibe_search` in step with `vibe_documents`. They depend on each type's title field. */
 export function searchTriggers(config: AnyConfig): string[] {
-  const insert = (row: string) => `INSERT INTO vibe_search (id, locale, type, title, body) VALUES (${row}.id, ${row}.locale, ${row}.type, ${searchTitle(config, row)}, ${searchBody(config, row)});`;
+  function insert(row: string) {
+    return `INSERT INTO vibe_search (id, locale, type, title, body) VALUES (${row}.id, ${row}.locale, ${row}.type, ${searchTitle(config, row)}, ${searchBody(config, row)});`;
+  }
   const remove = "DELETE FROM vibe_search WHERE id = OLD.id AND locale = OLD.locale;";
   return [
     "DROP TRIGGER IF EXISTS vibe_search_insert",
@@ -277,7 +106,8 @@ function indexedPaths(schema: ObjectSchema, prefix: string[] = []): string[][] {
  * statement is idempotent, so concurrent isolates are harmless.
  */
 export async function migrate(db: D1, config: AnyConfig): Promise<void> {
-  await db.batch([...tables, ...indexStatements(config)].map(sql => db.prepare(sql)));
+  await runMigrations(db, migrations, "vibe_migrations");
+  await db.batch([searchTable, ...indexStatements(config)].map(sql => db.prepare(sql)));
   // The search triggers change when a title field does; reinstall them and reindex, once per change.
   const triggers = searchTriggers(config);
   const version = await sha256(triggers.join("\n"));

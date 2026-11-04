@@ -8,6 +8,8 @@ export interface D1Statement {
   bind(...values: unknown[]): D1Statement,
   all(): Promise<{ results: unknown[] }>,
   first(): Promise<unknown>,
+  /** Rows as arrays of values, in column order. Drizzle reads results this way. */
+  raw(): Promise<unknown[][]>,
   run(): Promise<unknown>
 }
 

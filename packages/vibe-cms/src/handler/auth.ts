@@ -2,7 +2,10 @@ import { jwtVerify, SignJWT } from "jose";
 import { HttpError, type Action, type AnyConfig, type RoleRules } from "../config.ts";
 import type { Session } from "../server/index.ts";
 import type { EngineState } from "./engine.ts";
-import { first, getOrCreateMeta, randomToken, run } from "./db.ts";
+import { eq, lt } from "drizzle-orm";
+import { createDb } from "../db/client.ts";
+import { codes } from "../db/schema.ts";
+import { getOrCreateMeta, randomToken } from "./db.ts";
 import type { D1 } from "./platform.ts";
 
 const SESSION_TTL = 12 * 60 * 60;
@@ -113,22 +116,15 @@ export function identitySession(config: AnyConfig, sub: string, claims: Record<s
 
 export async function createCode(db: D1, session: Session): Promise<string> {
   const code = randomToken(24);
-  await run(db, "DELETE FROM vibe_codes WHERE expires_at < ?", [Date.now()]);
-  await run(db, "INSERT INTO vibe_codes (code, payload, expires_at) VALUES (?, ?, ?)", [
-    code,
-    JSON.stringify(session),
-    Date.now() + CODE_TTL * 1000
-  ]);
+  const orm = createDb(db);
+  await orm.delete(codes).where(lt(codes.expires_at, Date.now()));
+  await orm.insert(codes).values({ code, payload: JSON.stringify(session), expires_at: Date.now() + CODE_TTL * 1000 });
   return code;
 }
 
 /** Single use: the row is deleted as it is read. */
 export async function consumeCode(db: D1, code: string): Promise<Session> {
-  const row = await first<{ payload: string, expires_at: number }>(
-    db,
-    "DELETE FROM vibe_codes WHERE code = ? RETURNING payload, expires_at",
-    [code]
-  );
+  const [row] = await createDb(db).delete(codes).where(eq(codes.code, code)).returning({ payload: codes.payload, expires_at: codes.expires_at });
   if(!row || row.expires_at < Date.now()) throw new HttpError(401, "Invalid or expired code");
   return JSON.parse(row.payload) as Session;
 }

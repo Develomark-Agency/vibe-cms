@@ -35,7 +35,7 @@ export function searchWords(text: string): string[] {
 /** An FTS5 query where every word must match as a prefix: `"furn"* "pad"*`. Never empty. */
 export function ftsQuery(text: string): string {
   const words = searchWords(text);
-  return words.length ? words.map(word => `"${word}"*`).join(" ") : `""`;
+  return words.length ? words.map(word => `"${word}"*`).join(" ") : "\"\"";
 }
 
 export class SqlBuilder {

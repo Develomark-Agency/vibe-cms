@@ -1,9 +1,12 @@
+import { and, count, eq, isNotNull } from "drizzle-orm";
 import { fetchDescriptor, normalizeBranding, PanelError, siteOrigin, type PanelSite } from "vibe-cms/panel";
+import * as t from "./schema.ts";
 import { exchangeCode, isAllowed, randomString, verifyIdToken } from "./oidc.ts";
 import {
   beginLogin,
   cookie,
   currentSession,
+  db,
   json,
   LOGIN_COOKIE,
   migrate,
@@ -12,8 +15,7 @@ import {
   SESSION_TTL,
   setCookie,
   siteById,
-  type Env,
-  type SessionRow
+  type Env
 } from "./shared.ts";
 
 import { backupsApi, processBackups } from "./backups.ts";
@@ -60,10 +62,11 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
   if(backups) return backups;
 
   if(path === "/sites" && method === "GET") {
-    const { results } = await env.DB.prepare(
-      `SELECT s.id, s.url, s.name, s.admin, f.user IS NOT NULL AS favorite FROM sites s
-       LEFT JOIN favorites f ON f.site_id = s.id AND f.user = ? ORDER BY s.name`
-    ).bind(session.sub).all<Omit<PanelSite, "favorite"> & { favorite: number }>();
+    const results = await db(env)
+      .select({ id: t.sites.id, url: t.sites.url, name: t.sites.name, admin: t.sites.admin, favorite: isNotNull(t.favorites.user) })
+      .from(t.sites)
+      .leftJoin(t.favorites, and(eq(t.favorites.site_id, t.sites.id), eq(t.favorites.user, session.sub)))
+      .orderBy(t.sites.name);
     return json(results.map(r => ({ ...r, favorite: Boolean(r.favorite) })));
   }
 
@@ -76,18 +79,17 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
       return json({ error: descriptor.org ? `This site trusts another org (${descriptor.org}), not ${org}` : `This site doesn't belong to an org yet. Set VIBE_ORG=${org} in its environment and deploy it.` }, { status: 422 });
     }
     const site: PanelSite = { id: descriptor.id, url: new URL(descriptor.admin).origin, name: descriptor.name, admin: descriptor.admin, favorite: false };
-    await env.DB.prepare(
-      `INSERT INTO sites (id, url, name, admin, org, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET url = excluded.url, name = excluded.name, admin = excluded.admin, org = excluded.org`
-    ).bind(site.id, site.url, site.name, site.admin, descriptor.org, session.sub, Date.now()).run();
+    await db(env).insert(t.sites)
+      .values({ id: site.id, url: site.url, name: site.name, admin: site.admin, org: descriptor.org, added_by: session.sub, added_at: Date.now() })
+      .onConflictDoUpdate({ target: t.sites.id, set: { url: site.url, name: site.name, admin: site.admin, org: descriptor.org } });
     return json(site, { status: 201 });
   }
 
   if((m = /^\/sites\/([^/]+)$/.exec(path)) && method === "DELETE") {
     const id = decodeURIComponent(m[1]!);
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM favorites WHERE site_id = ?").bind(id),
-      env.DB.prepare("DELETE FROM sites WHERE id = ?").bind(id)
+    await db(env).batch([
+      db(env).delete(t.favorites).where(eq(t.favorites.site_id, id)),
+      db(env).delete(t.sites).where(eq(t.sites.id, id))
     ]);
     return new Response(null, { status: 204 });
   }
@@ -95,9 +97,9 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
   if((m = /^\/sites\/([^/]+)\/favorite$/.exec(path)) && (method === "PUT" || method === "DELETE")) {
     const id = decodeURIComponent(m[1]!);
     if(method === "PUT") {
-      await env.DB.prepare("INSERT OR IGNORE INTO favorites (user, site_id) VALUES (?, ?)").bind(session.sub, id).run();
+      await db(env).insert(t.favorites).values({ user: session.sub, site_id: id }).onConflictDoNothing();
     } else {
-      await env.DB.prepare("DELETE FROM favorites WHERE user = ? AND site_id = ?").bind(session.sub, id).run();
+      await db(env).delete(t.favorites).where(and(eq(t.favorites.user, session.sub), eq(t.favorites.site_id, id)));
     }
     return new Response(null, { status: 204 });
   }
@@ -105,7 +107,7 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
   if(path === "/org" && method === "GET") {
     const { org, previous } = await syncOrg(env);
     const hub = await resolveHub(org, { fresh: true }).catch((error: Error) => ({ error: error.message }));
-    const { results } = await env.DB.prepare("SELECT org, COUNT(*) AS sites FROM sites GROUP BY org").all<{ org: string | null, sites: number }>();
+    const results = await db(env).select({ org: t.sites.org, sites: count() }).from(t.sites).groupBy(t.sites.org);
     return json({
       org,
       previous,
@@ -156,8 +158,7 @@ async function callback(request: Request, env: Env, url: URL): Promise<Response>
   const code = url.searchParams.get("code");
   if(url.searchParams.get("error")) return fail(url.searchParams.get("error_description") ?? url.searchParams.get("error")!);
   if(!state || !code || cookie(request, LOGIN_COOKIE) !== state) return fail("Sign-in expired. Try again.");
-  const pending = await env.DB.prepare("DELETE FROM logins WHERE state = ? RETURNING *").bind(state)
-    .first<{ verifier: string, nonce: string, return_to: string, expires_at: number }>();
+  const [pending] = await db(env).delete(t.logins).where(eq(t.logins.state, state)).returning();
   if(!pending || pending.expires_at < Date.now()) return fail("Sign-in expired. Try again.");
   const config = oidcConfig(env);
   let claims;
@@ -171,16 +172,15 @@ async function callback(request: Request, env: Env, url: URL): Promise<Response>
   if(!isAllowed(env.PANEL_ALLOW, claims)) return fail("Your account isn't allowed to use this panel.");
   if(pending.return_to.startsWith("oauth:")) return completeAuthorization(env, url, pending.return_to.slice(6), claims, tokens);
   const id = randomString();
-  await env.DB.prepare("INSERT INTO sessions (id, sub, email, name, id_token, refresh_token, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(
-      id,
-      `${claims.iss}|${claims.sub}`,
-      typeof claims.email === "string" ? claims.email : null,
-      typeof claims.name === "string" ? claims.name : null,
-      tokens.id_token,
-      tokens.refresh_token ?? null,
-      Date.now() + SESSION_TTL
-    ).run();
+  await db(env).insert(t.sessions).values({
+    id,
+    sub: `${claims.iss}|${claims.sub}`,
+    email: typeof claims.email === "string" ? claims.email : null,
+    name: typeof claims.name === "string" ? claims.name : null,
+    id_token: tokens.id_token,
+    refresh_token: tokens.refresh_token ?? null,
+    expires_at: Date.now() + SESSION_TTL
+  });
   const headers = new Headers({ location: `${url.origin}${pending.return_to}` });
   headers.append("set-cookie", setCookie(url, SESSION_COOKIE, id, SESSION_TTL / 1000));
   headers.append("set-cookie", setCookie(url, LOGIN_COOKIE, "", 0));
@@ -198,10 +198,11 @@ async function siteTokenRoute(request: Request, env: Env, grant: GrantRow): Prom
   if(!target) return json({ error: "Expected site" }, { status: 400 });
   let site = await siteById(env, target);
   if(!site && URL.canParse(target)) {
-    site = await env.DB.prepare("SELECT id, url, name, admin, 0 AS favorite FROM sites WHERE url = ?").bind(siteOrigin(target)).first<PanelSite>();
+    const [row] = await db(env).select({ id: t.sites.id, url: t.sites.url, name: t.sites.name, admin: t.sites.admin }).from(t.sites).where(eq(t.sites.url, siteOrigin(target)));
+    site = row ? { ...row, favorite: false } : null;
   }
   if(!site) return json({ error: `${target} isn't in this panel. Add it in the panel first.` }, { status: 404 });
-  const session = await env.DB.prepare("SELECT * FROM sessions WHERE id = ?").bind(grant.payload).first<SessionRow>();
+  const [session] = await db(env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
   if(!session) return json({ error: "This connection's sign-in is gone. Log in again." }, { status: 401 });
   return json({ token: await siteToken(env, grant, session, site), site: { id: site.id, name: site.name, admin: site.admin } });
 }
@@ -238,7 +239,7 @@ export async function handle(request: Request, env: Env, ctx?: ExecutionContext)
     if(url.pathname === "/auth/callback") return await callback(request, env, url);
     if(url.pathname === "/auth/logout" && request.method === "POST") {
       const id = cookie(request, SESSION_COOKIE);
-      if(id) await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(id).run();
+      if(id) await db(env).delete(t.sessions).where(eq(t.sessions.id, id));
       return new Response(null, { status: 204, headers: { "set-cookie": setCookie(url, SESSION_COOKIE, "", 0) } });
     }
     if(url.pathname.startsWith("/api/")) {

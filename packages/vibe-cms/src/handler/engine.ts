@@ -20,7 +20,11 @@ import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
 import { can, require } from "./auth.ts";
 import { detectFavicon, type SiteFetch } from "./favicon.ts";
-import { all, first, getMeta, newId, run, type AssetRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "./db.ts";
+import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
+import type { BatchItem } from "drizzle-orm/batch";
+import { createDb } from "../db/client.ts";
+import { assets, documents, folders, meta, schedules, trash, versions, type AssetRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "../db/schema.ts";
+import { all, first, getMeta, newId } from "./db.ts";
 import type { D1, ExecutionContext, R2 } from "./platform.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
 import { ftsQuery, jsonPath, searchWords, SqlBuilder } from "./sql.ts";
@@ -225,6 +229,28 @@ export class Engine {
 
   get db() {
     return this.state.db;
+  }
+
+  /** The typed query builder over the site's D1. */
+  private get orm() {
+    return createDb(this.db);
+  }
+
+  /** `db.batch` wants a non-empty tuple; every caller passes at least one statement. */
+  private batch(items: Array<BatchItem<"sqlite">>) {
+    return this.orm.batch(items as [BatchItem<"sqlite">, ...Array<BatchItem<"sqlite">>]);
+  }
+
+  private async putMeta(key: string, value: string) {
+    await this.orm.insert(meta).values({ key, value }).onConflictDoUpdate({ target: meta.key, set: { value } });
+  }
+
+  private async assetsByIds(ids: string[]): Promise<AssetRow[]> {
+    return this.orm.select().from(assets).where(inArray(assets.id, ids));
+  }
+
+  private async assetRow(id: string): Promise<AssetRow | null> {
+    return (await this.orm.select().from(assets).where(eq(assets.id, id)).limit(1))[0] ?? null;
   }
 
   private get locales(): string[] {
@@ -473,7 +499,7 @@ export class Engine {
     if(ids.size === 0) return docs;
     const rows = new Map<string, AssetRow>();
     for(const chunk of chunks([...ids])) {
-      const found = await all<AssetRow>(this.db, `SELECT * FROM vibe_assets WHERE id IN (${chunk.map(() => "?").join(",")})`, chunk);
+      const found = await this.assetsByIds(chunk);
       for(const row of found) rows.set(row.id, row);
     }
     const resolve = (value: unknown): unknown => {
@@ -489,17 +515,17 @@ export class Engine {
   // --- Documents (editor API) ------------------------------------------------
 
   async getRow(id: string, locale: string): Promise<DocumentRow | null> {
-    return first<DocumentRow>(this.db, "SELECT * FROM vibe_documents WHERE id = ? AND locale = ?", [id, locale]);
+    return (await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.locale, locale))).limit(1))[0] ?? null;
   }
 
   /** The full editing state of one document in one locale. */
   async getDocument(type: string, id: string, localeInput?: string): Promise<DocumentState> {
     const locale = this.locale(localeInput);
     require(this.config, this.scope.session, { action: "read", type });
-    const rows = await all<DocumentRow>(this.db, "SELECT * FROM vibe_documents WHERE id = ? AND type = ?", [id, type]);
+    const rows = await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.type, type)));
     if(rows.length === 0) throw new HttpError(404, "Document not found");
     const row = rows.find(r => r.locale === locale);
-    const schedules = await all<ScheduleRow>(this.db, "SELECT * FROM vibe_schedules WHERE id = ? AND locale = ?", [id, locale]);
+    const pending = await this.orm.select().from(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale)));
     return {
       id,
       type,
@@ -514,7 +540,7 @@ export class Engine {
       updatedAt: row?.updated_at ?? null,
       updatedBy: row?.updated_by ?? null,
       publishedAt: iso(row?.published_at ?? null),
-      schedules: schedules.map(s => ({ action: s.action, runAt: iso(s.run_at)!, ver: s.ver, createdBy: s.created_by })),
+      schedules: pending.map(s => ({ action: s.action, runAt: iso(s.run_at)!, ver: s.ver, createdBy: s.created_by })),
       // Lets a translator start from the default locale's copy.
       fallback: row ? null : JSON.parse((rows.find(r => r.locale === this.defaultLocale) ?? rows[0]!).draft)
     };
@@ -600,7 +626,7 @@ export class Engine {
     const existing = input.id ? await this.getRow(id, locale) : null;
     if(existing && existing.type !== input.type) throw new HttpError(409, "Document ID belongs to another type");
     if(input.id && !existing) {
-      const other = await first<{ type: string }>(this.db, "SELECT type FROM vibe_documents WHERE id = ? LIMIT 1", [id]);
+      const other = (await this.orm.select({ type: documents.type }).from(documents).where(eq(documents.id, id)).limit(1))[0];
       if(other && other.type !== input.type) throw new HttpError(409, "Document ID belongs to another type");
     }
     if(existing && input.baseUpdatedAt !== undefined && existing.updated_at !== input.baseUpdatedAt) {
@@ -615,14 +641,13 @@ export class Engine {
     // Strictly increasing, so `baseUpdatedAt` always detects a concurrent edit.
     const now = Math.max(Date.now(), (existing?.updated_at ?? 0) + 1);
     const draft = JSON.stringify(doc);
-    await run(
-      this.db,
-      `INSERT INTO vibe_documents (id, type, locale, draft, schema_hash, created_at, updated_at, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id, locale) DO UPDATE SET draft = excluded.draft, schema_hash = excluded.schema_hash,
-         updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
-      [id, input.type, locale, draft, this.state.schemaHash, now, now, session?.sub ?? null]
-    );
+    const updatedBy = session?.sub ?? null;
+    await this.orm.insert(documents)
+      .values({ id, type: input.type, locale, draft, schema_hash: this.state.schemaHash, created_at: now, updated_at: now, updated_by: updatedBy })
+      .onConflictDoUpdate({
+        target: [documents.id, documents.locale],
+        set: { draft, schema_hash: this.state.schemaHash, updated_at: now, updated_by: updatedBy }
+      });
     this.afterWrite({ type: input.type, id, locale, action, valid: issues.length === 0, doc });
     if(input.publish) return this.publish(input.type, id, locale);
     return { ...(await this.getDocument(input.type, id, locale)), issues };
@@ -670,11 +695,16 @@ export class Engine {
       const value = doc[key];
       if(typeof value !== "string" || value === "") continue;
       const path = jsonPath([key]);
-      const taken = await first<{ id: string }>(
-        this.db,
-        `SELECT id FROM vibe_documents WHERE type = ? AND locale = ? AND id != ? AND (json_extract(draft, ${path}) = ? OR json_extract(published, ${path}) = ?) LIMIT 1`,
-        [type, locale, id, value, value]
-      );
+      // The path is a literal, so it matches the field's expression index.
+      const taken = (await this.orm.select({ id: documents.id }).from(documents).where(and(
+        eq(documents.type, type),
+        eq(documents.locale, locale),
+        ne(documents.id, id),
+        or(
+          sql`json_extract(${documents.draft}, ${sql.raw(path)}) = ${value}`,
+          sql`json_extract(${documents.published}, ${sql.raw(path)}) = ${value}`
+        )
+      )).limit(1))[0];
       if(taken) issues.push({ path: [key], message: `Another document already uses “${value}”` });
     }
     return issues;
@@ -691,11 +721,7 @@ export class Engine {
     });
     const types = new Map<string, string>();
     for(const chunk of chunks([...new Set(refIds.map(r => r.id))])) {
-      const rows = await all<{ id: string, type: string }>(
-        this.db,
-        `SELECT DISTINCT id, type FROM vibe_documents WHERE id IN (${chunk.map(() => "?").join(",")})`,
-        chunk
-      );
+      const rows = await this.orm.selectDistinct({ id: documents.id, type: documents.type }).from(documents).where(inArray(documents.id, chunk));
       for(const row of rows) types.set(row.id, row.type);
     }
     for(const ref of refIds) {
@@ -707,7 +733,7 @@ export class Engine {
     const assets = found.filter(f => f.kind === "asset");
     const rows = new Map<string, AssetRow>();
     for(const chunk of chunks([...new Set(assets.map(a => (a.value as { asset: string }).asset))])) {
-      const found = await all<AssetRow>(this.db, `SELECT * FROM vibe_assets WHERE id IN (${chunk.map(() => "?").join(",")})`, chunk);
+      const found = await this.assetsByIds(chunk);
       for(const row of found) rows.set(row.id, row);
     }
     for(const asset of assets) {
@@ -733,13 +759,10 @@ export class Engine {
     const data = JSON.stringify(doc);
     const ver = await this.appendVersion(id, locale, data, session);
     const now = Math.max(Date.now(), row.updated_at + 1);
-    await run(
-      this.db,
-      `UPDATE vibe_documents SET draft = ?, published = ?, published_ver = ?, published_at = ?, updated_at = ?, updated_by = ?
-       WHERE id = ? AND locale = ?`,
-      [data, data, ver, now, now, session?.sub ?? null, id, locale]
-    );
-    await run(this.db, "DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'publish'", [id, locale]);
+    await this.orm.update(documents)
+      .set({ draft: data, published: data, published_ver: ver, published_at: now, updated_at: now, updated_by: session?.sub ?? null })
+      .where(and(eq(documents.id, id), eq(documents.locale, locale)));
+    await this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, "publish")));
     this.afterWrite({ type, id, locale, action: "publish", valid: true, doc });
     return { ...(await this.getDocument(type, id, locale)), issues: [] };
   }
@@ -760,37 +783,36 @@ export class Engine {
     this.writer({ action: "publish", type, locale });
     const row = await this.getRow(id, locale);
     if(!row || row.type !== type) throw new HttpError(404, "Document not found");
-    await run(this.db, "UPDATE vibe_documents SET published = NULL, published_ver = NULL, published_at = NULL WHERE id = ? AND locale = ?", [id, locale]);
-    await run(this.db, "DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'unpublish'", [id, locale]);
+    await this.orm.update(documents).set({ published: null, published_ver: null, published_at: null })
+      .where(and(eq(documents.id, id), eq(documents.locale, locale)));
+    await this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, "unpublish")));
     this.afterWrite({ type, id, locale, action: "unpublish", valid: false, doc: null });
     return this.getDocument(type, id, locale);
   }
 
   /** Documents whose draft or published copy mentions this ID. */
   async incomingReferences(id: string) {
-    const rows = await all<{ id: string, type: string, locale: string }>(
-      this.db,
-      "SELECT id, type, locale FROM vibe_documents WHERE id != ? AND (draft LIKE ? OR published LIKE ?) LIMIT 20",
-      [id, `%"${id}"%`, `%"${id}"%`]
-    );
-    return rows;
+    const pattern = `%"${id}"%`;
+    return this.orm.select({ id: documents.id, type: documents.type, locale: documents.locale }).from(documents)
+      .where(and(ne(documents.id, id), or(like(documents.draft, pattern), like(documents.published, pattern))))
+      .limit(20);
   }
 
   /** Moves the document (or one translation) to the trash. Its history stays until the trash is purged. */
   async delete(type: string, id: string, options: { force?: boolean, locale?: string } = {}) {
     const session = this.writer({ action: "delete", type });
-    const exists = await first(this.db, "SELECT 1 FROM vibe_documents WHERE id = ? AND type = ?", [id, type]);
+    const exists = (await this.orm.select({ id: documents.id }).from(documents).where(and(eq(documents.id, id), eq(documents.type, type))).limit(1))[0];
     if(!exists) throw new HttpError(404, "Document not found");
     if(options.locale && options.locale !== this.defaultLocale) {
       // Removing one translation only.
       const locale = this.locale(options.locale);
-      const rows = await all<DocumentRow>(this.db, "SELECT * FROM vibe_documents WHERE id = ? AND locale = ?", [id, locale]);
+      const rows = await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.locale, locale)));
       if(!rows.length) throw new HttpError(404, "Translation not found");
       const trash = this.trashStatement({ kind: "document", type, itemId: id, locale, label: this.documentLabel(type, rows), payload: rows, session });
-      await this.db.batch([
+      await this.batch([
         trash.statement,
-        this.db.prepare("DELETE FROM vibe_documents WHERE id = ? AND locale = ?").bind(id, locale),
-        this.db.prepare("DELETE FROM vibe_schedules WHERE id = ? AND locale = ?").bind(id, locale)
+        this.orm.delete(documents).where(and(eq(documents.id, id), eq(documents.locale, locale))),
+        this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale)))
       ]);
       this.afterWrite({ type, id, locale, action: "delete", valid: false, doc: null });
       return { deleted: true, trash: trash.id };
@@ -802,13 +824,13 @@ export class Engine {
     const output: { cancel?: string } = {};
     await this.state.plugins.transform("content.beforeDelete", { type, id, session: session ?? undefined }, output);
     if(output.cancel) throw new HttpError(409, output.cancel);
-    const rows = await all<DocumentRow>(this.db, "SELECT * FROM vibe_documents WHERE id = ?", [id]);
+    const rows = await this.orm.select().from(documents).where(eq(documents.id, id));
     const trash = this.trashStatement({ kind: "document", type, itemId: id, locale: null, label: this.documentLabel(type, rows), payload: rows, session });
     // Pending schedules are dropped: a restored document shouldn't publish itself on an old timetable.
-    await this.db.batch([
+    await this.batch([
       trash.statement,
-      this.db.prepare("DELETE FROM vibe_documents WHERE id = ?").bind(id),
-      this.db.prepare("DELETE FROM vibe_schedules WHERE id = ?").bind(id)
+      this.orm.delete(documents).where(eq(documents.id, id)),
+      this.orm.delete(schedules).where(eq(schedules.id, id))
     ]);
     this.afterWrite({ type, id, locale: "*", action: "delete", valid: false, doc: null });
     return { deleted: true, trash: trash.id };
@@ -830,18 +852,19 @@ export class Engine {
   async versions(type: string, id: string, localeInput?: string) {
     const locale = this.locale(localeInput);
     require(this.config, this.scope.session, { action: "read", type });
-    const rows = await all<Omit<VersionRow, "data">>(
-      this.db,
-      "SELECT id, locale, ver, author, created_at FROM vibe_versions WHERE id = ? AND locale = ? ORDER BY ver DESC LIMIT 200",
-      [id, locale]
-    );
+    const rows = await this.orm
+      .select({ ver: versions.ver, author: versions.author, created_at: versions.created_at })
+      .from(versions)
+      .where(and(eq(versions.id, id), eq(versions.locale, locale)))
+      .orderBy(desc(versions.ver))
+      .limit(200);
     return rows.map(r => ({ ver: r.ver, author: r.author, createdAt: iso(r.created_at) }));
   }
 
   async version(type: string, id: string, localeInput: string | undefined, ver: number) {
     const locale = this.locale(localeInput);
     require(this.config, this.scope.session, { action: "read", type });
-    const row = await first<VersionRow>(this.db, "SELECT * FROM vibe_versions WHERE id = ? AND locale = ? AND ver = ?", [id, locale, ver]);
+    const row: VersionRow | undefined = (await this.orm.select().from(versions).where(and(eq(versions.id, id), eq(versions.locale, locale), eq(versions.ver, ver))).limit(1))[0];
     if(!row) throw new HttpError(404, "Version not found");
     return { ver: row.ver, author: row.author, createdAt: iso(row.created_at), data: JSON.parse(row.data) };
   }
@@ -868,46 +891,54 @@ export class Engine {
       if(issues.length) throw new HttpError(422, "Fix the highlighted fields before scheduling", { issues });
       ver = await this.appendVersion(id, locale, JSON.stringify(doc), session);
     }
-    await run(
-      this.db,
-      `INSERT INTO vibe_schedules (id, locale, ver, action, run_at, created_by) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id, locale, action) DO UPDATE SET ver = excluded.ver, run_at = excluded.run_at, created_by = excluded.created_by`,
-      [id, locale, ver, action, at, session?.sub ?? "system"]
-    );
+    const createdBy = session?.sub ?? "system";
+    await this.orm.insert(schedules)
+      .values({ id, locale, ver, action, run_at: at, created_by: createdBy })
+      .onConflictDoUpdate({ target: [schedules.id, schedules.locale, schedules.action], set: { ver, run_at: at, created_by: createdBy } });
     return this.getDocument(type, id, locale);
   }
 
   async cancelSchedule(type: string, id: string, localeInput: string | undefined, action: "publish" | "unpublish") {
     const locale = this.locale(localeInput);
     this.writer({ action: "publish", type, locale });
-    await run(this.db, "DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = ?", [id, locale, action]);
+    await this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, action)));
     return this.getDocument(type, id, locale);
   }
 
   /** Called from the `scheduled` handler. */
   async runSchedules(now = Date.now()): Promise<number> {
-    const due = await all<ScheduleRow & { type: string }>(
-      this.db,
-      `SELECT s.*, d.type FROM vibe_schedules s JOIN vibe_documents d ON d.id = s.id AND d.locale = s.locale
-       WHERE s.run_at <= ? ORDER BY s.run_at LIMIT 50`,
-      [now]
-    );
+    const due: Array<ScheduleRow & { type: string }> = await this.orm
+      .select({
+        id: schedules.id,
+        locale: schedules.locale,
+        ver: schedules.ver,
+        action: schedules.action,
+        run_at: schedules.run_at,
+        created_by: schedules.created_by,
+        type: documents.type
+      })
+      .from(schedules)
+      .innerJoin(documents, and(eq(documents.id, schedules.id), eq(documents.locale, schedules.locale)))
+      .where(lte(schedules.run_at, now))
+      .orderBy(schedules.run_at)
+      .limit(50);
     for(const item of due) {
       if(item.action === "publish" && item.ver !== null) {
-        await this.db.batch([
-          this.db.prepare(
-            `UPDATE vibe_documents SET published = (SELECT data FROM vibe_versions WHERE id = ? AND locale = ? AND ver = ?),
-             published_ver = ?, published_at = ? WHERE id = ? AND locale = ?`
-          ).bind(item.id, item.locale, item.ver, item.ver, now, item.id, item.locale),
-          this.db.prepare("DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'publish'").bind(item.id, item.locale)
+        await this.batch([
+          this.orm.update(documents).set({
+            published: sql`(SELECT ${versions.data} FROM ${versions} WHERE ${versions.id} = ${item.id} AND ${versions.locale} = ${item.locale} AND ${versions.ver} = ${item.ver})`,
+            published_ver: item.ver,
+            published_at: now
+          }).where(and(eq(documents.id, item.id), eq(documents.locale, item.locale))),
+          this.orm.delete(schedules).where(and(eq(schedules.id, item.id), eq(schedules.locale, item.locale), eq(schedules.action, "publish")))
         ]);
         const row = await this.getRow(item.id, item.locale);
         this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "publish", valid: Boolean(row?.published), doc: row?.published ? JSON.parse(row.published) as DocumentData : null });
       } else if(item.action === "unpublish") {
-        await this.db.batch([
-          this.db.prepare("UPDATE vibe_documents SET published = NULL, published_ver = NULL, published_at = NULL WHERE id = ? AND locale = ?")
-            .bind(item.id, item.locale),
-          this.db.prepare("DELETE FROM vibe_schedules WHERE id = ? AND locale = ? AND action = 'unpublish'").bind(item.id, item.locale)
+        await this.batch([
+          this.orm.update(documents).set({ published: null, published_ver: null, published_at: null })
+            .where(and(eq(documents.id, item.id), eq(documents.locale, item.locale))),
+          this.orm.delete(schedules).where(and(eq(schedules.id, item.id), eq(schedules.locale, item.locale), eq(schedules.action, "unpublish")))
         ]);
         this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "unpublish", valid: false, doc: null });
       }
@@ -963,57 +994,42 @@ export class Engine {
       created_at: Date.now(),
       created_by: session?.sub ?? "system"
     };
-    await run(
-      this.db,
-      "INSERT INTO vibe_assets (id, key, folder, filename, mime, size, meta, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [row.id, row.key, row.folder, row.filename, row.mime, row.size, row.meta, row.created_at, row.created_by]
-    );
+    await this.orm.insert(assets).values(row);
     await this.touchFolder(row.folder);
     return this.toAsset(row);
   }
 
   async listAssets(options: { folder?: string, search?: string, accept?: string[], limit?: number, offset?: number }) {
     require(this.config, this.scope.session, { action: "read", scope: "media" });
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if(options.folder !== undefined) {
-      conditions.push(options.folder === "" ? "folder IS NULL" : "folder = ?");
-      if(options.folder !== "") params.push(options.folder);
-    }
-    if(options.search) {
-      conditions.push("filename LIKE ?");
-      params.push(`%${options.search}%`);
-    }
+    const conditions: SQL[] = [];
+    if(options.folder !== undefined) conditions.push(options.folder === "" ? isNull(assets.folder) : eq(assets.folder, options.folder));
+    if(options.search) conditions.push(like(assets.filename, `%${options.search}%`));
     const accept = (options.accept ?? []).filter(a => a && a !== "*/*" && a !== "*");
-    if(accept.length) {
-      conditions.push(`(${accept.map(() => "mime LIKE ?").join(" OR ")})`);
-      params.push(...accept.map(a => a.replace("*", "%")));
-    }
-    const where = conditions.length ? conditions.join(" AND ") : "1";
-    const rows = await all<AssetRow>(this.db, `SELECT * FROM vibe_assets WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`, [
-      ...params,
-      Math.min(options.limit ?? 60, 200),
-      options.offset ?? 0
-    ]);
-    const total = await first<{ n: number }>(this.db, `SELECT COUNT(*) AS n FROM vibe_assets WHERE ${where}`, params);
-    const folders = await this.listFolders();
-    return { assets: rows.map(r => this.toAsset(r)), total: total?.n ?? 0, folders: folders.map(f => f.path) };
+    if(accept.length) conditions.push(or(...accept.map(a => like(assets.mime, a.replace("*", "%"))))!);
+    const where = conditions.length ? and(...conditions) : undefined;
+    const rows = await this.orm.select().from(assets).where(where)
+      .orderBy(desc(assets.created_at))
+      .limit(Math.min(options.limit ?? 60, 200))
+      .offset(options.offset ?? 0);
+    const total = (await this.orm.select({ n: count() }).from(assets).where(where))[0];
+    const folderList = await this.listFolders();
+    return { assets: rows.map(r => this.toAsset(r)), total: total?.n ?? 0, folders: folderList.map(f => f.path) };
   }
 
   // --- Folders ---------------------------------------------------------------
 
   private async touchFolder(path: string | null) {
-    if(path) await run(this.db, "INSERT OR IGNORE INTO vibe_folders (path, created_at) VALUES (?, ?)", [path, Date.now()]);
+    if(path) await this.orm.insert(folders).values({ path, created_at: Date.now() }).onConflictDoNothing();
   }
 
   /** Every folder: stored ones, ones files are in, and all their parents. */
   async listFolders(): Promise<MediaFolder[]> {
     require(this.config, this.scope.session, { action: "read", scope: "media" });
     const [stored, counts] = await Promise.all([
-      all<{ path: string }>(this.db, "SELECT path FROM vibe_folders"),
-      all<{ folder: string, n: number }>(this.db, "SELECT folder, COUNT(*) AS n FROM vibe_assets WHERE folder IS NOT NULL GROUP BY folder")
+      this.orm.select({ path: folders.path }).from(folders),
+      this.orm.select({ folder: assets.folder, n: count() }).from(assets).where(isNotNull(assets.folder)).groupBy(assets.folder)
     ]);
-    const files = new Map(counts.map(c => [c.folder, c.n]));
+    const files = new Map(counts.map(c => [c.folder!, c.n]));
     const paths = new Set<string>();
     for(const path of [...stored.map(s => s.path), ...files.keys()]) withAncestors(path).forEach(p => paths.add(p));
     return [...paths].sort((a, b) => a.localeCompare(b)).map(path => ({ path, files: files.get(path) ?? 0 }));
@@ -1040,16 +1056,12 @@ export class Engine {
     if(existing.some(f => f.path === to)) throw new HttpError(409, `There's already a folder called "${to}"`);
     // Prefix compare rather than LIKE, so `%` and `_` in names stay literal.
     const prefix = `${from}/`;
-    await run(
-      this.db,
-      "UPDATE vibe_assets SET folder = ? || substr(folder, ?) WHERE folder = ? OR substr(folder, 1, ?) = ?",
-      [to, from.length + 1, from, prefix.length, prefix]
-    );
-    await run(
-      this.db,
-      "UPDATE vibe_folders SET path = ? || substr(path, ?) WHERE path = ? OR substr(path, 1, ?) = ?",
-      [to, from.length + 1, from, prefix.length, prefix]
-    );
+    await this.orm.update(assets)
+      .set({ folder: sql`${to} || substr(${assets.folder}, ${from.length + 1})` })
+      .where(or(eq(assets.folder, from), sql`substr(${assets.folder}, 1, ${prefix.length}) = ${prefix}`));
+    await this.orm.update(folders)
+      .set({ path: sql`${to} || substr(${folders.path}, ${from.length + 1})` })
+      .where(or(eq(folders.path, from), sql`substr(${folders.path}, 1, ${prefix.length}) = ${prefix}`));
     await this.touchFolder(to);
     return { path: to };
   }
@@ -1060,62 +1072,60 @@ export class Engine {
     const path = normalizeFolder(input);
     if(!path) throw new HttpError(400, "Name the folder");
     const prefix = `${path}/`;
-    const used = await first(this.db, "SELECT 1 FROM vibe_assets WHERE folder = ? OR substr(folder, 1, ?) = ? LIMIT 1", [path, prefix.length, prefix]);
+    const used = (await this.orm.select({ id: assets.id }).from(assets)
+      .where(or(eq(assets.folder, path), sql`substr(${assets.folder}, 1, ${prefix.length}) = ${prefix}`)).limit(1))[0];
     if(used) throw new HttpError(409, "This folder still has files in it");
-    await run(this.db, "DELETE FROM vibe_folders WHERE path = ? OR substr(path, 1, ?) = ?", [path, prefix.length, prefix]);
+    await this.orm.delete(folders).where(or(eq(folders.path, path), sql`substr(${folders.path}, 1, ${prefix.length}) = ${prefix}`));
     return { deleted: true };
   }
 
   async getAsset(id: string) {
     require(this.config, this.scope.session, { action: "read", scope: "media" });
-    const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [id]);
+    const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
-    const usage = await all<{ id: string, type: string, locale: string }>(
-      this.db,
-      "SELECT id, type, locale FROM vibe_documents WHERE draft LIKE ? OR published LIKE ? LIMIT 50",
-      [`%"${id}"%`, `%"${id}"%`]
-    );
+    const pattern = `%"${id}"%`;
+    const usage = await this.orm.select({ id: documents.id, type: documents.type, locale: documents.locale }).from(documents)
+      .where(or(like(documents.draft, pattern), like(documents.published, pattern))).limit(50);
     return { ...this.toAsset(row), usage };
   }
 
   async updateAsset(id: string, patch: { folder?: string | null, filename?: string }) {
     this.writer({ action: "write", scope: "media" });
-    const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [id]);
+    const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
     const folder = patch.folder === undefined ? row.folder : normalizeFolder(patch.folder);
     const filename = patch.filename?.trim().replace(/[/\\]/g, "_").slice(0, 200) || row.filename;
     await this.touchFolder(folder);
-    await run(this.db, "UPDATE vibe_assets SET folder = ?, filename = ? WHERE id = ?", [folder, filename, id]);
+    await this.orm.update(assets).set({ folder, filename }).where(eq(assets.id, id));
     return this.toAsset({ ...row, folder, filename });
   }
 
   /** Replaces a text file's content in place; the asset keeps its ID, so documents still point at it. */
   async replaceContent(id: string, content: ArrayBuffer) {
     this.writer({ action: "write", scope: "media" });
-    const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [id]);
+    const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
     if(!textKind(row.filename, row.mime)) throw new HttpError(415, "Only text files can be edited");
     if(content.byteLength > MAX_TEXT_EDIT_BYTES) throw new HttpError(413, "Text files can be edited up to 1 MB");
     await this.storage.put(row.key, content, { httpMetadata: { contentType: row.mime } });
     const meta = JSON.parse(row.meta) as AssetMeta;
     const next = JSON.stringify({ ...meta, version: (typeof meta.version === "number" ? meta.version : 0) + 1, editedAt: new Date().toISOString() });
-    await run(this.db, "UPDATE vibe_assets SET size = ?, meta = ? WHERE id = ?", [content.byteLength, next, id]);
+    await this.orm.update(assets).set({ size: content.byteLength, meta: next }).where(eq(assets.id, id));
     return this.toAsset({ ...row, size: content.byteLength, meta: next });
   }
 
   async deleteAsset(id: string) {
     const session = this.writer({ action: "delete", scope: "media" });
-    const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [id]);
+    const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
-    const used = await first(this.db, "SELECT 1 FROM vibe_documents WHERE draft LIKE ? OR published LIKE ? LIMIT 1", [
-      `%"${id}"%`,
-      `%"${id}"%`
-    ]);
+    const pattern = `%"${id}"%`;
+    const used = (await this.orm.select({ id: documents.id }).from(documents)
+      .where(or(like(documents.draft, pattern), like(documents.published, pattern))).limit(1))[0];
     if(used) throw new HttpError(409, "This file is used by a document");
     if((await this.storedSite()).icon === id) throw new HttpError(409, "This file is the site's icon");
     // The R2 object stays until the trash is purged, so restoring brings back the same URL.
     const trash = this.trashStatement({ kind: "asset", type: null, itemId: id, locale: null, label: row.filename, payload: row, session });
-    await this.db.batch([trash.statement, this.db.prepare("DELETE FROM vibe_assets WHERE id = ?").bind(id)]);
+    await this.batch([trash.statement, this.orm.delete(assets).where(eq(assets.id, id))]);
     return { deleted: true, trash: trash.id };
   }
 
@@ -1135,9 +1145,17 @@ export class Engine {
     session: Session | null
   }) {
     const id = newId("trs");
-    const statement = this.db.prepare(
-      "INSERT INTO vibe_trash (id, kind, type, item_id, locale, label, payload, deleted_at, deleted_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).bind(id, input.kind, input.type, input.itemId, input.locale, input.label, JSON.stringify(input.payload), Date.now(), input.session?.sub ?? "system");
+    const statement = this.orm.insert(trash).values({
+      id,
+      kind: input.kind,
+      type: input.type,
+      item_id: input.itemId,
+      locale: input.locale,
+      label: input.label,
+      payload: JSON.stringify(input.payload),
+      deleted_at: Date.now(),
+      deleted_by: input.session?.sub ?? "system"
+    });
     return { id, statement };
   }
 
@@ -1164,14 +1182,14 @@ export class Engine {
   /** Newest first, only what this session may restore. Types no longer in the config are skipped. */
   async listTrash(): Promise<{ items: TrashItem[], days: number }> {
     if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
-    const rows = await all<TrashRow>(this.db, "SELECT * FROM vibe_trash ORDER BY deleted_at DESC LIMIT 500");
+    const rows = await this.orm.select().from(trash).orderBy(desc(trash.deleted_at)).limit(500);
     const known = (row: TrashRow) => row.kind === "asset" || (row.type !== null && row.type in this.config.schemas);
     return { items: rows.filter(row => known(row) && this.canTrash(row)).map(row => this.toTrashItem(row)), days: this.trashDays };
   }
 
   private async trashRow(id: string): Promise<TrashRow> {
     if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
-    const row = await first<TrashRow>(this.db, "SELECT * FROM vibe_trash WHERE id = ?", [id]);
+    const row: TrashRow | undefined = (await this.orm.select().from(trash).where(eq(trash.id, id)).limit(1))[0];
     if(!row || !this.canTrash(row)) throw new HttpError(404, "Not in the trash");
     return row;
   }
@@ -1213,11 +1231,10 @@ export class Engine {
     const row = await this.trashRow(id);
     if(row.kind === "asset") {
       const asset = JSON.parse(row.payload) as AssetRow;
-      if(await first(this.db, "SELECT 1 FROM vibe_assets WHERE id = ?", [asset.id])) throw new HttpError(409, "That file already exists");
-      await this.db.batch([
-        this.db.prepare("INSERT INTO vibe_assets (id, key, folder, filename, mime, size, meta, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .bind(asset.id, asset.key, asset.folder, asset.filename, asset.mime, asset.size, asset.meta, asset.created_at, asset.created_by),
-        this.db.prepare("DELETE FROM vibe_trash WHERE id = ?").bind(id)
+      if(await this.assetRow(asset.id)) throw new HttpError(409, "That file already exists");
+      await this.batch([
+        this.orm.insert(assets).values(asset),
+        this.orm.delete(trash).where(eq(trash.id, id))
       ]);
       await this.touchFolder(asset.folder);
       return { ...this.toTrashItem(row), restored: true };
@@ -1225,18 +1242,29 @@ export class Engine {
     const type = row.type!;
     getSchema(this.config, type);
     const docs = JSON.parse(row.payload) as DocumentRow[];
-    if(row.locale && !(await first(this.db, "SELECT 1 FROM vibe_documents WHERE id = ?", [row.item_id]))) {
+    if(row.locale && !(await this.orm.select({ id: documents.id }).from(documents).where(eq(documents.id, row.item_id)).limit(1))[0]) {
       throw new HttpError(409, "Restore the document itself first; this is only one of its translations");
     }
-    const taken = await all<{ locale: string }>(this.db, "SELECT locale FROM vibe_documents WHERE id = ?", [row.item_id]);
+    const taken = await this.orm.select({ locale: documents.locale }).from(documents).where(eq(documents.id, row.item_id));
     if(taken.some(t => docs.some(d => d.locale === t.locale))) throw new HttpError(409, "A document with this ID and language exists again");
     // Files it used that were deleted since come back with it, so its references still resolve.
-    const files = await all<TrashRow>(this.db, "SELECT * FROM vibe_trash WHERE kind = 'asset'");
+    const files = await this.orm.select().from(trash).where(eq(trash.kind, "asset"));
     const used = files.filter(file => docs.some(d => d.draft.includes(`"${file.item_id}"`) || d.published?.includes(`"${file.item_id}"`)));
-    const columns = ["id", "type", "locale", "draft", "published", "published_ver", "schema_hash", "created_at", "updated_at", "published_at", "updated_by"] as const;
-    await this.db.batch([
-      ...docs.map(d => this.db.prepare(`INSERT INTO vibe_documents (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`).bind(...columns.map(c => d[c]))),
-      this.db.prepare("DELETE FROM vibe_trash WHERE id = ?").bind(id)
+    await this.batch([
+      ...docs.map(d => this.orm.insert(documents).values({
+        id: d.id,
+        type: d.type,
+        locale: d.locale,
+        draft: d.draft,
+        published: d.published,
+        published_ver: d.published_ver,
+        schema_hash: d.schema_hash,
+        created_at: d.created_at,
+        updated_at: d.updated_at,
+        published_at: d.published_at,
+        updated_by: d.updated_by
+      })),
+      this.orm.delete(trash).where(eq(trash.id, id))
     ]);
     for(const file of used) {
       if(this.canTrash(file)) await this.restoreTrash(file.id).catch(() => {});
@@ -1254,8 +1282,8 @@ export class Engine {
   /** Purges everything this session may see, or (from cron) everything past its retention. */
   async emptyTrash(options: { olderThan?: number } = {}): Promise<{ purged: number }> {
     const rows = options.olderThan === undefined
-      ? await all<TrashRow>(this.db, "SELECT * FROM vibe_trash")
-      : await all<TrashRow>(this.db, "SELECT * FROM vibe_trash WHERE deleted_at < ? LIMIT 200", [options.olderThan]);
+      ? await this.orm.select().from(trash)
+      : await this.orm.select().from(trash).where(sql`${trash.deleted_at} < ${options.olderThan}`).limit(200);
     let purged = 0;
     for(const row of rows) {
       if(!this.canTrash(row)) continue;
@@ -1274,22 +1302,28 @@ export class Engine {
     if(row.kind === "asset") {
       const asset = JSON.parse(row.payload) as AssetRow;
       // Restored and deleted again leaves two trash rows for one object; only the last one out deletes it.
-      const live = await first(this.db, "SELECT 1 FROM vibe_assets WHERE id = ? UNION ALL SELECT 1 FROM vibe_trash WHERE item_id = ? AND id != ?", [asset.id, asset.id, row.id]);
+      const live = await this.assetRow(asset.id)
+        ?? (await this.orm.select({ id: trash.id }).from(trash).where(and(eq(trash.item_id, asset.id), ne(trash.id, row.id))).limit(1))[0];
       if(!live && this.state.storage) await this.state.storage.delete(asset.key);
-      await run(this.db, "DELETE FROM vibe_trash WHERE id = ?", [row.id]);
+      await this.orm.delete(trash).where(eq(trash.id, row.id));
       return;
     }
     const docs = JSON.parse(row.payload) as DocumentRow[];
-    const statements = [this.db.prepare("DELETE FROM vibe_trash WHERE id = ?").bind(row.id)];
+    const statements: Array<BatchItem<"sqlite">> = [this.orm.delete(trash).where(eq(trash.id, row.id))];
     for(const { locale } of docs) {
       // History goes only when nothing else still needs it: no live row and no other trash entry for that language.
-      statements.push(this.db.prepare(
-        `DELETE FROM vibe_versions WHERE id = ? AND locale = ?
-         AND NOT EXISTS (SELECT 1 FROM vibe_documents WHERE id = ? AND locale = ?)
-         AND NOT EXISTS (SELECT 1 FROM vibe_trash WHERE item_id = ? AND id != ? AND payload LIKE ?)`
-      ).bind(row.item_id, locale, row.item_id, locale, row.item_id, row.id, `%"locale":"${locale}"%`));
+      statements.push(this.orm.delete(versions).where(and(
+        eq(versions.id, row.item_id),
+        eq(versions.locale, locale),
+        notExists(this.orm.select({ one: sql`1` }).from(documents).where(and(eq(documents.id, row.item_id), eq(documents.locale, locale)))),
+        notExists(this.orm.select({ one: sql`1` }).from(trash).where(and(
+          eq(trash.item_id, row.item_id),
+          ne(trash.id, row.id),
+          like(trash.payload, `%"locale":"${locale}"%`)
+        )))
+      )));
     }
-    await this.db.batch(statements);
+    await this.batch(statements);
   }
 
   // --- Site settings ------------------------------------------------------------
@@ -1323,7 +1357,7 @@ export class Engine {
     if(!pending) {
       pending = detectFavicon(origin, siteFetch).then(async favicon => {
         const next: DetectedSite = { host, favicon, checked: Date.now() };
-        await run(this.db, "INSERT INTO vibe_meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [DETECTED_KEY, JSON.stringify(next)]);
+        await this.putMeta(DETECTED_KEY, JSON.stringify(next));
         return next;
       }).catch(() => stored).finally(() => detecting.delete(this.db));
       detecting.set(this.db, pending);
@@ -1336,7 +1370,7 @@ export class Engine {
   /** Public: the panel shows sites by these before anyone signs in. */
   async site(): Promise<SiteSettings> {
     const [stored, detected] = await Promise.all([this.storedSite(), this.detect()]);
-    const row = stored.icon ? await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [stored.icon]) : null;
+    const row = stored.icon ? await this.assetRow(stored.icon) : null;
     const favicon = detected?.favicon ?? null;
     return {
       id: this.state.siteId,
@@ -1364,23 +1398,20 @@ export class Engine {
       if(patch.icon === null) {
         delete next.icon;
       } else {
-        const row = await first<AssetRow>(this.db, "SELECT * FROM vibe_assets WHERE id = ?", [patch.icon]);
+        const row = await this.assetRow(patch.icon);
         if(!row) throw new HttpError(400, "Icon asset not found");
         if(!row.mime.startsWith("image/")) throw new HttpError(400, "The icon has to be an image");
         next.icon = row.id;
       }
     }
-    await run(this.db, "INSERT INTO vibe_meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [
-      SITE_KEY,
-      JSON.stringify(next)
-    ]);
+    await this.putMeta(SITE_KEY, JSON.stringify(next));
     return this.site();
   }
 
   async serveAsset(file: string, request: Request): Promise<Response> {
     const id = file.replace(/\.[a-z0-9]+$/i, "");
     // Trashed files keep their bytes in R2 but aren't served.
-    if(!(await first(this.db, "SELECT 1 FROM vibe_assets WHERE id = ?", [id]))) return new Response("Not found", { status: 404 });
+    if(!(await this.assetRow(id))) return new Response("Not found", { status: 404 });
     const object = await this.storage.get(`assets/${id}`);
     if(!object) return new Response("Not found", { status: 404 });
     const headers = new Headers({

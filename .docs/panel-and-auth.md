@@ -230,6 +230,8 @@ PANEL_ICON=https://…/logo.png    #   and logo
 
 When you first log in, there are no sites. Sites are added by URL, and the list is **shared by everyone using that panel**: one panel deployment is effectively one agency. Each user can favorite sites on top of that.
 
+Sketch of the tables; the real definitions are Drizzle tables in `apps/panel/src/server/schema.ts` (see `storage.md`).
+
 ```sql
 CREATE TABLE sites (
   id         TEXT PRIMARY KEY,      -- from the site's descriptor

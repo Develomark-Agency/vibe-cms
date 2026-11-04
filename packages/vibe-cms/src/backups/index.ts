@@ -288,11 +288,11 @@ export async function restoreSnapshot(options: RunOptions & { path: string, forc
     if(answer.status === "present") {
       present++;
     } else {
-      const source = async () => {
+      async function source() {
         const stored = await options.store.readFile(file.object);
         if(!stored) throw new BackupError(`The snapshot's copy of ${file.key} is missing from the store (${file.object})`);
         return stored;
-      };
+      }
       if(answer.upload) {
         await transfer(options, `Uploading ${file.key}`, async () => {
           const { body } = await source();

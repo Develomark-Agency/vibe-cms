@@ -4,7 +4,7 @@ Content is stored as **JSON documents in D1**. Media lives in **R2**. We take th
 
 ## Documents
 
-Rough shape of the core tables:
+Rough shape of the core tables. The real definitions are Drizzle tables in `packages/vibe-cms/src/db/schema.ts` (names are prefixed `vibe_`; see [Schema and migrations](#schema-and-migrations)):
 
 ```sql
 CREATE TABLE documents (
@@ -54,7 +54,28 @@ CREATE INDEX idx_post_slug
   WHERE type = 'post';
 ```
 
-These indexes are created by the engine's migrations at runtime, not generated into your repo.
+These indexes depend on each site's config, so they're not part of the generated migrations. The engine creates them (`CREATE INDEX IF NOT EXISTS`) at runtime, as it does the full-text table `vibe_search` and its triggers. They are not generated into your repo.
+
+## Schema and migrations
+
+The tables are defined once, in TypeScript, with [Drizzle](https://orm.drizzle.team):
+
+- `packages/vibe-cms/src/db/schema.ts`: the engine's tables. Row types (`DocumentRow` and so on) are inferred from it, and queries are checked against it, so renaming or dropping a column is a compile error at every query that uses it.
+- `packages/vibe-cms/src/oauth/schema.ts`: `oauthTables(prefix)`, the OAuth server's tables. A site uses `vibe_`, the hub uses no prefix. Each database re-exports them as top-level consts (drizzle-kit only sees top-level exports).
+- `apps/panel/src/server/schema.ts`: the panel's own tables.
+- `createDb(d1)` (`src/db/client.ts`) wraps a D1 binding in Drizzle. `db.batch([...])` is one atomic D1 batch. D1 has no interactive transactions.
+
+**Changing a table:**
+
+1. Edit the schema file.
+2. Run `bun run db:generate` in `packages/vibe-cms` (or `apps/panel`). drizzle-kit writes a numbered `.sql` file and its snapshot under `migrations/`, and `scripts/db-generate.ts` bundles the SQL into `migrations/index.ts`. Workers have no filesystem, so the bundle is what ships.
+3. Commit all of it: the schema, the `.sql`, `meta/` and `index.ts`.
+
+At runtime, `runMigrations` (`src/db/migrate.ts`) applies the migrations that haven't run, in order, each as one atomic batch, and records its tag in `vibe_migrations` (the panel: `panel_migrations`). It runs on the first request each isolate handles.
+
+Generated statements are rewritten to `CREATE … IF NOT EXISTS`. A database made before migrations existed has every table already, so the first migration is a no-op there and just gets recorded. Don't edit an applied migration; add a new one.
+
+Not covered by Drizzle, and left as SQL: the query-API compiler, FTS5 queries, the expression indexes and search triggers, and the restore's staging tables.
 
 ## v1 features
 
@@ -142,4 +163,3 @@ CREATE TABLE trash (
 ## Open questions
 
 - **Schema changes on existing content.** `schema_hash` records which schema a document was written under, but the migration story (lazy, versioned migration functions in the config?) is not designed yet.
-- **When engine migrations run** (first request, explicit admin action, or a CLI step).

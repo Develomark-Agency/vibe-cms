@@ -43,15 +43,15 @@ const hours = Array.from({ length: 24 }, (_, hour) => {
 
 /** When and how many: shared by the panel's defaults and a site's own policy. */
 function PolicyFields({ policy, onChange, disabled }: { policy: BackupPolicy, onChange(next: BackupPolicy): void, disabled?: boolean }) {
-  const keep = (key: "keepDaily" | "keepWeekly" | "keepMonthly", label: string) => (
-    <label className="grid gap-1 text-xs text-muted-foreground">
+  function keep(key: "keepDaily" | "keepWeekly" | "keepMonthly", label: string) {
+    return <label className="grid gap-1 text-xs text-muted-foreground">
       {label}
       <Input
         type="number" min={0} max={1000} value={policy[key]} disabled={disabled || !policy.enabled}
         onChange={e => onChange({ ...policy, [key]: Math.max(0, Math.min(1000, Number(e.target.value) || 0)) })}
       />
-    </label>
-  );
+    </label>;
+  }
   return (
     <div className="grid gap-3">
       <label className="flex items-center justify-between gap-3 text-sm">
@@ -128,7 +128,9 @@ export function BackupsDialog({ backups, site, open, onOpenChange }: { backups: 
   const [confirm, setConfirm] = useState<BackupSnapshot | null>(null);
   const [draft, setDraft] = useState<BackupPolicy | null>(null);
   useEffect(() => setDraft(null), [site?.id, open]);
-  const refresh = () => queryClient.invalidateQueries({ queryKey: key });
+  function refresh() {
+    return queryClient.invalidateQueries({ queryKey: key });
+  }
 
   const backUp = useMutation({ mutationFn: () => backups.backUp(site!.id), onSuccess: refresh, onError: (error: Error) => toast.error(error.message) });
   const restore = useMutation({

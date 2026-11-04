@@ -13,6 +13,7 @@ export function createD1(): D1 & { sqlite: Database } {
     return {
       bind: (...next: unknown[]) => statement(sql, next),
       all: async () => ({ results: sqlite.query(sql).all(...values()) }),
+      raw: async () => sqlite.query(sql).values(...values()) as unknown[][],
       first: async () => sqlite.query(sql).get(...values()) ?? null,
       run: async () => sqlite.query(sql).run(...values()),
       exec: () => ({ results: sqlite.query(sql).all(...values()) })

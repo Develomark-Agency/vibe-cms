@@ -131,7 +131,9 @@ describe("snapshots", () => {
     await fill(a);
     const { call } = await connect(a);
     await takeSnapshot({ call, store, fetch: network });
-    const downloads = () => requests.filter(r => r.startsWith("GET") && r.includes("/api/backups/files/")).length;
+    function downloads() {
+      return requests.filter(r => r.startsWith("GET") && r.includes("/api/backups/files/")).length;
+    }
     expect(downloads()).toBe(2);
     await new Promise(resolve => setTimeout(resolve, 5));
     await takeSnapshot({ call, store, fetch: network });

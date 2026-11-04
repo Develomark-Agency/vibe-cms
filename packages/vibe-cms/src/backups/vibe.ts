@@ -32,7 +32,9 @@ function header(name: string, size: number): Uint8Array {
     base = name.slice(cut + 1);
   }
   const block = new Uint8Array(BLOCK);
-  const put = (text: string, offset: number) => block.set(encoder.encode(text), offset);
+  function put(text: string, offset: number) {
+    return block.set(encoder.encode(text), offset);
+  }
   put(base, 0);
   put(octal(0o644, 8), 100);
   put(octal(0, 8), 108);
@@ -174,12 +176,12 @@ async function* unpack(stream: ReadableStream<Uint8Array>): AsyncGenerator<{ nam
 export async function packSnapshot(store: BackupStore, path: string): Promise<ReadableStream<Uint8Array>> {
   await readSnapshot(store, path);
   async function* entries(): AsyncGenerator<Entry> {
-    const small = async (name: string, from: string) => {
+    async function small(name: string, from: string) {
       const value = await store.readText(from);
       if(value === null) throw new BackupError(`The snapshot is missing ${from}`);
       const body = encoder.encode(value);
       return { name, size: body.byteLength, body };
-    };
+    }
     yield await small("manifest.json", `${path}/manifest.json`);
     yield await small("complete.json", `${path}/complete.json`);
     for(const table of BACKUP_TABLE_NAMES) yield await small(`tables/${table}.jsonl`, `${path}/tables/${table}.jsonl`);

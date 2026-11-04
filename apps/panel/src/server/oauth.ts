@@ -3,7 +3,9 @@ import { normalizeBranding } from "vibe-cms/panel";
 import { OAuthServer, type GrantRow } from "vibe-cms/oauth";
 import type { Tokens } from "./oidc.ts";
 import { randomString } from "./oidc.ts";
-import { beginLogin, currentSession, LOGIN_COOKIE, setCookie, type Env } from "./shared.ts";
+import { eq } from "drizzle-orm";
+import * as t from "./schema.ts";
+import { beginLogin, currentSession, db, LOGIN_COOKIE, setCookie, type Env } from "./shared.ts";
 
 export { codePage, corsPreflight, SCOPE_READ, SCOPE_WRITE, type GrantRow } from "vibe-cms/oauth";
 
@@ -28,16 +30,16 @@ export function oauth(env: Env): OAuthServer {
   let found = servers.get(env.DB);
   if(!found) {
     found = new OAuthServer({
-      db: env.DB,
-      tables: "",
+      db: db(env),
+      tables: { clients: t.oauthClients, requests: t.oauthRequests, codes: t.oauthCodes, grants: t.oauthGrants },
       tokens: "vp",
       issuer: url => url.origin,
       resource: resourceUrl,
       resourceMetadata: url => `${url.origin}/.well-known/oauth-protected-resource`,
       // A connection's own provider session, and the site sessions held for it.
       onRemove: grant => [
-        env.DB.prepare("DELETE FROM agent_site_tokens WHERE grant_id = ?").bind(grant.id),
-        env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(grant.payload)
+        db(env).delete(t.agentSiteTokens).where(eq(t.agentSiteTokens.grant_id, grant.id)),
+        db(env).delete(t.sessions).where(eq(t.sessions.id, grant.payload))
       ]
     });
     servers.set(env.DB, found);
@@ -155,15 +157,15 @@ export async function completeAuthorization(env: Env, url: URL, requestId: strin
   let sessionId = "";
   if(pending.request.user === user) {
     sessionId = randomString();
-    await env.DB.prepare("INSERT INTO sessions (id, sub, email, name, id_token, refresh_token, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
-      sessionId,
-      user,
-      typeof claims.email === "string" ? claims.email : null,
-      typeof claims.name === "string" ? claims.name : null,
-      tokens.id_token,
-      tokens.refresh_token ?? null,
-      Date.now() + AGENT_SESSION_TTL
-    ).run();
+    await db(env).insert(t.sessions).values({
+      id: sessionId,
+      sub: user,
+      email: typeof claims.email === "string" ? claims.email : null,
+      name: typeof claims.name === "string" ? claims.name : null,
+      id_token: tokens.id_token,
+      refresh_token: tokens.refresh_token ?? null,
+      expires_at: Date.now() + AGENT_SESSION_TTL
+    });
   }
   const redirect = await oauth(env).approve(url, requestId, { user, payload: sessionId });
   if(!redirect) return withCookie(page(env, "Expired", "<h1>This request expired</h1><p>Start connecting the agent again.</p>", 400), clearLogin);

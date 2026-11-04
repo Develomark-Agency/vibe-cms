@@ -19,6 +19,7 @@
     "./preview": "./src/preview/index.ts",
     "./actions": "./src/actions/index.ts",
     "./backups": "./src/backups/index.ts",
+    "./db": "./src/db/index.ts",
     "./react": "./src/react/index.ts",
     "./admin": "./src/admin/index.ts",
     "./admin/react": "./src/admin/react.tsx",
@@ -31,7 +32,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "devices": "bun scripts/devices.ts"
+    "devices": "bun scripts/devices.ts",
+    "db:generate": "bun scripts/db-generate.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -63,6 +65,7 @@
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
     "date-fns": "^4.4.0",
+    "drizzle-orm": "^0.45.4",
     "es-module-lexer": "^3.0.4",
     "fuse.js": "^7.5.0",
     "jose": "^6.2.14",
