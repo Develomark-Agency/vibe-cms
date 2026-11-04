@@ -1,6 +1,7 @@
-import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTPayload } from "jose";
+import { jwtVerify, SignJWT } from "jose";
 import { HttpError, type Action, type AnyConfig, type RoleRules } from "../config.ts";
 import type { Session } from "../server/index.ts";
+import type { EngineState } from "./engine.ts";
 import { first, getOrCreateMeta, randomToken, run } from "./db.ts";
 import type { D1 } from "./platform.ts";
 
@@ -59,49 +60,37 @@ export async function verifySession(db: D1, token: string, siteId: string): Prom
 
 // --- Hub tokens -----------------------------------------------------------
 
-const hubKeys = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
-
 /** The claims a hub token carries besides identity; everything else is the provider's, passed through. */
 const RESERVED = new Set(["iss", "aud", "exp", "iat", "nbf", "jti", "scope"]);
 
 /**
- * A token the hub in `auth` signed for this site: a user, whose roles the site works out
- * here, or with `scope: "backups"` the hub itself, which may only run backup actions and
+ * A token the hub of the site's org (`VIBE_ORG`) signed for this site: a user, whose roles the site
+ * works out here, or with `scope: "backups"` the hub itself, which may only run backup actions and
  * only when the config sets `backups: true`. Null when it isn't one.
  */
-export async function sessionFromHubToken(config: AnyConfig, token: string, siteId: string): Promise<Session | null> {
-  const auth = config.auth;
-  if(!auth) return null;
-  let jwks = hubKeys.get(auth.url);
-  if(!jwks) {
-    jwks = createRemoteJWKSet(new URL(`${auth.url}/.well-known/jwks.json`));
-    hubKeys.set(auth.url, jwks);
-  }
-  let payload: JWTPayload;
-  try {
-    ({ payload } = await jwtVerify(token, jwks, { issuer: auth.url, audience: siteId, algorithms: ["ES256"] }));
-  } catch {
-    return null;
-  }
+export async function sessionFromHubToken(state: Pick<EngineState, "config" | "org" | "siteId">, token: string): Promise<Session | null> {
+  const payload = await state.org.verify(token, state.siteId);
+  if(!payload) return null;
   if(payload.scope === "backups") {
-    if(config.backups !== true) return null;
-    return { sub: `hub|${auth.url}`, name: "Backups", roles: [], grants: ["backups"] };
+    if(state.config.backups !== true) return null;
+    return { sub: `hub|${payload.iss}`, name: "Backups", roles: [], grants: ["backups"] };
   }
+  if(payload.scope !== undefined) return null;
   if(typeof payload.sub !== "string" || !payload.sub) return null;
   const claims = Object.fromEntries(Object.entries(payload).filter(([key]) => !RESERVED.has(key)));
-  return identitySession(config, payload.sub, claims);
+  return identitySession(state.config, payload.sub, claims);
 }
 
-/** Maps a provider identity (`<issuer>|<sub>`) and its claims to this site's roles. */
+/**
+ * Maps a provider identity (`<issuer>|<sub>`) and its claims to this site's roles: the `roles` claim
+ * (the hub fills it from the identity provider claim in its `OIDC_ROLES_CLAIM`) and `permissions.users`.
+ */
 function identitySession(config: AnyConfig, sub: string, claims: Record<string, unknown>): Session {
   const email = typeof claims.email === "string" ? claims.email : undefined;
   const verifiedEmail = email && claims.email_verified === true ? email.toLowerCase() : undefined;
   const roles = new Set<string>();
-  const claimName = config.auth?.roles;
-  if(claimName) {
-    const claim = claims[claimName];
-    for(const role of Array.isArray(claim) ? claim : typeof claim === "string" ? [claim] : []) roles.add(String(role));
-  }
+  const claim = claims.roles;
+  for(const role of Array.isArray(claim) ? claim : typeof claim === "string" ? [claim] : []) roles.add(String(role));
   const users = config.permissions?.users ?? {};
   for(const key of [sub, verifiedEmail]) {
     for(const role of (key && users[key]) || []) roles.add(role);

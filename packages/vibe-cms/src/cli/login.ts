@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { styleText } from "node:util";
 import { command, positional, string } from "cmd-ts";
+import { normalizeOrg, resolveHub } from "../org/index.ts";
 
 /**
  * `vibe-cms login <hub>` and `vibe-cms logout`: the CLI as an OAuth client of the agency hub,
@@ -16,6 +17,8 @@ const CONFIG_FILES = ["vibe-cms.config.ts", "vibe-cms.config.mts", "vibe-cms.con
 
 interface Login {
   hub: string,
+  /** The org logged in to, when given as a domain: its hub is looked up again on each use, so it can move. */
+  org?: string,
   clientId: string,
   accessToken: string,
   refreshToken: string,
@@ -51,7 +54,11 @@ function secrets() {
 
 async function readLogin(root: string): Promise<Login | null> {
   const stored = await secrets().get({ service: SERVICE, name: root });
-  return stored ? JSON.parse(stored) as Login : null;
+  if(!stored) return null;
+  const login = JSON.parse(stored) as Login;
+  // The org's DNS record says where its hub is now; the stored address is the fallback.
+  if(login.org) login.hub = await resolveHub(login.org).catch(() => login.hub);
+  return login;
 }
 
 function saveLogin(root: string, login: Login): Promise<void> {
@@ -185,15 +192,19 @@ export const loginCommand = command({
   name: "login",
   description: "Log in to your agency's hub (panel), for this project",
   args: {
-    hub: positional({ type: string, displayName: "hub", description: "The hub's URL, e.g. https://edit.my-agency.com" })
+    org: positional({ type: string, displayName: "org", description: "Your org's domain (its VIBE_ORG), e.g. my-agency.com, or the hub's URL" })
   },
-  examples: [{ description: "Log in, then work on any site in the hub", command: "vibe-cms login https://edit.my-agency.com" }],
-  async handler({ hub }) {
-    if(!URL.canParse(hub)) throw new Error(`Expected a URL like https://edit.my-agency.com, got "${hub}"`);
-    const origin = new URL(hub).origin;
+  examples: [
+    { description: "Log in, then work on any site in the org", command: "vibe-cms login my-agency.com" },
+    { description: "Log in to a hub by its address", command: "vibe-cms login https://edit.my-agency.com" }
+  ],
+  async handler({ org: value }) {
+    const org = normalizeOrg(value);
+    if(!org) throw new Error(`Expected a domain like my-agency.com or a URL, got "${value}"`);
+    const origin = await resolveHub(org);
     const root = projectRoot();
     secrets();
-    const login = await authorize(origin, await metadata(origin), root);
+    const login = { ...await authorize(origin, await metadata(origin), root), ...(org === origin ? {} : { org }) };
     await saveLogin(root, login);
     console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged in")} to ${styleText("cyan", origin)} for ${styleText("dim", root)}\n`);
   }

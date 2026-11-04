@@ -8,14 +8,14 @@ A snapshot, in the panel or in a `.vibe` file, holds everything editors can chan
 
 An agency panel (`apps/panel` in the vibe-cms repository) can back up every site in it on a schedule, keep the snapshots in its own R2 bucket, and restore them from the site's Backups dialog.
 
-1. Let the panel in. The site already trusts it with `auth: hub({ url })`; in the site's config, also add:
+1. Let the panel in. The site already trusts it through `VIBE_ORG`; in the site's config, also add:
 
    ```ts
    backups: true
    ```
 
    The site then accepts short-lived backup tokens its hub signs for this site, and only for backup actions. They can't read or edit content through any other action, change settings, or sign anyone in.
-2. Give the panel an archive: an R2 bucket bound as `BACKUPS`, `PANEL_URL` set to its address, and the cron trigger. The panel's `wrangler.jsonc` has all three.
+2. Give the panel an archive: an R2 bucket bound as `BACKUPS`, `VIBE_ORG` set to its org, and the cron trigger. The panel's `wrangler.jsonc` has all three.
 3. Set the schedule under the account menu's **Backup schedule**: the hour (UTC), and how many daily, weekly and monthly snapshots to keep. The defaults are 14 daily, 8 weekly and 12 monthly. Any site can have its own schedule in its Backups dialog.
 
 Runs are a queue in the panel's D1. While a run works, it renews a two-minute lease. If the Worker stops mid-run, the cron trigger (every five minutes) takes the run over once the lease lapses, and the runner picks up where it was. Failures are retried with growing delays, five attempts in all. A site that refuses the panel fails at once, and the dialog says what to add to its config. Each site has at most one run at a time.

@@ -18,8 +18,17 @@ export interface Env {
   PANEL_ICON?: string,
   /** The archive for scheduled backups. Without it, the panel doesn't back sites up. */
   BACKUPS?: R2Bucket,
-  /** The panel's public address, which sites name in `auth: hub({ url })`. Learned from requests when unset. */
-  PANEL_URL?: string
+  /** The panel's public address, for links and OAuth. Learned from requests when unset. */
+  PANEL_URL?: string,
+  /**
+   * The org this hub signs for: a domain you own, like `my-org.com`, whose `_vibe-hub` TXT record holds
+   * this hub's address. Sites trust the same value in their own `VIBE_ORG`.
+   */
+  VIBE_ORG?: string,
+  /** Secret: the hub's private ES256 signing key as JWK JSON, from `bunx vibe-cms hub keygen`. */
+  HUB_SIGNING_KEY?: string,
+  /** Identity provider claim whose values sites receive as `roles`, e.g. `groups`. */
+  OIDC_ROLES_CLAIM?: string
 }
 
 export interface SessionRow {
@@ -42,6 +51,7 @@ export const schema = [
     url TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     admin TEXT NOT NULL,
+    org TEXT,
     added_by TEXT NOT NULL,
     added_at INTEGER NOT NULL
   )`,
@@ -130,6 +140,10 @@ const migrated = new WeakSet<D1Database>();
 export async function migrate(db: D1Database) {
   if(migrated.has(db)) return;
   await db.batch([...schema, ...backupSchema].map(sql => db.prepare(sql)));
+  // Panels made before sites recorded their org.
+  await db.prepare("ALTER TABLE sites ADD COLUMN org TEXT").run().catch(() => {});
+  // The signing key is a Worker secret now; one left in the database is only a liability.
+  await db.prepare("DELETE FROM panel_meta WHERE key = 'signing_key'").run();
   migrated.add(db);
 }
 

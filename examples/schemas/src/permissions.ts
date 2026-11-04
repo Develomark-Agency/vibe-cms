@@ -1,14 +1,10 @@
 import { defineConfig } from "vibe-cms";
-import { hub } from "vibe-cms/auth";
 import v from "vibe-cms/schema";
 
+// Editors, the CLI and agents sign in through the org's hub (panel): deploy the site with
+// VIBE_ORG=my-agency.com. Sign-in is the org's choice, so nothing about it lives in this file.
+// Development sites don't need it.
 export default defineConfig({
-  // Editors, the CLI and agents sign in through the agency's hub (panel). Development sites don't need it.
-  auth: hub({
-    url: "https://edit.my-agency.com",
-    // Optional: read roles from this identity provider claim as well; the hub passes it through.
-    roles: "groups"
-  }),
   permissions: {
     roles: {
       admin: { all: true },
@@ -22,7 +18,8 @@ export default defineConfig({
       // Writes posts but can't publish them.
       contributor: { post: ["read", "write"], media: ["read", "write"], publish: false }
     },
-    // Roles by verified email (or `<issuer>|<sub>`), on top of any from the `roles` claim.
+    // Roles by verified email (or `<issuer>|<sub>`), on top of any the hub passes on from the
+    // identity provider (its OIDC_ROLES_CLAIM, e.g. "groups").
     users: {
       "ada@agency.example": ["admin"],
       "sam@client.example": ["editor"]

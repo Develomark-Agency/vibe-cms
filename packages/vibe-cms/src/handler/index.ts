@@ -6,6 +6,7 @@ import { can, verifySession } from "./auth.ts";
 import { getOrCreateMeta, migrate, newId, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
+import { SiteOrg, type OrgEnv } from "./org.ts";
 import { PluginHost } from "./plugins.ts";
 import { decoratePreview, PICK_HEADER, PREVIEW_COOKIE, PREVIEW_TTL, previewCookie, previewScope, recordSources, wantsPreview, type PreviewScope } from "./preview.ts";
 
@@ -154,6 +155,7 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       schemaHash: await schemaHash,
       prefix,
       siteId: await getOrCreateMeta(bindings.db, "site_id", () => newId("site")),
+      org: await SiteOrg.load(bindings.db, (env ?? {}) as OrgEnv),
       siteFetch: (request: Request) => fetchSite(request, env)
     };
     const plugins = await PluginHost.load((config.plugins ?? []) as PluginDescriptor[], plugin => ({

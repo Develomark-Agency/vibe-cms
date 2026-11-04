@@ -7,6 +7,7 @@ import pkg from "../../package.json" with { type: "json" };
 import { actionCommands } from "./actions.ts";
 import { exportCommand, importCommand } from "./backups.ts";
 import { docs } from "./docs.ts";
+import { hubCommand } from "./hub.ts";
 import { loginCommand, logoutCommand } from "./login.ts";
 
 const Port = extendType(number, {
@@ -103,5 +104,5 @@ await run(subcommands({
   name: "vibe-cms",
   version: pkg.version,
   description: "Guides, a local panel, build tools, and every CMS action against a running site",
-  cmds: { docs, admin, "build-admin": buildAdminCommand, login: loginCommand, logout: logoutCommand, export: exportCommand, import: importCommand, ...actionCommands() }
+  cmds: { docs, admin, "build-admin": buildAdminCommand, hub: hubCommand, login: loginCommand, logout: logoutCommand, export: exportCommand, import: importCommand, ...actionCommands() }
 }), process.argv.slice(2));

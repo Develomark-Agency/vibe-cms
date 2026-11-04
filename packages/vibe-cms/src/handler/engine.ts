@@ -1,4 +1,5 @@
 import { getSchema, HttpError, type AnyConfig } from "../config.ts";
+import type { SiteOrg } from "./org.ts";
 import type { SerializedQuery, QueryArgs, WithOptions, DocumentMeta, Order, Condition } from "../query/index.ts";
 import { parseSize } from "../schema/builders.ts";
 import type {
@@ -43,6 +44,8 @@ export interface EngineState {
   prefix: string,
   /** Random, made on first boot and kept in the database: the site's identity to panels and in session tokens. */
   siteId: string,
+  /** The org whose hub the site trusts (`VIBE_ORG`), and moves to another. */
+  org: SiteOrg,
   /** The site's own pages, for finding its favicon. */
   siteFetch?: SiteFetch
 }

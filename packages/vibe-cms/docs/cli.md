@@ -46,12 +46,14 @@ Output is the action's result as JSON on stdout, so it pipes into `jq`. Failures
 
 ## Signing in
 
-Against a development site, the CLI asks for a developer session by itself. For deployed sites, log in to the agency's hub once per project:
+Against a development site, the CLI asks for a developer session by itself. For deployed sites, log in to your org's hub once per project, by the org's domain (its `VIBE_ORG`):
 
 ```sh
-bunx vibe-cms login https://edit.my-agency.com
+bunx vibe-cms login my-agency.com
 bunx vibe-cms documents list --type post --site https://ctmoving.com
 bunx vibe-cms logout
 ```
 
-`login` opens the hub in a browser, and keeps the login in the OS keychain (it needs Bun), tied to the nearest folder with a `vibe-cms.config.*`. Every command then gets a session from the hub for the site it runs against, as you, so the site decides what you may do. The site has to be in the hub. `logout` revokes the login at the hub and forgets it. A site session token in `--token` or `VIBE_TOKEN` skips all of this, for CI. For agents working on deployed sites, use the hub's MCP server instead (`vibe-cms docs agents`).
+`login` finds the hub through the org's DNS record (or takes the hub's URL directly), opens it in a browser, and keeps the login in the OS keychain (it needs Bun), tied to the nearest folder with a `vibe-cms.config.*`. Every command then gets a session from the hub for the site it runs against, as you, so the site decides what you may do. The site has to be in the hub. `logout` revokes the login at the hub and forgets it. A login by org looks the hub up again each time, so it keeps working if the hub moves. A site session token in `--token` or `VIBE_TOKEN` skips all of this, for CI.
+
+Running a hub: `bunx vibe-cms hub keygen` prints a new signing key for its `HUB_SIGNING_KEY` secret (`bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY`). For agents working on deployed sites, use the hub's MCP server instead (`vibe-cms docs agents`).

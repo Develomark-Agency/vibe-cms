@@ -13,7 +13,7 @@ import { createD1, createR2, ctx, png } from "./helpers.ts";
 const { post, author } = config.schemas;
 
 function setup() {
-  const env = { DB: createD1(), MEDIA: createR2() };
+  const env = { DB: createD1(), MEDIA: createR2(), VIBE_ORG: "https://hub.test" };
   const vibe = createHandler(config, {
     dev: true,
     bindings: (e: typeof env) => ({ db: e.DB, storage: e.MEDIA })
@@ -408,7 +408,9 @@ describe("auth", () => {
       name: "site.test",
       accent: null,
       icon: null,
+      org: "https://hub.test",
       hub: "https://hub.test",
+      orgMove: null,
       backups: false,
       admin: "https://site.test/_vibe/admin"
     });

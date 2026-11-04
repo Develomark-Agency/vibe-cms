@@ -36,40 +36,41 @@ The panel never loads a site's code into its own page. It shows the site's edito
 
 Because each site brings its own editor, sites on different vibe-cms versions never have to agree with each other or with the panel. The only shared contract is the small message protocol below.
 
-## Sites trust the hub
+## Sites trust the org
 
-The panel is the **hub**: the one thing a deployed site trusts. A site's config names the hub by its address. The site fetches the hub's public keys from `<hub>/.well-known/jwks.json` at runtime; nothing is stored at deploy time, and the site has no secret to configure.
+The panel is the **hub** of an **org**: a domain the agency owns, like `my-agency.com`. A deployed site trusts the org, not the hub's address. Sign-in is the same for every site in an org, so it's deploy configuration, not code: the site gets one environment variable, and its config says nothing about sign-in.
 
-```ts
-// vibe-cms.config.ts (site)
-import { defineConfig } from "vibe-cms";
-import { hub } from "vibe-cms/auth";
-
-export default defineConfig({
-  auth: hub({
-    url: "https://edit.my-agency.com", // the hub's address; the expected `iss`
-    roles: "groups",                   // optional: identity provider claim to read roles from
-  }),
-  schemas: { /* … */ },
-});
+```jsonc
+// the site's wrangler.jsonc
+"vars": { "VIBE_ORG": "my-agency.com" }
 ```
 
-Every site trusts **exactly one** hub. Only the hub talks to the identity provider, so changing providers is a hub setting, not a change to every site.
+The site finds the hub through a DNS TXT record on the org, and fetches the hub's public keys from `<hub>/.well-known/jwks.json` at runtime. It keeps a copy of the keys in its database as a fallback, and has no secret to configure.
 
-Every way in goes through the hub: the editor, the CLI (`vibe-cms login`), agents (`/mcp`) and scheduled backups. The hub signs a short-lived token (ES256, five minutes) for **one site at a time**, `aud` set to that site's ID. A user's token carries the provider identity as `sub` (`<issuer>|<sub>`) and the provider's other claims (email, `email_verified`, name, groups) passed through. The site verifies the token itself, without calling the hub, then works out roles from its own config.
+```
+_vibe-hub.my-agency.com   TXT   "https://edit.my-agency.com"
+```
+
+The org, not the hub's address, is the `iss` of every hub token. Moving the hub to another address is then one DNS change: sites look the record up again within its TTL, and tokens in flight stay valid. `VIBE_ORG` may also be a URL, which makes that address the hub with no DNS lookup, for local setups.
+
+Every site trusts **exactly one** org. Only the hub talks to the identity provider, so changing providers is a hub setting, not a change to every site.
+
+Every way in goes through the hub: the editor, the CLI (`vibe-cms login my-agency.com`), agents (`/mcp`) and scheduled backups. The hub signs a short-lived token (ES256, five minutes) for **one site at a time**, `aud` set to that site's ID. A user's token carries the provider identity as `sub` (`<issuer>|<sub>`), the provider's other claims (email, `email_verified`, name) passed through, and `roles`: the values of the provider claim named in the hub's `OIDC_ROLES_CLAIM`, if set. The site verifies the token itself, without calling the hub, then works out roles from its own config.
 
 ```ts
 // a hub token for one site
 {
-  "iss": "https://edit.my-agency.com",
+  "iss": "my-agency.com",
   "aud": "site-40",
   "sub": "https://accounts.google.com|10498…",
   "email": "jane@my-agency.com",
   "email_verified": true,
-  "groups": ["agency-staff"],
+  "roles": ["agency-staff"],
   "exp": 1793000300
 }
 ```
+
+The hub's signing key is a Worker secret, `HUB_SIGNING_KEY` (`bunx vibe-cms hub keygen`). A secret can be set but not read back through the dashboard or the API, so a leaked database copy or API token doesn't leak the key every site trusts.
 
 ## Permissions live on the site
 
@@ -78,7 +79,6 @@ Anyone allowed into the panel sees every site in the shared list. Whether they c
 ```ts
 // vibe-cms.config.ts (site)
 export default defineConfig({
-  auth: hub({ url: "https://edit.my-agency.com" }),
   permissions: {
     roles: {
       "agency-staff": { all: true },
@@ -101,7 +101,7 @@ export default defineConfig({
 });
 ```
 
-- Roles come from the identity provider's claims (`roles: "groups"` for Okta, Entra, Keycloak, …), from `permissions.users`, or both.
+- Roles come from the identity provider's claims (the hub's `OIDC_ROLES_CLAIM=groups` for Okta, Entra, Keycloak, …, passed on as `roles`), from `permissions.users`, or both.
 - Users keyed by email require the `email_verified` claim.
 - Site permissions and version history key on stable provider identity, never on anything panel-specific, so they survive the panel being recreated.
 
@@ -258,21 +258,23 @@ GET https://site-40.com/.well-known/vibe-cms
 {
   "id": "site-40",
   "name": "Client 40",
+  "org": "my-agency.com",
   "hub": "https://edit.my-agency.com",
+  "orgMove": null,
   "backups": false,
   "admin": "https://site-40.com/_vibe/admin"
 }
 ```
 
-You paste a URL into the panel. The panel fetches the descriptor and adds the site only if `hub` is its own address. Otherwise it refuses: "This site trusts another hub."
+You paste a URL into the panel. The panel fetches the descriptor and adds the site only if `org` is its own. Otherwise it refuses: "This site trusts another org."
 
-No secret is needed: the panel isn't proving who *owns* the site, only that the site *agreed* to trust this hub. Only someone who controls the site's deployment can make that file say so, the same principle as file-based domain verification.
+No secret is needed: the panel isn't proving who *owns* the site, only that the site *agreed* to trust this org. Only someone who controls the site's deployment can make that file say so, the same principle as file-based domain verification.
 
 ## Security model
 
 **Browser side: isolated.** Each site's editor runs on its own origin. A malicious or compromised plugin, widget or dependency on site 12 can act on site 12 (plugins are trusted code), but cannot touch the panel's page, the panel's session, or any other site. Provider tokens never reach the browser.
 
-**Server side: tokens for one site.** Sites never see a provider token. Each hub token is addressed to one site, so a compromised plugin's *server* code on site 12 can't replay what it receives to site 40. The hub's signing key is what every site trusts: it's generated on first use and kept in the hub's D1.
+**Server side: tokens for one site.** Sites never see a provider token. Each hub token is addressed to one site, so a compromised plugin's *server* code on site 12 can't replay what it receives to site 40. The hub's signing key is what every site trusts: it's a Worker secret, never stored in D1, so only code running in the hub can use it. Someone with the key could forge sign-ins to every site until it's replaced, the same as with any identity provider's keys. Replacing it locks them out: sites fetch the new key the first time they see a token signed with it.
 
 **Revocation.** Sites don't check back with the hub, so a token works until it expires: five minutes for a hub token, 12 hours for the site session the editor or CLI trades it for. Removing someone from the identity provider stops new tokens at the next refresh of their provider sign-in.
 
@@ -292,14 +294,38 @@ The panel holds no content and no identities.
 |---|---|
 | Content | Never held by the panel |
 | Users and logins | Held by the identity provider; unaffected. Editors, CLIs and agents sign in again |
-| Signing key | A new one is generated; sites fetch it from the same address |
+| Signing key | A Worker secret: set the same one again, or a new one, which sites fetch from the same address |
 | Site permissions | Held by sites, keyed by provider identity; unaffected |
 | Shared site list | Lost; re-add sites by URL |
 | Favorites | Lost |
 
-## Moving a site to another hub
+## Moving a site to another org
 
-Change `auth:` in the site's repo and redeploy. It fails safely: the old hub's tokens stop working on the site, and the new hub can add it by URL. Changing the identity provider doesn't touch sites at all: it's the hub's `OIDC_*` settings. A hub that moves to a new address needs every site's `auth` changed, so keep the old address serving its keys until they're redeployed.
+Change the site's `VIBE_ORG` and redeploy. It fails safely: the old org's tokens stop working on the site, and the new org's hub can add it by URL. Changing the identity provider doesn't touch sites at all: it's the hub's `OIDC_*` settings.
+
+## Moving the hub, renaming the org
+
+**A new address** is a DNS change: point `_vibe-hub.<org>` at it. Register the new redirect URL at the identity provider first.
+
+**A new org name** (`my-agency.com` → `new-agency.com`) needs each site to accept a move, without a redeploy:
+
+1. The hub's `VIBE_ORG` changes. The hub notices, remembers its previous orgs, and keeps signing as the old org for each site that still trusts it, so nobody is locked out. It learns which org each site trusts from the site's descriptor.
+2. From its cron (every five minutes), or `POST /api/org/moves`, the hub sends each site on a previous org a move token: `{ iss: old org, aud: site, scope: "org-move", to: new org }`, valid 15 minutes.
+3. The site checks it against the keys it already has for its hub (fetched, or its stored copy if the old record or hub is gone), looks up the new org's hub, and requires that hub to serve the same key. A move can't point a site at a hub with other keys.
+4. The site waits **72 hours** (`VIBE_ORG_MOVE_DELAY`) before trusting the new org. Its editor shows a banner the whole time; anyone who can change the site's settings can cancel. Asking again doesn't restart the clock.
+5. When the delay is up, the site trusts the new org. If the hub signs for the old org once more, the site refuses, the hub reads its descriptor again and signs as the new org.
+
+The waiting period is the protection against a stolen key. A key thief could otherwise move sites to an org they control, and replacing the hub's key wouldn't bring them back. With the delay, a move nobody asked for gets noticed and cancelled; a real rename can wait three days.
+
+The site keeps its org in its database (`vibe_meta`), with a history of each change (`GET /_vibe/api/org`):
+
+| Deploy | Org the site trusts |
+|---|---|
+| First deploy with `VIBE_ORG` | `VIBE_ORG` |
+| Same `VIBE_ORG` after an accepted move | The moved-to org: the variable is stale, not a decision |
+| `VIBE_ORG` changed to another value | The new value, and any pending move is dropped |
+| `VIBE_ORG_RESET=1` | `VIBE_ORG` (or none), whatever moves it accepted |
+| `VIBE_ORG` removed | The stored org, with a warning, so a lost variable never leaves a site without sign-in |
 
 ## Local development
 
@@ -344,4 +370,5 @@ In the monorepo, the panel backend and its frontend are **one package**, `apps/p
 - **Session details:** site session lifetime and refresh, and the exact request and response shapes of the code endpoints.
 - **Who can remove sites** from the shared list (any panel user, or only whoever added it).
 - **Exporting and importing** the site list, so recreating a panel doesn't mean re-adding every site.
+- **Standalone sites:** sign-in for a site with no org (passkeys or email links, or its own identity provider through `OIDC_*`), with `VIBE_ORG` taking priority when both are set.
 - **Simplifying agent sessions:** sites accept hub tokens as `Authorization: Bearer` directly, so the hub could send those instead of trading each for a cached site session (`agent_site_tokens`).

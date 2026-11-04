@@ -1,7 +1,6 @@
 import { pageSchema } from "@vibe-cms/blocks";
 import { richText } from "@vibe-cms/rich-text";
 import { defineConfig } from "vibe-cms";
-import { hub } from "vibe-cms/auth";
 import { image } from "vibe-cms/media";
 import v from "vibe-cms/schema";
 import { ViewsPlugin } from "./src/plugins/views/index.ts";
@@ -12,7 +11,6 @@ export default defineConfig({
   locales: ["en", "fr"],
   defaultLocale: "en",
   plugins: [ViewsPlugin({ types: ["post"] })],
-  auth: hub({ url: "https://edit.my-agency.com" }),
   permissions: {
     roles: {
       "agency-staff": { all: true },

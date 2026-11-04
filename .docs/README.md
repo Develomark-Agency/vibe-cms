@@ -39,10 +39,8 @@ import { defineConfig } from "vibe-cms";
 import v from "vibe-cms/schema";
 import { richText } from "@acme/rich-text";
 import { SearchPlugin } from "@acme/search";
-import { hub } from "vibe-cms/auth";
 
 export default defineConfig({
-  auth: hub({ url: "https://edit.my-agency.com" }),
   plugins: [SearchPlugin()],
   schemas: {
     post: v.object({

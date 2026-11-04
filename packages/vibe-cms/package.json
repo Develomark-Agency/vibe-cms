@@ -9,7 +9,7 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema/index.ts",
     "./media": "./src/media/index.ts",
-    "./auth": "./src/auth/index.ts",
+    "./org": "./src/org/index.ts",
     "./query": "./src/query/index.ts",
     "./handler": "./src/handler/index.ts",
     "./server": "./src/server/index.ts",

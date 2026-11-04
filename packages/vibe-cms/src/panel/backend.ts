@@ -52,8 +52,12 @@ export interface SiteDescriptor {
   name: string,
   accent?: string | null,
   icon?: string | null,
-  /** The hub the site trusts, from `auth: hub({ url })`; null for sites without one (development). */
+  /** The org whose hub the site trusts (`VIBE_ORG`); null for sites without one (development). */
+  org: string | null,
+  /** The org's hub, when the site could look it up. */
   hub: string | null,
+  /** A pending move to another org, which takes effect at `effectiveAt` unless cancelled. */
+  orgMove: { to: string, requestedAt: number, effectiveAt: number } | null,
   /** Whether the site lets its hub take and restore backups. */
   backups: boolean,
   admin: string
@@ -102,11 +106,11 @@ export interface BackupRun {
 export interface SiteBackups {
   /** False when the panel has no archive bucket. */
   available: boolean,
-  /** This panel's address, which the site names in `auth: hub({ url })`. */
+  /** This hub's org, which the site names in `VIBE_ORG`. */
   panel: string | null,
   /** Whether the site lets this panel back it up; null when the site couldn't be reached. */
   trusted: boolean | null,
-  /** The hub the site does trust, when it's another. */
+  /** The org the site does trust, when it's another. */
   trustedPanel: string | null,
   /** The site's own policy; null when it follows the panel's defaults. */
   policy: BackupPolicy | null,
@@ -188,7 +192,7 @@ export async function fetchDescriptor(url: string): Promise<SiteDescriptor> {
   if(!response.ok) throw new PanelError(422, `${origin} isn't a vibe-cms site (no /.well-known/vibe-cms)`);
   const descriptor = await response.json() as SiteDescriptor;
   if(descriptor.protocol !== 1 || !descriptor.id || !descriptor.admin) throw new PanelError(422, "Unsupported site descriptor");
-  return descriptor;
+  return { ...descriptor, org: descriptor.org ?? null, hub: descriptor.hub ?? null, orgMove: descriptor.orgMove ?? null };
 }
 
 const STORAGE_KEY = "vibe-panel:sites";

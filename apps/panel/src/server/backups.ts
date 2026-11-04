@@ -2,7 +2,7 @@ import { httpCaller, type ActionCaller } from "vibe-cms/actions";
 import { BackupError, packSnapshot, readSnapshot, restoreSnapshot, takeSnapshot, verifyRestore, type BackupStore, type Progress, type SnapshotFile } from "vibe-cms/backups";
 import { fetchDescriptor, PanelError, type BackupPolicy, type PanelSite, type SiteBackups } from "vibe-cms/panel";
 import { randomString } from "./oidc.ts";
-import { backupToken, codeFor, hubOrigin } from "./hub.ts";
+import { backupToken, codeFor, hubOrg } from "./hub.ts";
 import { json, siteById, type Env, type SessionRow } from "./shared.ts";
 
 /**
@@ -322,7 +322,7 @@ function explain(error: unknown, origin: string | null): string {
   const message = (error as Error).message;
   const tag = (error as BackupError).details && ((error as BackupError).details as { tag?: string }).tag;
   if(tag === "Unauthorized" || tag === "Forbidden") {
-    return `${message}. The site has to let this panel back it up: it needs \`auth: hub({ url: "${origin}" })\` and \`backups: true\` in its config.`;
+    return `${message}. The site has to let this panel back it up: it needs VIBE_ORG=${origin} and \`backups: true\` in its config.`;
   }
   return message;
 }
@@ -379,7 +379,7 @@ export async function processBackups(env: Env, options: { budget?: number, siteI
   const started = Date.now();
   const budget = options.budget ?? 10 * 60 * 1000;
   if(options.schedule !== false) await enqueueDue(env, started);
-  const origin = await hubOrigin(env);
+  const origin = env.VIBE_ORG ?? null;
   while(Date.now() - started < budget) {
     const run = await claim(env, Date.now(), options.siteId);
     if(!run) return;
@@ -419,16 +419,16 @@ async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
   const [own, effective, origin, snapshots, runs, trusted] = await Promise.all([
     storedPolicy(env, site.id),
     effectivePolicy(env, site.id),
-    hubOrigin(env),
+    Promise.resolve(hubOrg(env)),
     env.DB.prepare("SELECT * FROM backup_snapshots WHERE site_id = ? ORDER BY taken_at DESC").bind(site.id).all<SnapshotRow>(),
     env.DB.prepare("SELECT * FROM backup_runs WHERE site_id = ? ORDER BY created_at DESC LIMIT 20").bind(site.id).all<RunRow>(),
-    fetchDescriptor(site.url).then(d => ({ hub: d.hub, backups: d.backups }), () => undefined)
+    fetchDescriptor(site.url).then(d => ({ org: d.org, backups: d.backups }), () => undefined)
   ]);
   return {
     available: Boolean(env.BACKUPS),
     panel: origin,
-    trusted: trusted === undefined ? null : trusted.hub === origin && trusted.backups,
-    trustedPanel: trusted?.hub && trusted.hub !== origin ? trusted.hub : null,
+    trusted: trusted === undefined ? null : trusted.org === origin && trusted.backups,
+    trustedPanel: trusted?.org && trusted.org !== origin ? trusted.org : null,
     policy: own,
     effective,
     nextAt: effective.enabled ? lastSlot(Date.now(), effective.hour) + DAY : null,
@@ -469,7 +469,7 @@ export async function backupsApi(request: Request, env: Env, session: SessionRow
   };
 
   if(path === "/backups" && method === "GET") {
-    return json({ available: Boolean(env.BACKUPS), panel: await hubOrigin(env), defaults: await defaultPolicy(env) });
+    return json({ available: Boolean(env.BACKUPS), panel: env.VIBE_ORG ? hubOrg(env) : null, defaults: await defaultPolicy(env) });
   }
   if(path === "/backups/download" && method === "GET") {
     const id = new URL(request.url).searchParams.get("snapshot") ?? "";

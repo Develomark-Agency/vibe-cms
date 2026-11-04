@@ -17,7 +17,8 @@ import {
 } from "./shared.ts";
 
 import { backupsApi, processBackups } from "./backups.ts";
-import { codeFor, hubOrigin, jwks, rememberOrigin } from "./hub.ts";
+import { codeFor, hubOrg, hubOrigin, jwks, moveSites, rememberOrigin, syncOrg } from "./hub.ts";
+import { hubRecordName, resolveHub } from "vibe-cms/org";
 import { handleMcp, siteToken, unauthorized } from "./mcp.ts";
 import {
   authorizationServerMetadata,
@@ -71,16 +72,16 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
   if(path === "/sites" && method === "POST") {
     const { url: siteUrl } = await request.json() as { url?: string };
     const descriptor = await fetchDescriptor(siteUrl ?? "");
-    // The site has to have agreed to trust this hub.
-    const origin = await hubOrigin(env) ?? url.origin;
-    if(descriptor.hub !== origin) {
-      return json({ error: descriptor.hub ? `This site trusts another hub (${descriptor.hub})` : `This site doesn't trust a hub yet. Add \`auth: hub({ url: "${origin}" })\` to its config and deploy it.` }, { status: 422 });
+    // The site has to have agreed to trust this hub's org.
+    const org = hubOrg(env);
+    if(descriptor.org !== org) {
+      return json({ error: descriptor.org ? `This site trusts another org (${descriptor.org}), not ${org}` : `This site doesn't belong to an org yet. Set VIBE_ORG=${org} in its environment and deploy it.` }, { status: 422 });
     }
     const site: PanelSite = { id: descriptor.id, url: new URL(descriptor.admin).origin, name: descriptor.name, admin: descriptor.admin, favorite: false };
     await env.DB.prepare(
-      `INSERT INTO sites (id, url, name, admin, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET url = excluded.url, name = excluded.name, admin = excluded.admin`
-    ).bind(site.id, site.url, site.name, site.admin, session.sub, Date.now()).run();
+      `INSERT INTO sites (id, url, name, admin, org, added_by, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET url = excluded.url, name = excluded.name, admin = excluded.admin, org = excluded.org`
+    ).bind(site.id, site.url, site.name, site.admin, descriptor.org, session.sub, Date.now()).run();
     return json(site, { status: 201 });
   }
 
@@ -101,6 +102,27 @@ async function api(request: Request, env: Env, url: URL, ctx?: ExecutionContext)
       await env.DB.prepare("DELETE FROM favorites WHERE user = ? AND site_id = ?").bind(session.sub, id).run();
     }
     return new Response(null, { status: 204 });
+  }
+
+  if(path === "/org" && method === "GET") {
+    const { org, previous } = await syncOrg(env);
+    const hub = await resolveHub(org, { fresh: true }).catch((error: Error) => ({ error: error.message }));
+    const { results } = await env.DB.prepare("SELECT org, COUNT(*) AS sites FROM sites GROUP BY org").all<{ org: string | null, sites: number }>();
+    return json({
+      org,
+      previous,
+      // Where the org's DNS record points, and whether that's here.
+      record: hubRecordName(org),
+      hub: typeof hub === "string" ? hub : null,
+      hubError: typeof hub === "string" ? null : hub.error,
+      matches: typeof hub === "string" && hub === (await hubOrigin(env) ?? url.origin),
+      sites: results
+    });
+  }
+
+  if(path === "/org/moves" && method === "POST") {
+    // Asks sites still on a previous org to move now, rather than at the next cron run.
+    return json(await moveSites(env));
   }
 
   if(path === "/agents" && method === "GET") {
@@ -245,7 +267,10 @@ export async function handle(request: Request, env: Env, ctx?: ExecutionContext)
 /** Cron: scheduled snapshots, retries, and runs a stopped Worker left behind. */
 export async function scheduled(env: Env) {
   await migrate(env.DB);
-  await processBackups(env);
+  await Promise.all([
+    moveSites(env).catch(error => console.error("vibe-panel: moving sites to the org failed", error)),
+    processBackups(env)
+  ]);
 }
 
 export default {

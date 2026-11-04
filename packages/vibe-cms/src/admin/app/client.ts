@@ -13,9 +13,16 @@ import { notifyPreview } from "./preview.ts";
 export interface SiteInfo extends SerializedConfig {
   prefix: string,
   dev: boolean,
-  /** The hub the site trusts, from `auth: hub({ url })`. */
+  /** The hub of the org the site trusts (`VIBE_ORG`), as its DNS record names it. */
   hub: string | null,
-  site: { id: string, name: string, admin: string },
+  site: {
+    id: string,
+    name: string,
+    admin: string,
+    org: string | null,
+    /** A pending move to another org; it takes effect at `effectiveAt` unless someone cancels it. */
+    orgMove: { to: string, requestedAt: number, effectiveAt: number } | null
+  },
   /** As of page load; the editor keeps the live copy under the "site" query. */
   settings: SiteSettings
 }

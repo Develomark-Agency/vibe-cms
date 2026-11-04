@@ -1,7 +1,6 @@
 import { expect } from "bun:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { defineConfig } from "vibe-cms";
-import { hub } from "vibe-cms/auth";
 import { createHandler } from "vibe-cms/handler";
 import v from "vibe-cms/schema";
 import { createD1 } from "../../../packages/vibe-cms/test/helpers.ts";
@@ -11,6 +10,20 @@ import { handle, type Env } from "../src/server/index.ts";
 
 export const ISSUER = "https://idp.test";
 export const HUB = "https://panel.test";
+/** The hub's org, found through DNS: `_vibe-hub.agency.test` points at the hub. */
+export const ORG = "agency.test";
+
+/** Addresses the mock hub answers on: its own, plus any a test moves it to. */
+export const hubOrigins = new Set([HUB]);
+
+/** The mock DNS: TXT records by name, answered over DNS-over-HTTPS like cloudflare-dns.com. */
+export const txt: Record<string, string> = {
+  "_vibe-hub.agency.test": HUB,
+  "_vibe-hub.other.test": "https://other-panel.test"
+};
+
+const signing = await generateKeyPair("ES256", { extractable: true });
+export const SIGNING_KEY = JSON.stringify({ ...(await exportJWK(signing.privateKey)), kid: "hub-1" });
 export const CLIENT_ID = "panel-client";
 const keys = await generateKeyPair("RS256");
 const jwk = { ...(await exportJWK(keys.publicKey)), kid: "k1", alg: "RS256" };
@@ -29,20 +42,19 @@ export async function idToken(claims: Record<string, unknown> = {}) {
     .sign(keys.privateKey);
 }
 
-export function site(hubUrl = HUB) {
+export function site(org = ORG, siteEnv: Record<string, unknown> = {}) {
   const config = defineConfig({
-    auth: hub({ url: hubUrl }),
     permissions: { roles: { editor: { post: ["read", "write"] } }, users: { "jane@agency.test": ["editor"] } },
     schemas: { post: v.object({ title: v.text() }) }
   });
   const vibe = createHandler(config, { dev: false, bindings: (env: { DB: ReturnType<typeof createD1> }) => ({ db: env.DB }) });
-  const env = { DB: createD1() };
+  const env = { DB: createD1(), VIBE_ORG: org, ...siteEnv };
   return (request: Request) => vibe.handle(request, env, { waitUntil() {} });
 }
 
 export const sites: Record<string, (request: Request) => Promise<Response>> = {
   "https://site-a.test": site(),
-  "https://site-b.test": site("https://other-panel.test")
+  "https://site-b.test": site("other.test")
 };
 
 /** A mock site's ID, which the site makes for itself on first boot (as in production). */
@@ -58,6 +70,11 @@ export function installMock() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
+    if(url.origin === "https://cloudflare-dns.com") {
+      const name = url.searchParams.get("name")!;
+      const value = txt[name];
+      return Response.json({ Status: value ? 0 : 3, Answer: value ? [{ name, type: 16, TTL: 300, data: `"${value}"` }] : [] });
+    }
     if(url.origin === ISSUER) {
       if(url.pathname === "/.well-known/openid-configuration") {
         return Response.json({
@@ -75,8 +92,8 @@ export function installMock() {
         return Response.json({ id_token: await idToken(), refresh_token: "r1" });
       }
     }
-    // Sites fetch the hub's keys.
-    if(url.origin === HUB) return handle(request, env);
+    // Sites fetch the hub's keys, at whichever address the org's DNS record names.
+    if(hubOrigins.has(url.origin)) return handle(request, env);
     const handler = sites[url.origin];
     if(handler) return handler(request);
     return realFetch(input, init);
@@ -93,7 +110,9 @@ export const env: Env = {
   OIDC_CLIENT_ID: CLIENT_ID,
   OIDC_CLIENT_SECRET: "secret",
   PANEL_ALLOW: "agency.test",
-  PANEL_URL: HUB
+  PANEL_URL: HUB,
+  VIBE_ORG: ORG,
+  HUB_SIGNING_KEY: SIGNING_KEY
 };
 
 export const jar = new Map<string, string>();

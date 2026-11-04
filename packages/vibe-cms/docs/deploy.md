@@ -1,6 +1,6 @@
 # Deploying
 
-Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep the cron trigger, build so the editor is in the static assets, and set up sign-in through `auth: hub(...)` and an agency panel.
+Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep the cron trigger, build so the editor is in the static assets, and set up sign-in through your org's hub (`VIBE_ORG`).
 
 ## Checklist
 
@@ -17,15 +17,14 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 
 3. **Keep the assets binding.** The editor is static files under `/_vibe/admin/`. The CMS serves its deep links (`/_vibe/admin/documents/post`) through the assets binding: `env.ASSETS`, or whatever you pass as `bindings.assets`.
 
-4. **Set up sign-in.** Production sites have no dev sign-in and no password form: everyone signs in to the agency panel (the hub), which signs them in with your identity provider and vouches for them to each site.
+4. **Set up sign-in.** Production sites have no dev sign-in and no password form: everyone signs in to your org's hub (the agency panel), which signs them in with your identity provider and vouches for them to each site. Set one environment variable on the site, the same for every site in the org:
 
-   ```ts
-   import { hub } from "vibe-cms/auth";
-
-   auth: hub({ url: "https://edit.my-agency.com" })
+   ```jsonc
+   // wrangler.jsonc
+   "vars": { "VIBE_ORG": "my-agency.com" }
    ```
 
-   The site accepts tokens that hub signed for this site, checked against its keys at `/.well-known/jwks.json`; `roles` names an identity provider claim to read roles from (for example `"groups"`). Who may do what is the config's `permissions` (`vibe-cms docs permissions`). Give the site a stable `id` in the config so the panel keeps recognising it if its hostname changes.
+   The site finds the hub through the org's DNS record (see [Orgs](#orgs)) and accepts tokens issued by the org for this site, checked against the hub's keys at `/.well-known/jwks.json`. Who may do what is the config's `permissions` (`vibe-cms docs permissions`).
 
 5. **Build and deploy.**
 
@@ -39,11 +38,38 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 
 ## After deploying
 
-- `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, its hub, and the editor's URL.
+- `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, its org and hub, a pending org move, and the editor's URL.
 - The editor only opens inside the hub. `https://<site>/_vibe/admin/` on its own links to the site's page in the hub.
-- Add the site to the hub by its URL; the hub checks the site trusts it. Running a hub (`apps/panel` in the vibe-cms repository) needs its own D1 database and OIDC client; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
+- Add the site to the hub by its URL; the hub checks the site belongs to its org. Running a hub (`apps/panel` in the vibe-cms repository) needs its own D1 database, OIDC client and signing key; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
 - Agents connect to the panel's `/mcp`, not to each site (`vibe-cms docs agents`).
-- To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms login <hub>` and `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
+- To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms login <org>` and `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
+
+## Orgs
+
+An org is a domain you own that names your agency, like `my-agency.com`. It doesn't have to host anything. Sites trust the org, not the hub's address, so the hub can move without touching any site.
+
+1. **Pick the domain.** Your agency's own domain is fine.
+2. **Deploy the hub** (`apps/panel`) on a custom domain, e.g. `admin.my-agency.com`, with `VIBE_ORG=my-agency.com` and its signing key (`bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY`).
+3. **Add a DNS record** that points the org at the hub:
+
+   ```
+   _vibe-hub.my-agency.com   TXT   "https://admin.my-agency.com"
+   ```
+
+4. **Deploy sites with `VIBE_ORG=my-agency.com`**, then add each to the hub by its URL. The hub checks the site's descriptor names its org.
+
+To **move the hub to another address**: add the new redirect URL at your identity provider, deploy the hub there, and change the TXT record. Sites look the record up again within its TTL (one minute to an hour); nothing is redeployed.
+
+To **rename the org** (say `my-agency.com` → `new-agency.com`): add `_vibe-hub.new-agency.com`, set the hub's `VIBE_ORG` to the new name and deploy it. The hub remembers its previous orgs and asks each site to move, signed with its key. A site checks the move against the hub's keys it already has, and that the new org's hub serves the same key, then waits **72 hours** (`VIBE_ORG_MOVE_DELAY`, in seconds, changes it) before it trusts the new org. Meanwhile its editor shows a banner, anyone who can change the site's settings can cancel the move, and the hub keeps signing for the old org so nobody is locked out. A real rename can wait three days; a move nobody asked for gets noticed.
+
+`VIBE_ORG` and accepted moves:
+
+- Once a site accepts a move, the stored org wins over the unchanged `VIBE_ORG` value, so you can update the variable at your next deploy.
+- Changing `VIBE_ORG` to a different value puts the variable back in charge, as does `VIBE_ORG_RESET=1`.
+- Removing `VIBE_ORG` keeps the stored org, with a warning, rather than leaving the site with no sign-in. Set `VIBE_ORG_RESET=1` without `VIBE_ORG` to sign the site out of its org.
+- `VIBE_ORG` may also be a URL (`https://admin.my-agency.com`): the hub is then that address, with no DNS lookup. That suits local setups, but the address can't change without redeploying sites.
+
+Each site keeps a copy of its hub's public keys in its database, so it keeps checking tokens, and moves, when the DNS record or the old hub is already gone. Its org history (set, move requested, cancelled, moved) is at `GET /_vibe/api/org` for users who can change the site's settings.
 
 ## Environments
 

@@ -17,7 +17,7 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   expect(added.status).toBe(201);
   const refused = await panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://site-b.test" }) });
   expect(refused.status).toBe(422);
-  expect((await refused.json() as { error: string }).error).toBe("This site trusts another hub (https://other-panel.test)");
+  expect((await refused.json() as { error: string }).error).toBe("This site trusts another org (other.test), not agency.test");
 
   await panel(`/api/sites/${a}/favorite`, { method: "PUT" });
   expect(await (await panel("/api/sites")).json()).toEqual([

@@ -1,7 +1,8 @@
 import { HttpError, serializeConfig, type AnyConfig } from "../config.ts";
 import type { SerializedQuery } from "../query/index.ts";
 import type { Session } from "../server/index.ts";
-import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, sessionFromHubToken, verifySession } from "./auth.ts";
+import { consumeCode, createCode, DEV_SESSION, issueSession, permissionSummary, require, sessionFromHubToken, verifySession } from "./auth.ts";
+import type { OrgStatus } from "../org/index.ts";
 import { coreActions, type CoreActions } from "../actions/core.ts";
 import { runAction, type AnyAction } from "../actions/define.ts";
 import { errorJson, fromHttpError, httpStatus, type ActionError } from "../actions/errors.ts";
@@ -43,7 +44,7 @@ async function readSession(request: Request, api: ApiContext): Promise<Session |
   if(!header?.startsWith("Bearer ")) return null;
   const token = header.slice(7);
   return await verifySession(api.state.db, token, api.state.siteId)
-    ?? await sessionFromHubToken(api.state.config, token, api.state.siteId);
+    ?? await sessionFromHubToken(api.state, token);
 }
 
 async function body<T>(request: Request): Promise<T> {
@@ -62,14 +63,18 @@ function cors(response: Response): Response {
   return new Response(response.body, { status: response.status, headers });
 }
 
-export function descriptor(config: AnyConfig, url: URL, prefix: string, site: SiteSettings) {
+export function descriptor(config: AnyConfig, url: URL, prefix: string, site: SiteSettings, org: OrgStatus) {
   return {
     protocol: 1,
     id: site.id,
     name: site.name,
     accent: site.accent,
     icon: site.icon?.url ?? site.favicon,
-    hub: config.auth?.url ?? null,
+    /** The org whose hub the site trusts (`VIBE_ORG`), and the hub's address. */
+    org: org.org,
+    hub: org.hub,
+    /** A pending move to another org, which takes effect at `effectiveAt` unless cancelled. */
+    orgMove: org.move,
     backups: config.backups === true,
     admin: `${url.origin}${prefix}/admin`
   };
@@ -81,7 +86,7 @@ export async function handleRequest(request: Request, api: ApiContext): Promise<
   const { config, prefix } = api.state;
   if(url.pathname === "/.well-known/vibe-cms") {
     const site = await new Engine(api.state, { origin: url.origin, session: null, trusted: false, ctx: api.ctx }).site();
-    return cors(json(descriptor(config, url, prefix, site), { headers: { "cache-control": "public, max-age=60" } }));
+    return cors(json(descriptor(config, url, prefix, site, await api.state.org.status()), { headers: { "cache-control": "public, max-age=60" } }));
   }
   const path = url.pathname.slice(prefix.length) || "/";
   const method = request.method.toUpperCase();
@@ -161,14 +166,33 @@ async function editorRoute(
 
   if(route === "/info" && method === "GET") {
     const site = await engine.site();
+    const org = await api.state.org.status();
     return json({
       ...serializeConfig(config),
       prefix: api.state.prefix,
       dev: api.dev,
-      hub: config.auth?.url ?? null,
-      site: descriptor(config, url, api.state.prefix, site),
+      hub: org.hub,
+      site: descriptor(config, url, api.state.prefix, site, org),
       settings: site
     });
+  }
+
+  if(route === "/org/move") {
+    if(method === "POST") {
+      // Hub → site, server to server: a move to another org, signed by the current org's hub.
+      const input = await body<{ token?: string }>(request);
+      if(!input.token) throw new HttpError(400, "Expected token");
+      return json(await api.state.org.requestMove(input.token, api.state.siteId));
+    }
+    if(method === "DELETE") {
+      const user = require(config, session, { action: "write", scope: "site" });
+      return json(await api.state.org.cancelMove(user.email ?? user.sub));
+    }
+  }
+
+  if(route === "/org" && method === "GET") {
+    require(config, session, { action: "write", scope: "site" });
+    return json({ ...await api.state.org.status(), history: await api.state.org.history() });
   }
 
   if(route === "/session") {
@@ -202,7 +226,7 @@ async function editorRoute(
     // Hub → site, server to server: a token the hub signed for this site in, a one-time code out.
     const input = await body<{ token?: string }>(request);
     if(!input.token) throw new HttpError(400, "Expected token");
-    const next = await sessionFromHubToken(config, input.token, api.state.siteId);
+    const next = await sessionFromHubToken(api.state, input.token);
     if(!next || next.grants) throw new HttpError(401, "Not a sign-in token from this site's hub");
     return json({ code: await createCode(db, next), expiresIn: 30 });
   }

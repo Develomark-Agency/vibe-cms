@@ -23,10 +23,15 @@
     "OIDC_CLIENT_ID": "1234.apps.googleusercontent.com",
     // Comma-separated email domains or group claim values.
     "PANEL_ALLOW": "my-agency.com",
-    // The panel's public address: the hub sites trust with `auth: hub({ url: "https://…" })`.
-    "PANEL_URL": "https://panel.my-agency.com"
+    // The panel's public address, for links and sign-in redirects.
+    "PANEL_URL": "https://panel.my-agency.com",
+    // Your org: a domain you own. Sites trust it in their own VIBE_ORG, and find this panel through
+    // its DNS record: _vibe-hub.my-agency.com TXT "https://panel.my-agency.com".
+    "VIBE_ORG": "my-agency.com"
+    // Optional: "OIDC_ROLES_CLAIM" (e.g. "groups"), the identity provider claim sites get as roles.
     // Optional white-labelling: "PANEL_NAME", "PANEL_ACCENT" (#rrggbb, also the accent of framed
     // sites that don't set their own) and "PANEL_ICON" (an image URL).
   }
-  // Secret: `wrangler secret put OIDC_CLIENT_SECRET` (locally: .dev.vars).
+  // Secrets: `wrangler secret put OIDC_CLIENT_SECRET`, and the signing key with
+  // `bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY` (locally: .dev.vars).
 }

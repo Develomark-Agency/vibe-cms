@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { defineConfig } from "vibe-cms";
-import { hub } from "vibe-cms/auth";
 import { createThrowingActionClient, httpCaller, type CoreActions } from "vibe-cms/actions";
 import { createHandler } from "vibe-cms/handler";
 import { unpackSnapshot } from "vibe-cms/backups";
@@ -10,7 +9,7 @@ import { createD1, createR2 } from "../../../packages/vibe-cms/test/helpers.ts";
 import { DEFAULT_POLICY, processBackups, retained } from "../src/server/backups.ts";
 import { backupToken } from "../src/server/hub.ts";
 import { handle } from "../src/server/index.ts";
-import { env, HUB, idp, installMock, panel, removeMock, signIn, sites } from "./mock.ts";
+import { env, idp, installMock, ORG, panel, removeMock, signIn, sites } from "./mock.ts";
 
 /** Enough of an R2 bucket for the archive. */
 function bucket() {
@@ -59,7 +58,6 @@ const archive = bucket();
 
 function backupSite(origin: string, allowBackups: boolean) {
   const config = defineConfig({
-    auth: hub({ url: HUB }),
     backups: allowBackups,
     permissions: {
       roles: { editor: { post: ["read", "write"] }, ops: { post: ["read"], backups: true } },
@@ -67,7 +65,7 @@ function backupSite(origin: string, allowBackups: boolean) {
     },
     schemas: { post: v.object({ title: v.text() }) }
   });
-  const siteEnv = { DB: createD1(), MEDIA: createR2() };
+  const siteEnv = { DB: createD1(), MEDIA: createR2(), VIBE_ORG: ORG };
   // Development mode only so the test can seed content with a dev session; panel users still sign in through the hub.
   const vibe = createHandler(config, { dev: true, bindings: (e: typeof siteEnv) => ({ db: e.DB, storage: e.MEDIA }) });
   const handler = (request: Request) => vibe.handle(request, siteEnv, { waitUntil() {} });
@@ -137,7 +135,7 @@ describe("panel backups", () => {
 
   test("backing up a site that trusts the panel stores a snapshot in the archive", async () => {
     const before = await backups(c);
-    expect(before).toMatchObject({ available: true, trusted: true, panel: "https://panel.test", policy: null, effective: DEFAULT_POLICY, snapshots: [] });
+    expect(before).toMatchObject({ available: true, trusted: true, panel: ORG, policy: null, effective: DEFAULT_POLICY, snapshots: [] });
     expect((await panel(`/api/sites/${c}/backups`, { method: "POST" })).status).toBe(202);
     await processBackups(env, { schedule: false });
     const after = await backups(c);

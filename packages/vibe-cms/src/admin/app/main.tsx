@@ -1,7 +1,7 @@
 import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon, AppWindowIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, KeyRoundIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import Fuse from "fuse.js";
@@ -433,6 +433,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
             </div>
           </div>
         )}
+        <OrgMoveBanner />
         <div className="min-h-full" data-page>
           <ErrorBoundary resetKey={path}>{page}</ErrorBoundary>
         </div>
@@ -441,6 +442,40 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
       <ErrorBoundary resetKey={previewOpen}><PreviewWindow /></ErrorBoundary>
       <Toaster position="bottom-right" />
     </SidebarProvider>
+  );
+}
+
+/**
+ * A move to another org, announced for its whole waiting period. A real rename can wait; a move nobody
+ * asked for gets noticed and cancelled before the site starts trusting another hub.
+ */
+function OrgMoveBanner() {
+  const { info, session, config } = useAdmin();
+  const [move, setMove] = useState(info.site.orgMove);
+  const [busy, setBusy] = useState(false);
+  if(!move) return null;
+  const when = new Date(move.effectiveAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  // The language menu floats over the top right corner.
+  const clearLocaleMenu = config.locales!.length > 1 ? "md:pr-36" : "";
+  return (
+    <div role="alert" className={`flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm ${clearLocaleMenu}`}>
+      <TriangleAlertIcon className="size-4 shrink-0 text-amber-600" />
+      <p className="min-w-0 flex-1">
+        This site is moving from <strong className="font-medium">{info.site.org}</strong> to <strong className="font-medium">{move.to}</strong> on {when}.
+        {" "}{session.permissions.site ? "If nobody in your organization asked for this, cancel it." : "If you didn't expect this, tell someone who manages this site."}
+      </p>
+      {session.permissions.site && (
+        <Button size="sm" variant="outline" disabled={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            await request(info.prefix, "/org/move", { method: "DELETE" });
+            setMove(null);
+          } finally {
+            setBusy(false);
+          }
+        }}>Cancel move</Button>
+      )}
+    </div>
   );
 }
 

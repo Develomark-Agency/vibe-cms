@@ -11,7 +11,6 @@ import type {
   TextSchema,
   UnionSchema
 } from "./schema/types.ts";
-import type { AuthDescriptor } from "./auth/index.ts";
 import type { IconName } from "./icons.ts";
 import type { StandardProps } from "./schema/standard.ts";
 
@@ -43,7 +42,7 @@ export interface RoleRules {
 export interface Permissions {
   /** Role name → rules. Only roles defined here count, whatever the identity provider sends. */
   roles?: Record<string, RoleRules>,
-  /** Roles per user, keyed by verified email (lowercase) or `<issuer>|<sub>`, on top of the `auth.roles` claim. */
+  /** Roles per user, keyed by verified email (lowercase) or `<issuer>|<sub>`, on top of the roles the hub passes on from the identity provider. */
   users?: Record<string, string[]>
 }
 
@@ -80,8 +79,6 @@ export interface ConfigInput {
   locales?: readonly string[],
   /** The locale reads fall back to. Defaults to the first of `locales`, else `"en"`. */
   defaultLocale?: string,
-  /** How editors sign in once deployed: `hub({ url })` from `vibe-cms/auth`. */
-  auth?: AuthDescriptor,
   /** Roles and users. See `vibe-cms docs permissions`. */
   permissions?: Permissions,
   /** URL prefix for everything the CMS serves. Defaults to `/_vibe`. */
@@ -89,7 +86,7 @@ export interface ConfigInput {
   /** Deleted documents and files stay restorable this long, then the cron trigger purges them. Defaults to 30 days. */
   trash?: { days?: number },
   /**
-   * Scheduled backups: `true` lets the hub in `auth` take snapshots and restore them as
+   * Scheduled backups: `true` lets the site's hub (`VIBE_ORG`) take snapshots and restore them as
    * itself, and nothing else. See `vibe-cms docs backups`.
    */
   backups?: boolean

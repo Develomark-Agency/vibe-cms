@@ -28,11 +28,10 @@ export default defineConfig({
 | `plugins` | `[]` | Plugin descriptors, e.g. `[SearchPlugin({ … })]`. See `vibe-cms docs plugins`. |
 | `locales` | `[defaultLocale]` | Locales documents can be translated into. See `vibe-cms docs localization`. |
 | `defaultLocale` | first of `locales`, else `"en"` | The locale reads fall back to. |
-| `auth` | none | `hub({ url, roles? })` from `vibe-cms/auth`: the agency hub everyone signs in through on deployed sites. See `vibe-cms docs permissions`. |
 | `permissions` | none | Roles and users. See `vibe-cms docs permissions`. |
 | `prefix` | `"/_vibe"` | URL prefix for everything the CMS serves. |
 | `trash` | `{ days: 30 }` | How long deleted documents and files stay restorable before the cron trigger purges them. |
-| `backups` | `false` | `true` lets the hub in `auth` take and restore scheduled backups (`vibe-cms docs backups`). |
+| `backups` | `false` | `true` lets the hub of the site's org (`VIBE_ORG`) take and restore scheduled backups (`vibe-cms docs backups`). |
 
 The config object is also how site code reaches content types: `config.schemas.post` is what you pass to `cms.query(…)`, and `config.schemas.post.slug` is a column for `where` and `orderBy`.
 

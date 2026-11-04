@@ -95,12 +95,12 @@ function TrustNotice({ trusted, panel, trustedPanel }: { trusted: boolean | null
   if(trusted === null) {
     return <p className="flex gap-2 rounded-[10px] well px-3 py-2 text-sm text-muted-foreground"><TriangleAlertIcon className="mt-0.5 size-4 shrink-0" /> The site can't be reached, so whether it allows backups is unknown.</p>;
   }
-  // A site on another hub would also need its `auth` changed, which isn't a one-line fix.
-  const snippet = trustedPanel ? `auth: hub({ url: "${panel ?? "https://your-panel"}" }), backups: true` : "backups: true";
+  // A site in another org needs its VIBE_ORG changed too, which is a deploy setting, not config.
+  const snippet = "backups: true";
   return (
     <div className="grid gap-2 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
       <p className="flex gap-2"><ShieldAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
-        <span>{trustedPanel ? `This site trusts another hub (${trustedPanel}), not this one.` : "This site doesn't let this panel back it up yet."} Add this to its <code className="font-mono text-xs whitespace-nowrap">vibe-cms.config.ts</code> and deploy:</span>
+        <span>{trustedPanel ? `This site trusts another org (${trustedPanel}), not ${panel ?? "this one"}: set its VIBE_ORG to ${panel ?? "this hub's org"}, then add this to its` : "This site doesn't let this panel back it up yet. Add this to its"} <code className="font-mono text-xs whitespace-nowrap">vibe-cms.config.ts</code> and deploy:</span>
       </p>
       <div className="flex gap-2">
         <Input readOnly value={snippet} className="font-mono text-xs" onFocus={e => e.currentTarget.select()} aria-label="Config to add" />
