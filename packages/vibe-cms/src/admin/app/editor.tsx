@@ -329,7 +329,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
       <div className={cn("flex min-h-full flex-col", arrival)}>
         <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
           {!settings.singleton && (
-            <Button variant="ghost" size="icon-sm" aria-label="Back" nativeButton={false} render={<Link to={`/content/${type}`} />}>
+            <Button variant="ghost" size="icon-sm" className="-ml-1.5 rounded-[8px] md:-ml-3.5" aria-label="Back" nativeButton={false} render={<Link to={`/content/${type}`} />}>
               <ChevronLeftIcon />
             </Button>
           )}

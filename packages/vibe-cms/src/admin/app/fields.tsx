@@ -1,4 +1,5 @@
-import { ChevronDownIcon, ChevronUpIcon, ChevronsDownUpIcon, ChevronsUpDownIcon, CopyIcon, GripVerticalIcon, LocateFixedIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, ChevronsDownUpIcon, ChevronsUpDownIcon, CopyIcon, GripVerticalIcon, LocateFixedIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
+import { MotionConfig, motion, useReducedMotion } from "motion/react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { IMPL, loadLazy, type WidgetDescriptor } from "../../descriptor.ts";
 import type {
@@ -26,6 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "../components/ui/switch.tsx";
 import { Textarea } from "../components/ui/textarea.tsx";
 import { cn } from "../lib/utils.ts";
+import { Tip } from "../components/ui/tooltip.tsx";
 import type { FieldDescriptor, WidgetContext, WidgetImpl } from "../index.ts";
 import { humanize, useAdmin } from "./context.tsx";
 import { setDragChip } from "./drag-chip.ts";
@@ -577,11 +579,47 @@ function itemSummary(schema: AnySchema, value: unknown, index: number): string {
   return `Item ${index + 1}`;
 }
 
+const HIDDEN = { opacity: 0, y: 10, filter: "blur(4px)" };
+const SHOWN = { opacity: 1, y: 0, filter: "blur(0px)" };
+const EASE = [0.32, 0.72, 0, 1] as const;
+const LAYOUT = { duration: 0.3, ease: EASE };
+
+/**
+ * Opens and closes by height, with the content fading, unblurring and sliding into place.
+ * Motion animates from wherever each value currently is, so toggling mid-animation reverses smoothly.
+ */
+function Collapse({ open, children }: { open: boolean, children: ReactNode }) {
+  return (
+    <MotionConfig reducedMotion="user">
+      <motion.div
+        inert={!open}
+        className="overflow-hidden"
+        initial={false}
+        animate={{ height: open ? "auto" : 0 }}
+        transition={{ duration: 0.28, ease: EASE }}
+      >
+        <motion.div initial={false} animate={open ? SHOWN : HIDDEN} transition={{ duration: open ? 0.32 : 0.2, ease: EASE }}>
+          {children}
+        </motion.div>
+      </motion.div>
+    </MotionConfig>
+  );
+}
+
 function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: ControlProps) {
   const s = schema as ArraySchema;
   const items = Array.isArray(value) ? value : [];
   const { keys, insert, remove, move } = useItemKeys(items.length);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Items glide to their new places when the order changes. `layoutDependency` limits that to reorders,
+  // so a block opening or closing doesn't also drag its neighbours along with a second animation.
+  const [order, setOrder] = useState(0);
+  const reduceMotion = useReducedMotion();
+  function reorder(change: () => void) {
+    setOrder(n => n + 1);
+    change();
+  }
+  const layout = reduceMotion ? false : "position";
   const item = unwrap(s.item);
   const variants = item.type === "union" ? (item as UnionSchema).options : null;
   const atMax = s.max !== undefined && items.length >= s.max;
@@ -620,8 +658,10 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
     const target = dropTarget();
     if(dragFrom !== null && target !== null) {
       const to = target > dragFrom ? target - 1 : target;
-      move(dragFrom, to);
-      onChange(moveItem(items, dragFrom, to));
+      reorder(() => {
+        move(dragFrom, to);
+        onChange(moveItem(items, dragFrom, to));
+      });
     }
     setDragFrom(null);
     setDropAt(null);
@@ -657,36 +697,44 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
         const hasIssues = issuesUnder(issues, itemPath).length > 0;
         const isCollapsed = collapsed.has(key);
         const controls = !readOnly && (
-          <div className="flex shrink-0 items-center opacity-60 transition-opacity group-hover/item:opacity-100">
-            <Button variant="ghost" size="icon-xs" aria-label="Move up" disabled={i === 0} onClick={() => {
-              move(i, i - 1);
-              onChange(moveItem(items, i, i - 1));
-            }}><ChevronUpIcon /></Button>
-            <Button variant="ghost" size="icon-xs" aria-label="Move down" disabled={i === items.length - 1} onClick={() => {
-              move(i, i + 1);
-              onChange(moveItem(items, i, i + 1));
-            }}><ChevronDownIcon /></Button>
+          <div className="relative z-10 flex shrink-0 items-center opacity-60 transition-opacity group-hover/item:opacity-100">
+            <Tip label="Move up">
+              <Button variant="ghost" size="icon-xs" aria-label="Move up" disabled={i === 0} onClick={() => reorder(() => {
+                move(i, i - 1);
+                onChange(moveItem(items, i, i - 1));
+              })}><ChevronUpIcon /></Button>
+            </Tip>
+            <Tip label="Move down">
+              <Button variant="ghost" size="icon-xs" aria-label="Move down" disabled={i === items.length - 1} onClick={() => reorder(() => {
+                move(i, i + 1);
+                onChange(moveItem(items, i, i + 1));
+              })}><ChevronDownIcon /></Button>
+            </Tip>
             {!simple && (
-              <Button variant="ghost" size="icon-xs" aria-label="Duplicate" disabled={atMax} onClick={() => {
-                insert(i + 1);
-                onChange([...items.slice(0, i + 1), structuredClone(entry), ...items.slice(i + 1)]);
-              }}><CopyIcon /></Button>
+              <Tip label="Duplicate">
+                <Button variant="ghost" size="icon-xs" aria-label="Duplicate" disabled={atMax} onClick={() => {
+                  insert(i + 1);
+                  onChange([...items.slice(0, i + 1), structuredClone(entry), ...items.slice(i + 1)]);
+                }}><CopyIcon /></Button>
+              </Tip>
             )}
-            <Button variant="ghost" size="icon-xs" aria-label="Remove" onClick={() => {
-              remove(i);
-              onChange(items.filter((_, j) => j !== i));
-            }}><Trash2Icon /></Button>
+            <Tip label="Remove">
+              <Button variant="ghost" size="icon-xs" aria-label="Remove" onClick={() => {
+                remove(i);
+                onChange(items.filter((_, j) => j !== i));
+              }}><Trash2Icon /></Button>
+            </Tip>
           </div>
         );
         if(simple) {
           return (
-            <div key={key} className="group/item flex items-start gap-1">
+            <motion.div key={key} layout={layout} layoutDependency={order} transition={LAYOUT} className="group/item flex items-start gap-1">
               <div className="min-w-0 flex-1">
                 <Field bare schema={s.item} name={String(i)} path={itemPath} value={entry} issues={issues} readOnly={readOnly} doc={doc}
                   onChange={next => onChange(items.map((v, j) => (j === i ? next ?? null : v)))} />
               </div>
               {controls}
-            </div>
+            </motion.div>
           );
         }
         const variant = variants ? variants[variantIndex(item as UnionSchema, entry)] : undefined;
@@ -695,7 +743,23 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
         const detail = variant ? summarize(variant, entry) : undefined;
         const target = dropTarget();
         return (
-          <div key={key} className="relative flex flex-col">
+          <motion.div key={key} layout={layout} layoutDependency={order} transition={LAYOUT} className="relative flex flex-col"
+            onDragOver={event => {
+              if(dragFrom === null) return;
+              // Handled out here, not on the card, so the gaps and insert points between cards are valid drop spots too.
+              event.preventDefault();
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              setDropAt(event.clientY < rect.top + rect.height / 2 ? i : i + 1);
+            }}
+            onDrop={event => {
+              if(dragFrom === null) return;
+              event.preventDefault();
+              event.stopPropagation();
+              drop();
+            }}
+
+          >
             {!readOnly && cards && i > 0 && (
               <InsertPoint
                 variants={variants}
@@ -711,21 +775,9 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                 hasIssues && "shadow-[0_0_0_1px_var(--destructive),var(--shadow-card)]",
                 dragFrom === i && "opacity-40"
               )}
-              onDragOver={event => {
-                if(dragFrom === null) return;
-                event.preventDefault();
-                event.stopPropagation();
-                const rect = event.currentTarget.getBoundingClientRect();
-                setDropAt(event.clientY < rect.top + rect.height / 2 ? i : i + 1);
-              }}
-              onDrop={event => {
-                if(dragFrom === null) return;
-                event.preventDefault();
-                event.stopPropagation();
-                drop();
-              }}
             >
-              <div className="flex items-center gap-1.5 border-b py-1.5 pr-2 pl-1 data-[collapsed=true]:border-b-0" data-collapsed={isCollapsed}>
+              <div className="group/head relative flex items-center gap-1.5 border-b py-1.5 pr-2 pl-1 transition-colors duration-200 hover:bg-foreground/[0.04] data-[collapsed=true]:border-transparent" data-collapsed={isCollapsed}>
+                <Tip label="Drag to reorder">
                 <button
                   type="button"
                   aria-label={`Drag to reorder ${title}`}
@@ -741,13 +793,15 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                     setDragFrom(null);
                     setDropAt(null);
                   }}
-                  className="flex size-6 shrink-0 cursor-grab items-center justify-center rounded-[6px] text-muted-foreground/50 hover:bg-foreground/[0.05] hover:text-muted-foreground active:cursor-grabbing disabled:cursor-default"
+                  className="relative z-10 flex size-6 shrink-0 cursor-grab items-center justify-center rounded-[6px] text-muted-foreground/50 hover:bg-foreground/[0.05] hover:text-muted-foreground active:cursor-grabbing disabled:cursor-default"
                 >
                   <GripVerticalIcon className="size-3.5" />
                 </button>
+                </Tip>
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+                  className="group/toggle flex min-w-0 flex-1 cursor-pointer items-center gap-2 self-stretch text-left text-sm outline-none after:absolute after:inset-0"
+                  aria-expanded={!isCollapsed}
                   onClick={() => setCollapsed(prev => {
                     const next = new Set(prev);
                     if(next.has(key)) next.delete(key);
@@ -755,19 +809,22 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                     return next;
                   })}
                 >
+                  <ChevronRightIcon className={cn("-mr-2 size-3.5 w-0 shrink-0 text-muted-foreground opacity-0 transition-[opacity,rotate,width,margin] duration-200 group-hover/head:mr-0 group-hover/head:w-3.5 group-hover/head:opacity-100 group-focus-visible/toggle:mr-0 group-focus-visible/toggle:w-3.5 group-focus-visible/toggle:opacity-100", !isCollapsed && "rotate-90")} />
                   {VariantIcon && <VariantIcon className="size-4 shrink-0 text-muted-foreground" />}
                   <span className="shrink-0 font-medium">{title}</span>
                   {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
                   {hasIssues && <span className="size-1.5 shrink-0 rounded-full bg-destructive" />}
                 </button>
                 {previewing && (
-                  <Button variant="ghost" size="icon-xs" aria-label="Show in preview" title="Show in preview (as last saved)" onClick={() => focusPreviewBlock(i)}>
-                    <LocateFixedIcon />
-                  </Button>
+                  <Tip label="Show in preview (as last saved)">
+                    <Button variant="ghost" size="icon-xs" className="relative z-10" aria-label="Show in preview" onClick={() => focusPreviewBlock(i)}>
+                      <LocateFixedIcon />
+                    </Button>
+                  </Tip>
                 )}
                 {controls}
               </div>
-              {!isCollapsed && (
+              <Collapse open={!isCollapsed}>
                 <div className="p-4">
                   <Field
                     bare
@@ -781,10 +838,10 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                     onChange={next => onChange(items.map((v, j) => (j === i ? next ?? null : v)))}
                   />
                 </div>
-              )}
+              </Collapse>
             </div>
             {i === items.length - 1 && target === items.length && <DropLine />}
-          </div>
+          </motion.div>
         );
       })}
       {addButton}

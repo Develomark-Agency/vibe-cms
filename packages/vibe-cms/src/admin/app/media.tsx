@@ -211,7 +211,7 @@ function PickBox({ item, className }: { item: Item, className?: string }) {
       onCheckedChange={() => selection.toggle(item)}
       onClick={event => event.stopPropagation()}
       aria-label={`Select ${name}`}
-      className={cn("transition-opacity duration-150", !selection.multi && "opacity-0 group-hover/pick:opacity-100 focus-visible:opacity-100", className)}
+      className={cn("transition-opacity duration-150 after:inset-0", !selection.multi && "opacity-0 group-hover/pick:opacity-100 focus-visible:opacity-100", className)}
     />
   );
 }

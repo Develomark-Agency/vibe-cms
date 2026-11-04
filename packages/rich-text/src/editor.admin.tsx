@@ -247,6 +247,8 @@ export default defineReactWidget<RichTextDoc, RichEditorOptions>(({ value, onCha
     },
     onUpdate({ editor: e }) {
       const doc = fromTiptap(e.getJSON());
+      // An update that changes nothing (the editor normalising what it loaded) isn't an edit.
+      if(JSON.stringify(doc) === lastEmitted.current) return;
       lastEmitted.current = JSON.stringify(doc);
       onChangeRef.current(doc);
     }

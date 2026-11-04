@@ -60,4 +60,38 @@ function TooltipContent({
   )
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }
+/**
+ * One tooltip shared by every `Tip` on the page. Moving from one trigger to the next within the
+ * close delay keeps the popup open and glides it across, instead of closing one and opening another.
+ */
+const tipHandle = TooltipPrimitive.createHandle<string>()
+
+function TipHost() {
+  return (
+    <TooltipPrimitive.Root handle={tipHandle} disableHoverablePopup>
+      {({ payload }) => (
+        <TooltipPrimitive.Portal>
+          <TooltipPrimitive.Positioner
+            side="top"
+            sideOffset={4}
+            className="isolate z-50 transition-[top,left,right,bottom,transform] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] data-instant:transition-none"
+          >
+            <TooltipPrimitive.Popup
+              data-slot="tooltip-content"
+              className="pointer-events-none z-50 w-fit max-w-xs origin-(--transform-origin) rounded-[8px] bg-foreground px-3 py-1.5 text-xs text-background transition-[opacity,scale] duration-150 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0"
+            >
+              {payload as string | undefined}
+            </TooltipPrimitive.Popup>
+          </TooltipPrimitive.Positioner>
+        </TooltipPrimitive.Portal>
+      )}
+    </TooltipPrimitive.Root>
+  )
+}
+
+/** Gives a button a tooltip, shown by the shared `TipHost`. */
+function Tip({ label, children }: { label: string, children: React.ReactElement }) {
+  return <TooltipPrimitive.Trigger handle={tipHandle} payload={label} delay={350} closeDelay={150} render={children} />
+}
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, Tip, TipHost }

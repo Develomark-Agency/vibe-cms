@@ -29,7 +29,7 @@ import {
 } from "../components/ui/sidebar.tsx";
 import { Toaster } from "../components/ui/sonner.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
-import { TooltipProvider } from "../components/ui/tooltip.tsx";
+import { TipHost, TooltipProvider } from "../components/ui/tooltip.tsx";
 import { createAdminClient, read, setUnauthorizedHandler, siteApi, type SessionState, type SiteInfo } from "./client.ts";
 import { AdminContext, collectionLabel, collectionSettings, localeName, useAdmin, type AdminContextValue } from "./context.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
@@ -443,6 +443,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
       </SidebarInset>
       <ErrorBoundary resetKey={paletteOpen}><Palette open={paletteOpen} onOpenChange={setPaletteOpen} /></ErrorBoundary>
       <ErrorBoundary resetKey={previewOpen}><PreviewWindow /></ErrorBoundary>
+      <TipHost />
       <Toaster position="bottom-right" />
     </SidebarProvider>
   );
