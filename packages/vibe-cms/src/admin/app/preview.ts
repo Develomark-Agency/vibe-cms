@@ -1,5 +1,5 @@
 import type { AdminClient } from "../index.ts";
-import { request } from "./client.ts";
+import { read, siteApi } from "./client.ts";
 
 /**
  * The draft preview's state, outside React so the action client can announce saves. Preview pages
@@ -66,7 +66,7 @@ export function setPreviewFrame(next: Window | null) {
 
 /** A URL that signs a new window into preview mode and lands on `path`; for a pop-out, in its window page. */
 async function handoff(path: string, popOut = false): Promise<string> {
-  const { code } = await request<{ code: string }>(prefix, "/preview", { method: "POST" });
+  const { code } = await read(await siteApi(prefix).preview.$post());
   return `${prefix}/preview?code=${encodeURIComponent(code)}&path=${encodeURIComponent(path)}${popOut ? "&window=1" : ""}`;
 }
 
@@ -119,7 +119,7 @@ export function closePreview() {
   for(const target of windows) {
     if("closed" in target && target.closed) windows.delete(target);
   }
-  if(windows.size === 0) void request(prefix, "/preview", { method: "DELETE" }).catch(() => {});
+  if(windows.size === 0) void siteApi(prefix).preview.$delete().catch(() => {});
 }
 
 export function reloadPreview() {

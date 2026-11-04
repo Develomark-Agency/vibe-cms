@@ -61,23 +61,3 @@ export class PluginHost {
     return this.plugins.find(p => p.name === name);
   }
 }
-
-export function matchRoute(pattern: string, method: string, path: string): Record<string, string> | null {
-  const [patternMethod, patternPath] = pattern.includes(" ") ? pattern.split(/\s+/, 2) as [string, string] : ["*", pattern];
-  if(patternMethod !== "*" && patternMethod.toUpperCase() !== method.toUpperCase()) return null;
-  const want = patternPath.split("/").filter(Boolean);
-  const got = path.split("/").filter(Boolean);
-  const params: Record<string, string> = {};
-  for(let i = 0; i < want.length; i++) {
-    const segment = want[i]!;
-    if(segment === "*") {
-      params["*"] = got.slice(i).join("/");
-      return params;
-    }
-    const value = got[i];
-    if(value === undefined) return null;
-    if(segment.startsWith(":")) params[segment.slice(1)] = decodeURIComponent(value);
-    else if(segment !== value) return null;
-  }
-  return want.length === got.length ? params : null;
-}

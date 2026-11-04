@@ -1,3 +1,4 @@
+import { Hono } from "hono";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -110,22 +111,19 @@ async function authorize(server: string, meta: ServerMetadata, clientName: strin
 
   let settle!: { resolve: (code: string) => void, reject: (error: Error) => void };
   const code = new Promise<string>((resolve, reject) => (settle = { resolve, reject }));
-  const loopback = headless ? null : Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch(request) {
-      const url = new URL(request.url);
-      if(url.pathname !== "/callback") return new Response("Not found", { status: 404 });
-      const params = url.searchParams;
-      if(params.get("state") !== state) return page("This sign-in link is out of date. Run vibe-cms login again.", 400);
-      if(params.get("error")) {
-        settle.reject(new Error(params.get("error_description") ?? params.get("error")!));
-        return page("Not logged in. You can close this tab.");
-      }
-      settle.resolve(params.get("code") ?? "");
-      return page("Logged in. You can close this tab and go back to the terminal.");
+  const callback = new Hono();
+  callback.get("/callback", c => {
+    const params = new URL(c.req.url).searchParams;
+    if(params.get("state") !== state) return page("This sign-in link is out of date. Run vibe-cms login again.", 400);
+    if(params.get("error")) {
+      settle.reject(new Error(params.get("error_description") ?? params.get("error")!));
+      return page("Not logged in. You can close this tab.");
     }
+    settle.resolve(params.get("code") ?? "");
+    return page("Logged in. You can close this tab and go back to the terminal.");
   });
+  callback.notFound(() => new Response("Not found", { status: 404 }));
+  const loopback = headless ? null : Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: callback.fetch });
   const redirectUri = headless?.redirectUri ?? `http://127.0.0.1:${loopback!.port}/callback`;
   try {
     const registered = await fetch(meta.registration_endpoint, {

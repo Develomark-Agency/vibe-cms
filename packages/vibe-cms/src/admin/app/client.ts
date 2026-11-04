@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { hc } from "hono/client";
 import type { SerializedConfig } from "../../config.ts";
 import { Result } from "better-result";
 import { createThrowingActionClient, encodeInput } from "../../actions/client.ts";
@@ -6,6 +7,7 @@ import type { CoreActions } from "../../actions/core.ts";
 import type { ActionErrorTag } from "../../actions/errors.ts";
 import { createQueryClient } from "../../query/index.ts";
 import type { SiteSettings } from "../../handler/engine.ts";
+import type { SiteApi } from "../../handler/router.ts";
 import type { Session } from "../../server/index.ts";
 import type { AdminClient } from "../index.ts";
 import { notifyPreview } from "./preview.ts";
@@ -97,6 +99,47 @@ export async function request<T>(prefix: string, path: string, init: RequestInit
   return data as T;
 }
 
+/** The site's own routes, typed by the server's (`SiteApi`). Carries the session token and reports expiry like `request`. */
+function createSiteApi(prefix: string) {
+  return hc<SiteApi>(`${location.origin}${prefix}/api`, {
+    headers: (): Record<string, string> => (token ? { authorization: `Bearer ${token}` } : {}),
+    init: { credentials: "same-origin" },
+    async fetch(input: RequestInfo | URL, init?: RequestInit) {
+      const response = await fetch(input, init);
+      const { pathname } = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      if(response.status === 401 && !pathname.startsWith(`${prefix}/api/session`)) onUnauthorized?.();
+      return response;
+    }
+  });
+}
+
+const siteApis = new Map<string, ReturnType<typeof createSiteApi>>();
+
+/** `siteApi(prefix).users[":id"].$patch({ param: { id }, json: { roles } })`, then `read(...)`. */
+export function siteApi(prefix: string) {
+  let found = siteApis.get(prefix);
+  if(!found) siteApis.set(prefix, found = createSiteApi(prefix));
+  return found;
+}
+
+interface Reply<T> {
+  ok: boolean,
+  status: number,
+  statusText: string,
+  headers: Headers,
+  json(): Promise<T>,
+  text(): Promise<string>
+}
+
+/** A reply's JSON, or an `ApiError` carrying the server's message, tag and details. */
+export async function read<T>(reply: Reply<T>): Promise<T> {
+  if(reply.ok) return reply.json();
+  const failure = reply.headers.get("content-type")?.includes("json")
+    ? await reply.json().catch(() => null) as { error?: string, details?: unknown, tag?: ActionErrorTag } | null
+    : null;
+  throw new ApiError(reply.status, failure?.error ?? reply.statusText, failure?.details, failure?.tag);
+}
+
 /** Raw bytes from the editor API, with the same credentials as `request`, for previews `<img src>` can't authenticate. */
 export async function requestBlob(prefix: string, path: string): Promise<Blob> {
   const headers = new Headers();
@@ -129,7 +172,7 @@ export function createAdminClient(prefix: string, types: string[], navigate: (pa
   return {
     api,
     actions,
-    query: createQueryClient(async queries => (await api<{ results: unknown[] }>("/query", { method: "POST", json: { queries } })).results),
+    query: createQueryClient(async queries => (await read(await siteApi(prefix).query.$post({ json: { queries } }))).results),
     upload: (file, options = {}) => actions.assets.upload({ file, ...options }),
     assets: {
       list: (options = {}) => actions.assets.list(options),

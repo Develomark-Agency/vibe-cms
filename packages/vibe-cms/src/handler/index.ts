@@ -1,7 +1,8 @@
 import { collectionInfo, serializeConfig, type AnyConfig, type CollectionMarker } from "../config.ts";
 import type { PluginDescriptor } from "../descriptor.ts";
 import { createQueryClient, type QueryClient } from "../query/index.ts";
-import { handleRequest, readCookie } from "./api.ts";
+import { createRouter } from "./router.ts";
+import { readCookie } from "./http.ts";
 import { can, verifySession } from "./auth.ts";
 import { getOrCreateMeta, migrate, newId, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
@@ -199,6 +200,7 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     return fetch(request);
   }
 
+  const router = createRouter(prefix);
   const oauthPaths = wellKnownPaths(prefix);
   const rootWellKnown = new Set([...oauthPaths.authorizationServer, ...oauthPaths.protectedResource].filter(path => !path.startsWith(prefix)));
 
@@ -210,7 +212,7 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   async function handle(request: Request, env: E, ctx: ExecutionContext): Promise<Response> {
     const bindings = options.bindings(env) as CoreBindings;
     const assets = bindings.assets ?? (env as { ASSETS?: Fetcher } | undefined)?.ASSETS;
-    return handleRequest(request, { state: await state(env), dev, assets, ctx });
+    return Promise.resolve(router.fetch(request, { state: await state(env), dev, assets, ctx }));
   }
 
   async function scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void> {

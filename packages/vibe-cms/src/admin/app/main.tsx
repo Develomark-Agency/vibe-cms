@@ -30,7 +30,7 @@ import {
 import { Toaster } from "../components/ui/sonner.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { TooltipProvider } from "../components/ui/tooltip.tsx";
-import { createAdminClient, request, setUnauthorizedHandler, type SessionState, type SiteInfo } from "./client.ts";
+import { createAdminClient, read, setUnauthorizedHandler, siteApi, type SessionState, type SiteInfo } from "./client.ts";
 import { AdminContext, collectionLabel, collectionSettings, localeName, useAdmin, type AdminContextValue } from "./context.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
 import { setAccent, setFavicon, startTheme, useTheme, type Theme } from "./theme.ts";
@@ -100,7 +100,8 @@ function App({ config }: { config: AnyConfig }) {
     return m?.[1] ?? config.prefix ?? "/_vibe";
   }, []);
   setBase(`${prefix}/admin`);
-  const info = useQuery({ queryKey: ["info"], queryFn: () => request<SiteInfo>(prefix, "/info"), staleTime: Infinity });
+  const info = useQuery({ queryKey: ["info"], // The serialized schemas are JSON Schema, which `hc`'s JSON typing can't express; `SiteInfo` keeps them precise.
+    queryFn: async () => await read(await siteApi(prefix).info.$get()) as unknown as SiteInfo, staleTime: Infinity });
   const [session, setSession] = useState<SessionState | null | undefined>(undefined);
   // An agent or the CLI asking to connect: shown once the user is signed in.
   const [connect, setConnect] = useState(takeConnectRequest);
@@ -470,7 +471,7 @@ function OrgMoveBanner() {
         <Button size="sm" variant="outline" disabled={busy} onClick={async () => {
           setBusy(true);
           try {
-            await request(info.prefix, "/org/move", { method: "DELETE" });
+            await read(await siteApi(info.prefix).org.move.$delete());
             setMove(null);
           } finally {
             setBusy(false);

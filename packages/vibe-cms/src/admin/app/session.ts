@@ -1,5 +1,5 @@
 import type { SiteSettings } from "../../handler/engine.ts";
-import { request, setToken, type SessionState, type SiteInfo } from "./client.ts";
+import { read, setToken, siteApi, type SessionState, type SiteInfo } from "./client.ts";
 import { getTheme, isTheme, setTheme, subscribeTheme, type Theme } from "./theme.ts";
 
 /**
@@ -95,7 +95,7 @@ interface SessionResponse extends Omit<SessionState, "token"> {
 }
 
 async function exchange(prefix: string, input: { code?: string, dev?: boolean, resume?: boolean }): Promise<SessionState> {
-  const session = await request<SessionResponse>(prefix, "/session", { method: "POST", json: input });
+  const session: SessionResponse = await read(await siteApi(prefix).session.$post({ json: input }));
   setToken(session.token);
   return session;
 }
@@ -136,5 +136,5 @@ export function renewSession(info: SiteInfo): Promise<SessionState | null> {
 
 export async function signOut(prefix: string) {
   setToken(undefined);
-  await request(prefix, "/session", { method: "DELETE" }).catch(() => {});
+  await siteApi(prefix).session.$delete().catch(() => {});
 }

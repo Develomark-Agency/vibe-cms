@@ -6,7 +6,7 @@ import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
-import { request, type SiteInfo } from "./client.ts";
+import { read, siteApi, type SiteInfo } from "./client.ts";
 import { embedded } from "./session.ts";
 
 /**
@@ -14,14 +14,6 @@ import { embedded } from "./session.ts";
  * identity provider, or with passkeys. Setup and invite links arrive in the URL's fragment, which
  * never reaches a server log.
  */
-
-interface AuthInfo {
-  mode: "hub" | "oidc" | "passkey",
-  /** Nobody owns the site yet: only the setup link gets anyone in. */
-  setup: boolean,
-  email: boolean,
-  provider: string | null
-}
 
 function fragment(): Record<string, string> {
   return Object.fromEntries(new URLSearchParams(location.hash.slice(1)));
@@ -32,7 +24,7 @@ function clearFragment() {
 }
 
 export function SignIn({ info, error, onSignedIn }: { info: SiteInfo, error: string | null, onSignedIn(): Promise<void> }) {
-  const auth = useQuery({ queryKey: ["auth"], queryFn: () => request<AuthInfo>(info.prefix, "/auth"), staleTime: Infinity });
+  const auth = useQuery({ queryKey: ["auth"], queryFn: async () => read(await siteApi(info.prefix).auth.$get()), staleTime: Infinity });
   const [link] = useState(fragment);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(link.error ?? error);
@@ -53,15 +45,15 @@ export function SignIn({ info, error, onSignedIn }: { info: SiteInfo, error: str
   }
 
   async function registerPasskey(input: Record<string, unknown>) {
-    const { challengeId, options } = await request<{ challengeId: string, options: Parameters<typeof startRegistration>[0]["optionsJSON"] }>(info.prefix, "/auth/passkey/register/options", { method: "POST", json: input });
+    const { challengeId, options } = await read(await siteApi(info.prefix).auth.passkey.register.options.$post({ json: input }));
     const response = await startRegistration({ optionsJSON: options });
-    await request(info.prefix, "/auth/passkey/register", { method: "POST", json: { challengeId, response } });
+    await read(await siteApi(info.prefix).auth.passkey.register.$post({ json: { challengeId, response } }));
   }
 
   async function usePasskey() {
-    const { challengeId, options } = await request<{ challengeId: string, options: Parameters<typeof startAuthentication>[0]["optionsJSON"] }>(info.prefix, "/auth/passkey/login/options", { method: "POST", json: {} });
+    const { challengeId, options } = await read(await siteApi(info.prefix).auth.passkey.login.options.$post());
     const response = await startAuthentication({ optionsJSON: options });
-    await request(info.prefix, "/auth/passkey/login", { method: "POST", json: { challengeId, response } });
+    await read(await siteApi(info.prefix).auth.passkey.login.$post({ json: { challengeId, response } }));
   }
 
   const mode = auth.data?.mode;

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
-import { request, type SessionState, type SiteInfo } from "./client.ts";
+import { read, siteApi, type SessionState, type SiteInfo } from "./client.ts";
 import { useAdmin } from "./context.tsx";
 
 /**
@@ -37,22 +37,15 @@ function forgetConnectRequest() {
   } catch {}
 }
 
-interface Described {
-  client: string,
-  returnsTo: string,
-  showsCode: boolean,
-  readOnlyOnly: boolean
-}
-
 export function ConnectApp({ info, session, id, onDone }: { info: SiteInfo, session: SessionState, id: string, onDone(): void }) {
-  const described = useQuery({ queryKey: ["connect", id], queryFn: () => request<Described>(info.prefix, `/oauth/request?id=${encodeURIComponent(id)}`), retry: false });
+  const described = useQuery({ queryKey: ["connect", id], queryFn: async () => read(await siteApi(info.prefix).oauth.request.$get({ query: { id } })), retry: false });
   const [readOnly, setReadOnly] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function answer(allow: boolean) {
     setBusy(true);
     try {
-      const { redirect } = await request<{ redirect: string }>(info.prefix, "/oauth/decide", { method: "POST", json: { request: id, allow, readOnly } });
+      const { redirect } = await read(await siteApi(info.prefix).oauth.decide.$post({ json: { request: id, allow, readOnly } }));
       forgetConnectRequest();
       location.href = redirect;
     } catch (error) {
@@ -99,21 +92,13 @@ export function ConnectApp({ info, session, id, onDone }: { info: SiteInfo, sess
   );
 }
 
-interface Connection {
-  id: string,
-  name: string,
-  readOnly: boolean,
-  connectedAt: number,
-  lastUsedAt: number | null
-}
-
 /** The agents and CLIs the signed-in user connected to this site. */
 export function ConnectionsPage() {
   const { info } = useAdmin();
   const queryClient = useQueryClient();
-  const connections = useQuery({ queryKey: ["connections"], queryFn: () => request<{ connections: Connection[] }>(info.prefix, "/oauth/connections") });
+  const connections = useQuery({ queryKey: ["connections"], queryFn: async () => read(await siteApi(info.prefix).oauth.connections.$get()) });
   const remove = useMutation({
-    mutationFn: (id: string) => request(info.prefix, `/oauth/connections/${id}`, { method: "DELETE" }),
+    mutationFn: async (id: string) => read(await siteApi(info.prefix).oauth.connections[":id"].$delete({ param: { id } })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections"] }),
     onError: error => toast.error((error as Error).message)
   });

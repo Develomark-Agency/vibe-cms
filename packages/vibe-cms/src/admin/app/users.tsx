@@ -7,23 +7,13 @@ import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
-import { request } from "./client.ts";
+import { read, siteApi } from "./client.ts";
 import { useAdmin } from "./context.tsx";
 
 /**
  * Who may sign in to a site without an org, and with which roles. Owners invite people by email;
  * the invite is emailed when the site can send email, and shown to copy either way.
  */
-
-interface User {
-  id: string,
-  email: string,
-  name: string | null,
-  roles: string[],
-  passkeys: number,
-  createdAt: number,
-  lastSignInAt: number | null
-}
 
 interface Invited {
   user: { email: string },
@@ -36,7 +26,7 @@ interface Invited {
 export function UsersPage() {
   const { info, session } = useAdmin();
   const queryClient = useQueryClient();
-  const users = useQuery({ queryKey: ["users"], queryFn: () => request<{ users: User[], mode: string, roles: string[] }>(info.prefix, "/users") });
+  const users = useQuery({ queryKey: ["users"], queryFn: async () => read(await siteApi(info.prefix).users.$get()) });
   const [invited, setInvited] = useState<Invited | null>(null);
 
   useEffect(() => {
@@ -44,7 +34,7 @@ export function UsersPage() {
   }, [info.site.name]);
 
   const inviteMutation = useMutation({
-    mutationFn: (input: { email: string, roles: string[] }) => request<Invited>(info.prefix, "/users/invites", { method: "POST", json: input }),
+    mutationFn: async (input: { email: string, roles: string[] }) => read(await siteApi(info.prefix).users.invites.$post({ json: input })),
     onSuccess(result) {
       setInvited(result);
       void queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -52,12 +42,12 @@ export function UsersPage() {
     onError: error => toast.error((error as Error).message)
   });
   const update = useMutation({
-    mutationFn: ({ id, roles }: { id: string, roles: string[] }) => request(info.prefix, `/users/${id}`, { method: "PATCH", json: { roles } }),
+    mutationFn: async ({ id, roles }: { id: string, roles: string[] }) => read(await siteApi(info.prefix).users[":id"].$patch({ param: { id }, json: { roles } })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
     onError: error => toast.error((error as Error).message)
   });
   const remove = useMutation({
-    mutationFn: (id: string) => request(info.prefix, `/users/${id}`, { method: "DELETE" }),
+    mutationFn: async (id: string) => read(await siteApi(info.prefix).users[":id"].$delete({ param: { id } })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
     onError: error => toast.error((error as Error).message)
   });

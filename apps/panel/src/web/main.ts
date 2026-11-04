@@ -1,4 +1,5 @@
 import "vibe-cms/panel/styles.css";
-import { hostedBackend, startPanel } from "vibe-cms/panel";
+import { startPanel } from "vibe-cms/panel";
+import { hostedBackend } from "./backend.ts";
 
 startPanel(hostedBackend());

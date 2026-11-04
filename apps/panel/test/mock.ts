@@ -119,6 +119,8 @@ export const jar = new Map<string, string>();
 
 export async function panel(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
+  // Clients send JSON as JSON; the routes that read a body insist on it.
+  if(typeof init.body === "string" && !headers.has("content-type")) headers.set("content-type", "application/json");
   headers.set("cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; "));
   const response = await handle(new Request(`${HUB}${path}`, { ...init, headers }), env);
   for(const header of response.headers.getSetCookie()) {

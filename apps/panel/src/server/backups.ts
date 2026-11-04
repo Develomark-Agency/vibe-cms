@@ -1,5 +1,5 @@
 import { httpCaller, type ActionCaller } from "vibe-cms/actions";
-import { BackupError, packSnapshot, readSnapshot, restoreSnapshot, takeSnapshot, verifyRestore, type BackupStore, type Progress, type SnapshotFile } from "vibe-cms/backups";
+import { BackupError, readSnapshot, restoreSnapshot, takeSnapshot, verifyRestore, type BackupStore, type Progress, type SnapshotFile } from "vibe-cms/backups";
 import { fetchDescriptor, PanelError, type BackupPolicy, type PanelSite, type SiteBackups } from "vibe-cms/panel";
 import { randomString } from "./oidc.ts";
 import { backupToken, codeFor, hubOrg } from "./hub.ts";
@@ -7,7 +7,7 @@ import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { max } from "drizzle-orm";
 import * as t from "./schema.ts";
 import type { RunRow, SnapshotRow } from "./schema.ts";
-import { db, json, siteById, type Env, type SessionRow } from "./shared.ts";
+import { db, siteById, type Env, type SessionRow } from "./shared.ts";
 
 /**
  * Scheduled backups. The panel holds the policy (when, how many to keep) and the archive
@@ -99,7 +99,7 @@ async function deletePrefix(bucket: R2Bucket, prefix: string, keep?: (key: strin
 
 // --- Policies ------------------------------------------------------------------------
 
-function cleanPolicy(input: unknown): BackupPolicy {
+export function cleanPolicy(input: unknown): BackupPolicy {
   const value = (input ?? {}) as Partial<Record<keyof BackupPolicy, unknown>>;
   function count(n: unknown, fallback: number) {
     return Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 1000 ? n as number : fallback;
@@ -126,7 +126,7 @@ async function effectivePolicy(env: Env, siteId: string): Promise<BackupPolicy> 
   return await storedPolicy(env, siteId) ?? defaultPolicy(env);
 }
 
-async function savePolicy(env: Env, siteId: string, policy: BackupPolicy | null, user: string) {
+export async function savePolicy(env: Env, siteId: string, policy: BackupPolicy | null, user: string) {
   if(policy === null) {
     await db(env).delete(t.backupPolicies).where(eq(t.backupPolicies.site_id, siteId));
     return;
@@ -194,7 +194,7 @@ async function prune(env: Env, siteId: string) {
 
 // --- Runs ----------------------------------------------------------------------------
 
-async function enqueue(env: Env, siteId: string, kind: RunRow["kind"], options: { snapshot?: string, user?: string } = {}): Promise<string> {
+export async function enqueue(env: Env, siteId: string, kind: RunRow["kind"], options: { snapshot?: string, user?: string } = {}): Promise<string> {
   if(kind !== "restore") {
     // One snapshot at a time: asking again while one is queued or running joins it.
     const [active] = await db(env).select({ id: t.backupRuns.id }).from(t.backupRuns)
@@ -220,7 +220,7 @@ async function enqueue(env: Env, siteId: string, kind: RunRow["kind"], options: 
 }
 
 /** Queues the scheduled snapshot of every site whose time has come and has none since. */
-async function enqueueDue(env: Env, now: number) {
+export async function enqueueDue(env: Env, now: number) {
   const sites = await db(env)
     .select({ id: t.sites.id, last: max(t.backupSnapshots.taken_at) })
     .from(t.sites)
@@ -384,7 +384,7 @@ function toRun(row: RunRow) {
   };
 }
 
-async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
+export async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
   const [own, effective, origin, snapshots, runs, trusted] = await Promise.all([
     storedPolicy(env, site.id),
     effectivePolicy(env, site.id),
@@ -415,7 +415,7 @@ async function siteBackups(env: Env, site: PanelSite): Promise<SiteBackups> {
 }
 
 /** Checks the user may restore this site: the site itself decides, through the user's own session. */
-async function canRestore(env: Env, session: SessionRow, site: PanelSite) {
+export async function canRestore(env: Env, session: SessionRow, site: PanelSite) {
   const code = await codeFor(env, session, site);
   const { url, prefix } = apiParts(site);
   const exchange = await fetch(`${url}${prefix}/api/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
@@ -427,66 +427,4 @@ async function canRestore(env: Env, session: SessionRow, site: PanelSite) {
       ? "Your role on this site doesn't allow restoring backups (it needs `backups: true`)"
       : result.error.message);
   }
-}
-
-/** `/api/backups…` and `/api/sites/<id>/backups…`. Returns null for other paths. */
-export async function backupsApi(request: Request, env: Env, session: SessionRow, path: string, ctx?: ExecutionContext): Promise<Response | null> {
-  const method = request.method;
-  function kick(siteId: string) {
-    // Starts at once; if this Worker stops first, the cron trigger takes the run over.
-    if(ctx) ctx.waitUntil(processBackups(env, { siteId, schedule: false, budget: 25_000 }).catch(error => console.error(error)));
-  }
-
-  if(path === "/backups" && method === "GET") {
-    return json({ available: Boolean(env.BACKUPS), panel: env.VIBE_ORG ? hubOrg(env) : null, defaults: await defaultPolicy(env) });
-  }
-  if(path === "/backups/download" && method === "GET") {
-    const id = new URL(request.url).searchParams.get("snapshot") ?? "";
-    const [row] = await db(env).select().from(t.backupSnapshots).where(eq(t.backupSnapshots.id, id));
-    if(!row || !env.BACKUPS) return json({ error: "Unknown snapshot" }, { status: 404 });
-    const site = await siteById(env, row.site_id);
-    const slug = (site?.name ?? row.site_id).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "site";
-    const stamp = new Date(row.taken_at).toISOString().slice(0, 16).replace(/[T:]/g, "-");
-    // Streams from the archive as it's packed; nothing is built up in memory.
-    return new Response(await packSnapshot(bucketStore(env.BACKUPS), row.id), {
-      headers: {
-        "content-type": "application/gzip",
-        "content-disposition": `attachment; filename="${slug}-${stamp}.vibe"`,
-        "cache-control": "no-store"
-      }
-    });
-  }
-  if(path === "/backups/defaults" && method === "PUT") {
-    const { policy } = await request.json() as { policy?: unknown };
-    await savePolicy(env, "*", cleanPolicy(policy), session.sub);
-    return json({ defaults: await defaultPolicy(env) });
-  }
-
-  const m = /^\/sites\/([^/]+)\/backups(\/policy|\/restore)?$/.exec(path);
-  if(!m) return null;
-  const site = await siteById(env, decodeURIComponent(m[1]!));
-  if(!site) return json({ error: "Unknown site" }, { status: 404 });
-  if(!env.BACKUPS && method !== "GET") return json({ error: "This panel has no BACKUPS bucket" }, { status: 501 });
-
-  if(!m[2] && method === "GET") return json(await siteBackups(env, site));
-  if(!m[2] && method === "POST") {
-    const id = await enqueue(env, site.id, "manual", { user: session.email ?? session.sub });
-    kick(site.id);
-    return json({ run: id }, { status: 202 });
-  }
-  if(m[2] === "/policy" && method === "PUT") {
-    const { policy } = await request.json() as { policy?: unknown };
-    await savePolicy(env, site.id, policy === null ? null : cleanPolicy(policy), session.sub);
-    return json(await siteBackups(env, site));
-  }
-  if(m[2] === "/restore" && method === "POST") {
-    const { snapshot } = await request.json() as { snapshot?: string };
-    const [row] = snapshot ? await db(env).select().from(t.backupSnapshots).where(eq(t.backupSnapshots.id, snapshot)) : [];
-    if(!row) return json({ error: "Unknown snapshot" }, { status: 404 });
-    await canRestore(env, session, site);
-    const id = await enqueue(env, site.id, "restore", { snapshot: row.id, user: session.email ?? session.sub });
-    kick(site.id);
-    return json({ run: id }, { status: 202 });
-  }
-  return json({ error: "Not found" }, { status: 404 });
 }
