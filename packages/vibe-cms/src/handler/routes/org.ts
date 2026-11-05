@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { HttpError } from "../../config.ts";
 import { require } from "../auth.ts";
 import { jsonInput, type SiteEnv } from "../http.ts";
-import { needsSetup } from "../signin.ts";
+import { announceOnRequest, needsSetup } from "../signin.ts";
 
 /** The org whose hub the site trusts, and moving to another one. */
 export const org = new Hono<SiteEnv>()
@@ -10,6 +10,12 @@ export const org = new Hono<SiteEnv>()
     const { state } = c.env;
     require(state, c.get("session"), { action: "write", scope: "site" });
     return c.json({ ...await state.org.status(), history: await state.org.history() });
+  })
+
+  // Anyone may ask a new site to print its links again; they go to the logs, never into the reply.
+  .post("/org/announce", async c => {
+    const { state } = c.env;
+    return c.json(await announceOnRequest(state, new URL(c.req.url).origin));
   })
 
   // Hub → site, server to server: a hub claiming a site that has no org, with the token from the site's log.

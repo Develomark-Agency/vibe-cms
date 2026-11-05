@@ -25,8 +25,8 @@ describe("vibe-cms admin attach", () => {
   });
 
   test("fails with the panel's own words", async () => {
-    await expect(attach({ link: "x" }, reply(422, { error: "No _vibe-hub record for agency.test" }))).rejects.toThrow("No _vibe-hub record");
-    await expect(attach({ link: "x" }, reply(502, {}))).rejects.toThrow("502");
+    await expect(attach({ link: "https://x.test#claim=abc" }, reply(422, { error: "No _vibe-hub record for agency.test" }))).rejects.toThrow("No _vibe-hub record");
+    await expect(attach({ link: "https://x.test#claim=abc" }, reply(502, {}))).rejects.toThrow("502");
   });
 
   test("says what happened to the starting roles", () => {

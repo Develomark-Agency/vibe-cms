@@ -1,7 +1,9 @@
 import { styleText } from "node:util";
+import { claimLinkFor, connect, type ClaimLookup, type ClaimOptions } from "./claim.ts";
 import { hubPost } from "./login.ts";
 
-export interface AttachOptions {
+export interface AttachOptions extends ClaimOptions {
+  /** The site's claim link, or just its address: then the link is fetched for you (`vibe-cms admin claim-link`). */
   link: string,
   /** A role template's id, `none` for no starting roles, or undefined for the panel's default. */
   template?: string,
@@ -21,9 +23,11 @@ interface Attached {
  * `vibe-cms admin attach <link>`: gives a site's claim link to the panel, which tells the site its org
  * and adds it. The panel does the work as the logged-in user, so who may add sites is its call.
  */
-export async function attach(options: AttachOptions, post: typeof hubPost = hubPost): Promise<Attached> {
+export async function attach(options: AttachOptions, post: typeof hubPost = hubPost, lookup: () => Promise<ClaimLookup> = () => connect(undefined, message => console.error(styleText("dim", `  ${message}`)))): Promise<Attached> {
+  // An address with no claim in it: get the link from the site, through Cloudflare.
+  const link = /#claim=\S+/.test(options.link) ? options.link : await claimLinkFor(options.link, await lookup(), options);
   const response = await post("/site-attach", {
-    link: options.link,
+    link,
     ...options.template === undefined ? {} : { templateId: options.template === "none" ? null : options.template }
   }, { hub: options.hub, headless: options.headless });
   const data = await response.json().catch(() => ({})) as Partial<Attached> & { error?: string };

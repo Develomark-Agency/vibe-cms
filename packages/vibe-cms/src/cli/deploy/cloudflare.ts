@@ -96,6 +96,23 @@ export class CloudflareApi {
     return (await this.get<{ subdomain?: string }>(`/accounts/${account}/workers/subdomain`)).subdomain ?? null;
   }
 
+  /** Every custom domain attached to the account's Workers, with the Worker each serves. */
+  async allDomains(account: string) {
+    return (await this.get<Array<{ hostname: string, service: string }>>(`/accounts/${account}/workers/domains`)).map(d => ({ hostname: d.hostname, worker: d.service }));
+  }
+
+  /** Runs one SQL statement on a D1 database and returns its rows. */
+  async d1Query(account: string, database: string, sql: string, params: unknown[] = []) {
+    const response = await this.fetcher(`${API}/accounts/${account}/d1/database/${database}/query`, {
+      method: "POST",
+      headers: { ...this.headers, "content-type": "application/json" },
+      body: JSON.stringify({ sql, params })
+    });
+    const body = await response.json().catch(() => null) as { success?: boolean, result?: Array<{ results?: Array<Record<string, unknown>> }>, errors?: Array<{ message: string }> } | null;
+    if(!response.ok || !body?.success) throw new Error(body?.errors?.map(e => e.message).join("; ") || `Cloudflare answered ${response.status}`);
+    return body.result?.[0]?.results ?? [];
+  }
+
   async domains(account: string, worker: string) {
     return (await this.get<Array<{ hostname: string }>>(`/accounts/${account}/workers/domains?service=${encodeURIComponent(worker)}`)).map(d => d.hostname);
   }

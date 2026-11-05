@@ -133,6 +133,10 @@ const announced = new WeakSet<object>();
 export async function announceSetup(state: State, origin: string) {
   if(announced.has(state.db) || !await needsSetup(state)) return;
   announced.add(state.db);
+  await logSetupLink(state, origin);
+}
+
+async function logSetupLink(state: State, origin: string) {
   let token = await getMeta(state.db, "setup_token");
   if(!token) {
     await createDb(state.db).insert(meta).values({ key: "setup_token", value: randomString(24) }).onConflictDoNothing();
@@ -151,9 +155,32 @@ const claimAnnounced = new WeakSet<object>();
 export async function announceClaim(state: State, origin: string) {
   if(claimAnnounced.has(state.db) || !await needsSetup(state)) return;
   claimAnnounced.add(state.db);
+  await logClaimLink(state, origin);
+}
+
+async function logClaimLink(state: State, origin: string) {
   const token = await state.org.claimToken();
   if(!token) return;
-  console.log(`vibe-cms: to attach this site to your org's panel instead, add it there with this claim link (\`vibe-cms admin attach\`, or the panel's "Add a site"); it works once:\n  ${origin}${state.prefix}/admin/#claim=${token}`);
+  console.log(`vibe-cms: to attach this site to your org's panel instead, add it there with this claim link (\`vibe-cms admin attach\`, or the panel's "Add a site"); it works once. To print it again: \`vibe-cms admin claim-link ${origin}\`\n  ${origin}${state.prefix}/admin/#claim=${token}`);
+}
+
+/** When the links were last printed on request, by site, so a loop of requests can't flood the logs. */
+const lastRequested = new WeakMap<object, number>();
+const REQUEST_GUARD = 1000;
+
+/**
+ * `POST {prefix}/api/org/announce`: prints the setup and claim links to the logs now, for whoever
+ * missed them the first time. The reply never carries the links, only whether they were printed.
+ */
+export async function announceOnRequest(state: State, origin: string): Promise<{ announced: boolean, reason?: string }> {
+  if(await state.org.current()) return { announced: false, reason: "This site already belongs to an org" };
+  if(!await needsSetup(state)) return { announced: false, reason: "This site already has its own owners" };
+  const last = lastRequested.get(state.db);
+  if(last !== undefined && Date.now() - last < REQUEST_GUARD) return { announced: false, reason: "Printed a moment ago. Try again in a second" };
+  lastRequested.set(state.db, Date.now());
+  await logSetupLink(state, origin);
+  await logClaimLink(state, origin);
+  return { announced: true };
 }
 
 async function checkSetupToken(state: State, token: string | undefined) {

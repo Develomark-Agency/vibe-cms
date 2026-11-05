@@ -10,7 +10,7 @@ import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } 
 import { SiteOrg, type OrgEnv } from "./org.ts";
 import { wellKnownPaths } from "./oauth.ts";
 import { importConfigRoles, RoleStore } from "./roles.ts";
-import { signInConfig, type SignInEnv } from "./signin.ts";
+import { announceClaim, announceSetup, signInConfig, type SignInEnv } from "./signin.ts";
 import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
 import { decoratePreview, PICK_HEADER, PREVIEW_COOKIE, PREVIEW_TTL, previewCookie, previewScope, recordSources, wantsPreview, type PreviewScope } from "./preview.ts";
@@ -274,11 +274,33 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     return new Engine(await state(env), { origin: "", session: null, trusted: true }).site();
   }
 
+  /** Environments (a deployed Worker's, one per isolate) that already had their first page request announce a new site's links. */
+  const announcedFor = new WeakSet<object>();
+
+  /**
+   * A new site prints its setup and claim links to its logs. The CMS's own routes do that, but a first
+   * visit to the site's pages never reaches them, so the first request of any kind does it too.
+   */
+  async function announceNewSite(request: Request, env: E): Promise<void> {
+    const key = (env ?? {}) as object;
+    if(dev || announcedFor.has(key)) return;
+    announcedFor.add(key);
+    try {
+      const s = await state(env);
+      const origin = new URL(request.url).origin;
+      await announceSetup(s, origin);
+      await announceClaim(s, origin);
+    } catch (error) {
+      console.error("vibe-cms: couldn't check whether this site needs its setup links", error);
+    }
+  }
+
   function vibe(handlers: WorkerHandlers<E> = {}): WorkerExport<E> {
     siteHandler = handlers.fetch;
     return {
       async fetch(request, env, ctx) {
         if(match(request)) return handle(request, env, ctx);
+        ctx?.waitUntil?.(announceNewSite(request, env));
         if(!handlers.fetch) return new Response("Not found", { status: 404 });
         const preview = await previewSession(request, env);
         if(!preview) return handlers.fetch(request, env, ctx);

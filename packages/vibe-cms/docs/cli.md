@@ -8,7 +8,8 @@ Run it with `bunx vibe-cms` (or `npx vibe-cms`) in a project that depends on vib
 |---|---|
 | `vibe-cms docs [topic]` | Print a guide. `vibe-cms docs topics` lists them, `vibe-cms docs search <words>` finds lines across them. |
 | `vibe-cms admin [dev] [--site <url>] [--port 5173]` | A local panel for development sites, kept in the browser. `--name`, `--accent` and `--icon` white-label it. |
-| `vibe-cms admin attach <claim link>` | Attach a newly deployed site to your org's panel (below). |
+| `vibe-cms admin attach <claim link or site>` | Attach a newly deployed site to your org's panel (below). |
+| `vibe-cms admin claim-link <site>` | Print a new site's claim link, if you missed it in its logs (below). |
 | `vibe-cms admin deploy` | A wizard that deploys the agency panel to Cloudflare, or redeploys, reconfigures or finds one (below). |
 | `vibe-cms build-admin --out <dir>` | Build the editor without the Vite plugin, for plain `wrangler deploy` (`vibe-cms docs wrangler`). `--config`, `--prefix` and `--root` if not the defaults. |
 | `vibe-cms export --site <url> [--file x.vibe]` | Save the site's content and media as one `.vibe` file (`vibe-cms docs backups`). |
@@ -82,6 +83,15 @@ Give that link to the panel and the panel tells the site which org it belongs to
 bunx vibe-cms admin attach "https://client.com/_vibe/admin/#claim=…"
 bunx vibe-cms admin attach "…" --hub my-agency.com   # logs in to the panel first, for a project with no login
 ```
+
+**Missed the link?** A new site prints its links to its logs on the first request it gets, and again whenever something asks it to (`POST /_vibe/api/org/announce`, at most once a second; the reply says whether it printed, never what the links are). You don't have to watch the logs: give the command the site's address and it fetches the link for you.
+
+```sh
+bunx vibe-cms admin claim-link https://client.com         # print the link
+bunx vibe-cms admin attach https://client.com --hub my-agency.com   # or fetch it and attach in one go
+```
+
+It asks the site to make its claim token, finds the site's database through your `wrangler` login (a `workers.dev` address names the Worker, a custom domain is looked up among the account's), and reads the token from it. `--worker <name>` says which Worker if the address doesn't tell, and `--binding <name>` which D1 binding the CMS uses when the Worker has several and none is called `DB`. It needs `wrangler` logged in to the account that owns the site, and a site new enough to have the announce route: redeploy older ones.
 
 `--template <id|none>` picks the site's starting roles (the panel's default otherwise) and `--headless` logs in without a browser. You need to be allowed to add sites on the panel. The same thing is in the panel's **Add a site** box (paste the link instead of the address), the panel's `POST /api/sites/attach` (signed in) and `POST /site-attach` (an OAuth access token, as the CLI sends), and the `sites_attach` MCP tool for agents (not offered to read-only connections).
 
