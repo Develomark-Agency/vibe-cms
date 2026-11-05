@@ -331,11 +331,11 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
             )}
           </>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <Button variant="outline" size="sm" className="hidden pr-1 text-muted-foreground sm:flex" onClick={() => setPaletteOpen(true)}>
             Jump to… <Kbd>⌘K</Kbd>
           </Button>
-          {backend.mode === "local" && <span className="rounded-full well px-2 py-0.5 text-xs text-muted-foreground">Local</span>}
+          {backend.mode === "local" && <span className="hidden rounded-full well px-2 py-0.5 text-xs text-muted-foreground sm:inline">Local</span>}
           <DropdownMenu open={accountOpen} onOpenChange={setAccountOpen}>
             <DropdownMenuTrigger render={
               <Button variant="ghost" size="icon-sm" aria-label="Account" className="rounded-full raised text-xs font-medium">
@@ -437,7 +437,7 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: L
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger render={
-        <Button variant="ghost" size="sm" className="max-w-72 gap-2 px-1.5 font-medium">
+        <Button variant="ghost" size="sm" className="min-w-0 max-w-72 gap-2 px-1.5 font-medium">
           {current ? <SiteMark site={current} /> : <LayoutGridIcon />}
           <span className="truncate">{current?.name ?? "All sites"}</span>
           <ChevronsUpDownIcon className="text-muted-foreground" />

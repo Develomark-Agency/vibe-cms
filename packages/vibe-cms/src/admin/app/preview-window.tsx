@@ -79,6 +79,8 @@ const MARGIN = 16;
 const HEADER = 40;
 const MIN_WIDTH = 300;
 const MIN_BODY = 160;
+/** Below this screen width there is no room beside the preview, so it takes the whole screen. */
+export const FULLSCREEN_BELOW = 640;
 /** How much of a tucked window shows, and how much more on hover. */
 const PEEK = { width: 168, height: 96 };
 const PEEK_HOVER = 32;
@@ -210,11 +212,15 @@ export function PreviewWindow() {
   // A press on a tucked window that never became a drag is a click: it comes out.
   const dragged = useRef(false);
 
-  const size = layoutSize(layout);
-  const { shape } = layout;
+  // On a small screen the window is the screen: no corners, dragging, resizing, shapes or zoom (the saved layout is kept for when it's wide again).
+  const full = innerWidth < FULLSCREEN_BELOW;
+  const size = full ? { width: innerWidth, height: innerHeight } : layoutSize(layout);
+  const shape = full ? null : layout.shape;
+  const zoom = full ? 1 : layout.zoom;
+  const tucked = !full && layout.tucked;
   // What the iframe needs to size itself, current as of this render, for the motion value handlers.
-  const fitting = useRef({ shape, zoom: layout.zoom });
-  fitting.current = { shape, zoom: layout.zoom };
+  const fitting = useRef({ shape, zoom });
+  fitting.current = { shape, zoom };
   // The title bar's layout changes at a few widths; a resize re-renders only when it crosses one.
   const [band, setBand] = useState(() => widthBand(size.width));
 
@@ -260,14 +266,14 @@ export function PreviewWindow() {
     height.set(size.height);
     fitFrame();
     if(x.isAnimating() || y.isAnimating()) return;
-    const target = layout.tucked ? tuckPosition(false) : cornerPosition(layout.corner, size);
+    const target = full ? { x: 0, y: 0 } : tucked ? tuckPosition(false) : cornerPosition(layout.corner, size);
     x.set(target.x);
     y.set(target.y);
   });
 
   // A tucked window leans out a little on hover.
   useEffect(() => {
-    if(!layout.tucked || busy) return;
+    if(!tucked || busy) return;
     const target = tuckPosition(hover);
     void animate(x, target.x, SETTLE);
     void animate(y, target.y, SETTLE);
@@ -278,7 +284,7 @@ export function PreviewWindow() {
   useEffect(() => {
     if(reveals.current === preview.reveals) return;
     reveals.current = preview.reveals;
-    if(layout.tucked) untuck();
+    if(tucked) untuck();
   }, [preview.reveals]);
 
   // A page that never announces itself didn't get the preview script: the cookie was refused, or the site doesn't route through vibe().
@@ -302,7 +308,7 @@ export function PreviewWindow() {
   if(!preview.open || !preview.src) return null;
 
   // A fixed shape renders the page at its own width, scaled to the window; freeform at the zoom, as wide as the window allows.
-  const scale = frameScale({ shape, zoom: layout.zoom }, size.width);
+  const scale = frameScale({ shape, zoom }, size.width);
   const page = shape
     ? { width: shape.width, height: Math.round(shape.width * shape.h / shape.w) }
     : { width: Math.round(size.width / scale), height: Math.round((size.height - HEADER) / scale) };
@@ -434,16 +440,16 @@ export function PreviewWindow() {
         setBusy("drag");
       }}
       onDragEnd={onDragEnd}
-      className="fixed top-0 left-0 z-40 flex flex-col rounded-[14px] bg-background shadow-[0_0_0_1px_var(--border),0_12px_40px_-8px_rgb(0_0_0/0.3)]"
+      className={cn("fixed top-0 left-0 z-40 flex flex-col bg-background", !full && "rounded-[14px] shadow-[0_0_0_1px_var(--border),0_12px_40px_-8px_rgb(0_0_0/0.3)]")}
       style={{ x, y, width, height }}
     >
       <div
-        className={cn("flex shrink-0 cursor-grab touch-none items-center gap-1 border-b pr-1.5 pl-3 select-none", busy === "drag" && "cursor-grabbing")}
+        className={cn("flex shrink-0 touch-none items-center gap-1 border-b pr-1.5 pl-3 select-none", !full && "cursor-grab", busy === "drag" && "cursor-grabbing")}
         style={{ height: HEADER }}
         onPointerDown={event => {
           // Menus are portalled elsewhere but their events still bubble here through React; only presses on the bar itself drag.
           const target = event.target as HTMLElement;
-          if(event.button !== 0 || !event.currentTarget.contains(target) || target.closest("button, input")) return;
+          if(full || event.button !== 0 || !event.currentTarget.contains(target) || target.closest("button, input")) return;
           // Otherwise the drag also selects the editor's text.
           event.preventDefault();
           controls.start(event);
@@ -451,21 +457,21 @@ export function PreviewWindow() {
       >
         {/* Narrow windows (a phone) keep the title bar for the controls. */}
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {band === "wide" && (
+          {(full || band === "wide") && (
             <>
               <span className="shrink-0 text-xs font-medium">Preview</span>
               <span className="truncate font-mono text-[11px] text-muted-foreground">{preview.path ?? ""}</span>
             </>
           )}
         </div>
-        <ShapePicker shape={shape} onChange={setShape} pageWidth={page.width} compact={band === "narrow"} />
-        {shape && (
+        {!full && <ShapePicker shape={shape} onChange={setShape} pageWidth={page.width} compact={band === "narrow"} />}
+        {!full && shape && (
           <Tooltip>
             <TooltipTrigger render={<Button variant="ghost" size="icon-xs" aria-label="Rotate" onClick={rotate}><RotateCwSquareIcon /></Button>} />
             <TooltipContent>Rotate</TooltipContent>
           </Tooltip>
         )}
-        <ZoomControl scale={scale} zoom={layout.zoom} fixed={shape !== null} page={page} onChange={setZoom} />
+        {!full && <ZoomControl scale={scale} zoom={zoom} fixed={shape !== null} page={page} onChange={setZoom} />}
         <Tooltip>
           <TooltipTrigger render={
             <Button variant="ghost" size="icon-xs" aria-label="Pick in preview" aria-pressed={preview.picking} disabled={!preview.ready && !preview.picking}
@@ -489,7 +495,7 @@ export function PreviewWindow() {
         </DropdownMenu>
         <Button variant="ghost" size="icon-xs" aria-label="Close preview" onClick={closePreview}><XIcon /></Button>
       </div>
-      <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-[14px] bg-muted/40">
+      <div className={cn("relative min-h-0 flex-1 overflow-hidden bg-muted/40", !full && "rounded-b-[14px]")}>
         <iframe
           // Known before the page loads, so its first message is recognised as the frame's.
           ref={element => {
@@ -513,7 +519,7 @@ export function PreviewWindow() {
           </div>
         )}
       </div>
-      {layout.tucked ? (
+      {full ? null : tucked ? (
         // Tucked, the whole visible corner is a handle: hover leans it out, a click brings it back, a drag pulls it out.
         <div
           role="button"

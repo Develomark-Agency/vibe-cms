@@ -30,7 +30,7 @@ import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
 import { openPick, type PreviewPick } from "./reveal.ts";
-import { PreviewWindow } from "./preview-window.tsx";
+import { FULLSCREEN_BELOW, PreviewWindow } from "./preview-window.tsx";
 import { MegaNav, type NavGroup, type NavItem } from "./nav.tsx";
 import { announcePainted, embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 
@@ -172,7 +172,11 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   // The preview's picker: a click there opens that block or field here.
   const readable = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
   useEffect(() => {
-    onPreviewPick(pick => openPick(config, readable, path, pick as PreviewPick));
+    onPreviewPick(pick => {
+      openPick(config, readable, path, pick as PreviewPick);
+      // A full-screen preview would hide what the pick just opened.
+      if(innerWidth < FULLSCREEN_BELOW) closePreview();
+    });
     return () => onPreviewPick(null);
   }, [config, path, readable.join()]);
 
