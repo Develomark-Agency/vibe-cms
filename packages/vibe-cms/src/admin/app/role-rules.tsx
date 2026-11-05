@@ -65,6 +65,22 @@ export function editableRules(rules: RoleRules): RoleRules {
   return out;
 }
 
+/**
+ * Whether two rule sets grant the same, ignoring key order, action order, and a content type set to
+ * "No access" when no other-types level exists (which is the same as leaving it out).
+ */
+export function sameRules(a: RoleRules, b: RoleRules): boolean {
+  return canonical(a) === canonical(b);
+}
+
+function canonical(rules: RoleRules): string {
+  const entries = Object.entries(rules)
+    .filter(([key, value]) => value !== undefined && value !== false && !(Array.isArray(value) && !value.length && !SPECIAL.has(key) && !rules["*"]))
+    .map(([key, value]) => [key, Array.isArray(value) ? [...value].sort() : value] as const)
+    .sort(([x], [y]) => x.localeCompare(y));
+  return JSON.stringify(entries);
+}
+
 export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
   rules: RoleRules,
   onChange(next: RoleRules): void,

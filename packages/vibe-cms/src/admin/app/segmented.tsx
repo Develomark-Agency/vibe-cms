@@ -33,7 +33,9 @@ export function Segmented<T extends string>({ options, value, onChange, disabled
             role="radio"
             aria-checked={selected}
             disabled={disabled || option.disabled}
-            onClick={() => onChange(option.value)}
+            onClick={() => {
+              if(!selected) onChange(option.value);
+            }}
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-[10px] px-3 text-sm whitespace-nowrap text-muted-foreground transition-[color,box-shadow,background-color,scale] duration-150 ease-out",
               fill && "flex-auto justify-center px-2",

@@ -15,12 +15,16 @@ import { Spinner } from "../components/ui/spinner.tsx";
 import { cn } from "../lib/utils.ts";
 import { read, siteApi } from "./client.ts";
 import { collectionLabel, useAdmin } from "./context.tsx";
-import { editableRules, RoleRulesEditor } from "./role-rules.tsx";
+import { editableRules, RoleRulesEditor, sameRules } from "./role-rules.tsx";
+import { setNavigationBlocker } from "./router.tsx";
 
 /**
  * The site's roles, stored in its database. Owners and roles with `all` edit them; everyone else who
  * signs in sees them read only. Presets are copied in, with no link back.
  */
+
+/** The content editor's question, so leaving unsaved work reads the same everywhere. */
+const LEAVE = "You have unsaved changes. Leave anyway?";
 
 function relative(time: number | null): string {
   if(!time) return "";
@@ -36,7 +40,17 @@ export function RolesPage() {
   const queryClient = useQueryClient();
   const roles = useQuery({ queryKey: ["roles"], queryFn: async () => read(await siteApi(info.prefix).roles.$get()) });
   const presets = useQuery({ queryKey: ["roles", "presets"], queryFn: async () => read(await siteApi(info.prefix).roles.presets.$get()) });
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelectedRaw] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  /** Picking another role drops the open one's edits, so it asks first, like leaving the page. */
+  function startCreating(draft: { name: string, rules: RoleRules, title: string }) {
+    if(editing && !confirm(LEAVE)) return;
+    setCreating(draft);
+  }
+  function setSelected(next: string | null) {
+    if(editing && !confirm(LEAVE)) return;
+    setSelectedRaw(next);
+  }
   const [creating, setCreating] = useState<{ name: string, rules: RoleRules, title: string } | null>(null);
 
   useEffect(() => {
@@ -52,7 +66,7 @@ export function RolesPage() {
     mutationFn: async ({ name, rules }: { name: string, rules: RoleRules }) => read(await siteApi(info.prefix).roles[":name"].$put({ param: { name }, json: { rules } })),
     async onSuccess(result) {
       await queryClient.invalidateQueries({ queryKey: ["roles"] });
-      setSelected(result.role.name);
+      setSelectedRaw(result.role.name);
       setCreating(null);
       toast.success(`Added ${result.role.name}`);
     },
@@ -74,7 +88,7 @@ export function RolesPage() {
               <DropdownMenuTrigger render={<Button variant="outline">Add from preset <ChevronDownIcon /></Button>} />
               <DropdownMenuContent align="end" className="w-72">
                 {(presets.data?.presets ?? []).map(preset => (
-                  <DropdownMenuItem key={preset.name} onClick={() => setCreating({ name: list.some(role => role.name === preset.name) ? `${preset.name}-2` : preset.name, rules: preset.rules as RoleRules, title: `Add ${preset.label}` })}>
+                  <DropdownMenuItem key={preset.name} onClick={() => startCreating({ name: list.some(role => role.name === preset.name) ? `${preset.name}-2` : preset.name, rules: preset.rules as RoleRules, title: `Add ${preset.label}` })}>
                     <div className="flex flex-col">
                       <span>{preset.label}</span>
                       <span className="text-xs text-muted-foreground">{preset.description}</span>
@@ -83,7 +97,7 @@ export function RolesPage() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button onClick={() => setCreating({ name: "", rules: {}, title: "New role" })}><PlusIcon /> New role</Button>
+            <Button onClick={() => startCreating({ name: "", rules: {}, title: "New role" })}><PlusIcon /> New role</Button>
           </div>
         )}
       </header>
@@ -108,7 +122,7 @@ export function RolesPage() {
 
         {showOwner || !current
           ? <OwnerCard hub={info.signIn === "hub"} />
-          : <RoleEditor key={`${current.name}:${current.updatedAt}`} role={current} canEdit={canEdit} onDeleted={() => setSelected(null)} />}
+          : <RoleEditor key={`${current.name}:${current.updatedAt}`} role={current} canEdit={canEdit} onDeleted={() => setSelectedRaw(null)} onDirtyChange={setEditing} />}
       </div>
 
       <CreateDialog
@@ -165,11 +179,27 @@ interface RoleView {
   stale: string[]
 }
 
-function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boolean, onDeleted(): void }) {
+function RoleEditor({ role, canEdit, onDeleted, onDirtyChange }: { role: RoleView, canEdit: boolean, onDeleted(): void, onDirtyChange(dirty: boolean): void }) {
   const { info, config } = useAdmin();
   const queryClient = useQueryClient();
   const [rules, setRules] = useState<RoleRules>(() => editableRules(role.rules));
-  const dirty = JSON.stringify(rules) !== JSON.stringify(editableRules(role.rules));
+  const dirty = !sameRules(rules, editableRules(role.rules));
+
+  // Unsaved-changes guard, for in-app navigation and for leaving the page.
+  useEffect(() => {
+    onDirtyChange(dirty);
+    if(!dirty) return;
+    setNavigationBlocker(() => confirm(LEAVE));
+    function beforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+    }
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => {
+      onDirtyChange(false);
+      setNavigationBlocker(undefined);
+      window.removeEventListener("beforeunload", beforeUnload);
+    };
+  }, [dirty]);
   const locales = [...(config.locales ?? [])];
   const readOnly = !canEdit;
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -199,7 +229,7 @@ function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boo
     <section className="flex flex-col rounded-[16px] elevated">
       {/* The role's actions stay in reach on a long role, and say when there's something to save. */}
       {/* The name keeps at least 12rem; when it and the actions don't fit on one line, the actions wrap under it. */}
-      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-t-[16px] border-b bg-card/90 px-5 py-3 backdrop-blur-md">
+      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-t-[16px] border-b bg-card/90 py-3 pr-3 pl-5 backdrop-blur-md">
         <div className="flex min-w-0 grow basis-48 items-center gap-2">
           <h2 className="min-w-0 truncate text-lg font-medium" title={role.name}>{role.name}</h2>
           {readOnly && <Badge variant="secondary">Read only</Badge>}
@@ -246,9 +276,9 @@ function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boo
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {role.name}?</AlertDialogTitle>
+            <AlertDialogTitle className="[overflow-wrap:anywhere]">Delete <RoleName className="text-foreground/70">{role.name}</RoleName>?</AlertDialogTitle>
             <AlertDialogDescription>
-              People whose only role is {role.name} lose access to the site. Anyone given it by {info.signIn === "hub" ? "your org's panel" : "the Users page"} keeps the name, but it gives them nothing until a role with that name exists again.
+              People whose only role is <RoleName className="text-foreground/85">{role.name}</RoleName> lose access to the site. Anyone given it by {info.signIn === "hub" ? "your org's panel" : "the Users page"} keeps the name, but it gives them nothing until a role with that name exists again.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -261,6 +291,11 @@ function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boo
       </AlertDialog>
     </section>
   );
+}
+
+/** A role's name inside a sentence: it's an ID, so monospaced, and a step off the text around it. */
+function RoleName({ className, children }: { className?: string, children: string }) {
+  return <code className={cn("font-mono text-[0.9em] font-normal [overflow-wrap:anywhere]", className)}>{children}</code>;
 }
 
 function CreateDialog({ draft, taken, pending, onClose, onCreate }: {
