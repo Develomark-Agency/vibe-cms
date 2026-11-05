@@ -33,9 +33,8 @@ export const migrations: Migration[] = [
     ]
   },
   {
-    tag: "0001_strange_tattoo",
+    tag: "0001_strong_swordsman",
     statements: [
-      "CREATE TABLE IF NOT EXISTS `vibe_hub_users` (\n\t`sub` text PRIMARY KEY NOT NULL,\n\t`email` text,\n\t`name` text,\n\t`roles` text NOT NULL,\n\t`site_admin` integer DEFAULT false NOT NULL,\n\t`last_sign_in_at` integer NOT NULL\n);",
       "CREATE TABLE IF NOT EXISTS `vibe_roles` (\n\t`name` text PRIMARY KEY NOT NULL,\n\t`rules` text NOT NULL,\n\t`updated_by` text,\n\t`updated_at` integer NOT NULL\n);"
     ]
   }

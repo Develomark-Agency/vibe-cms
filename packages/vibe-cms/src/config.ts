@@ -36,6 +36,11 @@ export interface RoleRules {
   /** Editing the site's name, accent color and icon. */
   siteSettings?: boolean,
   /**
+   * Creating, editing, deleting and giving out roles, but only roles that stay within what this
+   * person's own roles allow. Never `all`, never owners.
+   */
+  manageRoles?: boolean,
+  /**
    * `"take"`: taking snapshots, which reads every document, draft and file. `true`: taking and restoring
    * them; a restore replaces everything.
    */
@@ -170,6 +175,7 @@ type RuleChecks<C extends ConfigInput> = {
   write?: { locales: ReadonlyArray<Locales<C>> },
   media?: readonly Action[],
   siteSettings?: boolean,
+  manageRoles?: boolean,
   backups?: boolean | "take"
 } & { [T in Types<C> | "*"]?: readonly Action[] };
 

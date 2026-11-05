@@ -17,6 +17,7 @@ import { read, siteApi } from "./client.ts";
 import { collectionLabel, useAdmin } from "./context.tsx";
 import { editableRules, RoleRulesEditor, sameRules } from "./role-rules.tsx";
 import { setNavigationBlocker } from "./router.tsx";
+import { confirmLeave } from "./confirm.tsx";
 
 /**
  * The site's roles, stored in its database. Owners and roles with `all` edit them; everyone else who
@@ -24,7 +25,6 @@ import { setNavigationBlocker } from "./router.tsx";
  */
 
 /** The content editor's question, so leaving unsaved work reads the same everywhere. */
-const LEAVE = "You have unsaved changes. Leave anyway?";
 
 function relative(time: number | null): string {
   if(!time) return "";
@@ -43,12 +43,12 @@ export function RolesPage() {
   const [selected, setSelectedRaw] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   /** Picking another role drops the open one's edits, so it asks first, like leaving the page. */
-  function startCreating(draft: { name: string, rules: RoleRules, title: string }) {
-    if(editing && !confirm(LEAVE)) return;
+  async function startCreating(draft: { name: string, rules: RoleRules, title: string }) {
+    if(editing && !await confirmLeave()) return;
     setCreating(draft);
   }
-  function setSelected(next: string | null) {
-    if(editing && !confirm(LEAVE)) return;
+  async function setSelected(next: string | null) {
+    if(editing && !await confirmLeave()) return;
     setSelectedRaw(next);
   }
   const [creating, setCreating] = useState<{ name: string, rules: RoleRules, title: string } | null>(null);
@@ -108,6 +108,9 @@ export function RolesPage() {
           <RoleListItem active={showOwner} title="Owner" description="Everything, plus users and roles" badge="Built in" onClick={() => setSelected("owner")} />
           <div className="mx-3 my-1 border-t" />
           {list.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">No roles yet. {canEdit ? "Start from a preset." : ""}</p>}
+          {canEdit && !roles.data.fullAccess && (
+            <p className="px-3 pt-1 pb-2 text-xs text-muted-foreground">You can create and change roles up to what your own roles allow.</p>
+          )}
           {list.map(role => (
             <RoleListItem
               key={role.name}
@@ -122,7 +125,7 @@ export function RolesPage() {
 
         {showOwner || !current
           ? <OwnerCard hub={info.signIn === "hub"} />
-          : <RoleEditor key={`${current.name}:${current.updatedAt}`} role={current} canEdit={canEdit} onDeleted={() => setSelectedRaw(null)} onDirtyChange={setEditing} />}
+          : <RoleEditor key={`${current.name}:${current.updatedAt}`} role={current} canEdit={canEdit && current.editable} onDeleted={() => setSelectedRaw(null)} onDirtyChange={setEditing} />}
       </div>
 
       <CreateDialog
@@ -176,7 +179,9 @@ interface RoleView {
   rules: RoleRules,
   updatedBy: string | null,
   updatedAt: number | null,
-  stale: string[]
+  stale: string[],
+  /** Whether this person may change or delete it: role managers can't touch roles beyond their own. */
+  editable: boolean
 }
 
 function RoleEditor({ role, canEdit, onDeleted, onDirtyChange }: { role: RoleView, canEdit: boolean, onDeleted(): void, onDirtyChange(dirty: boolean): void }) {
@@ -189,7 +194,7 @@ function RoleEditor({ role, canEdit, onDeleted, onDirtyChange }: { role: RoleVie
   useEffect(() => {
     onDirtyChange(dirty);
     if(!dirty) return;
-    setNavigationBlocker(() => confirm(LEAVE));
+    setNavigationBlocker(confirmLeave);
     function beforeUnload(event: BeforeUnloadEvent) {
       event.preventDefault();
     }

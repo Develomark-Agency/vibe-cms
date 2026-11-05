@@ -55,6 +55,7 @@ import { ErrorBoundary } from "../admin/app/error-boundary.tsx";
 import type { EditorMessage, PanelMessage } from "../admin/app/session.ts";
 import { getTheme, isTheme, setAccent, setFavicon, setTheme, startTheme, subscribeTheme, useTheme, type Theme } from "../admin/app/theme.ts";
 import { Delayed } from "../admin/app/delayed.tsx";
+import { ConfirmHost } from "../admin/app/confirm.tsx";
 import { BackupDefaultsDialog, BackupsDialog } from "./backups.tsx";
 import { go, listeners, useRoute } from "./location.ts";
 import { AccessPage, PeoplePage, SetupCard, TemplatePicker, TemplatesPage } from "./access.tsx";
@@ -451,6 +452,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
         </Command>
       </CommandDialog>
       <Toaster position="bottom-right" />
+      <ConfirmHost />
     </div>
   );
 }
@@ -1092,6 +1094,27 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
         case "vibe:shortcut":
           if(message.key === "mod+k") onShortcut();
           break;
+        case "vibe:hub": {
+          // Only ever about the framed site, with this user's own rights on the hub.
+          const hub = backend.hub;
+          const id = message.id;
+          try {
+            if(!hub) throw new Error("This panel doesn't manage people");
+            let result: unknown = null;
+            if(message.call === "people") {
+              const access = await hub.siteAccess(site.id);
+              result = { people: access.people, roles: access.roles?.map(role => role.name) ?? [], canAssign: access.canAssign, assignable: access.assignable };
+            } else if(message.call === "assign") {
+              await hub.assign(site.id, message.who, message.roles);
+            } else if(message.call === "unassign") {
+              await hub.unassign(site.id, message.principal);
+            }
+            post({ type: "vibe:hubResult", id, ok: true, result });
+          } catch (e) {
+            post({ type: "vibe:hubResult", id, ok: false, error: (e as Error).message });
+          }
+          break;
+        }
       }
     }
     window.addEventListener("message", onMessage);

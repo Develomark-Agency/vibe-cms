@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, CopyIcon, MailIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Input } from "../components/ui/input.tsx";
@@ -10,6 +9,9 @@ import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { read, siteApi } from "./client.ts";
 import { useAdmin } from "./context.tsx";
+import { callHub } from "./session.ts";
+import { askConfirm } from "./confirm.tsx";
+import { SitePeople, type SitePeopleData } from "./site-people.tsx";
 
 /**
  * Who may sign in to a site without an org, and with which roles. Owners invite people by email;
@@ -54,9 +56,9 @@ export function UsersPage() {
   });
 
   if(!users.data) return <div className="flex justify-center p-12"><Spinner className="size-5" /></div>;
-  const { roles, mode } = users.data;
+  const { roles, mode, assignable } = users.data;
   const passkeys = mode === "passkey";
-  if(mode === "hub") return <HubUsers users={users.data.hubUsers} />;
+  if(mode === "hub") return <HubUsers />;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6 md:px-8">
@@ -69,7 +71,7 @@ export function UsersPage() {
         </p>
       </header>
 
-      <InviteForm roles={roles} pending={inviteMutation.isPending} onInvite={input => inviteMutation.mutate(input)} />
+      <InviteForm roles={roles} assignable={assignable} pending={inviteMutation.isPending} onInvite={input => inviteMutation.mutate(input)} />
       {invited && <InviteResult invited={invited} passkeys={passkeys} onClose={() => setInvited(null)} />}
 
       <section className="flex flex-col divide-y rounded-[16px] elevated">
@@ -84,15 +86,15 @@ export function UsersPage() {
                 {passkeys && ` · ${user.passkeys} ${user.passkeys === 1 ? "passkey" : "passkeys"}`}
               </p>
             </div>
-            <RolePicker roles={roles} value={user.roles} disabled={update.isPending} onChange={next => update.mutate({ id: user.id, roles: next })} />
+            <RolePicker roles={roles} assignable={assignable} value={user.roles} disabled={update.isPending || user.roles.some(role => !assignable.includes(role))} onChange={next => update.mutate({ id: user.id, roles: next })} />
             <div className="flex gap-1">
               {passkeys && (
                 <Button variant="ghost" size="sm" title="Send a new invite link" onClick={() => inviteMutation.mutate({ email: user.email, roles: user.roles })}>
                   <MailIcon /> Re-invite
                 </Button>
               )}
-              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${user.email}`} onClick={() => {
-                if(confirm(`Remove ${user.email}? They won't be able to sign in any more.`)) remove.mutate(user.id);
+              <Button variant="ghost" size="icon-sm" aria-label={`Remove ${user.email}`} onClick={async () => {
+                if(await askConfirm({ title: `Remove ${user.email}?`, description: "They won't be able to sign in any more. Their passkeys are deleted too.", action: "Remove", destructive: true })) remove.mutate(user.id);
               }}><Trash2Icon /></Button>
             </div>
           </div>
@@ -102,46 +104,57 @@ export function UsersPage() {
   );
 }
 
-/** Org sites: the hub decides who has which role here. The site only shows who it has seen. */
-function HubUsers({ users }: { users: Array<{ sub: string, email: string | null, name: string | null, roles: string[], siteAdmin: boolean, lastSignInAt: number }> }) {
+/**
+ * Org sites: the hub decides who has which role here. The editor runs inside the panel, so it asks
+ * the panel for the list, and for changes, with the signed-in person's own rights on the hub.
+ */
+function HubUsers() {
+  const queryClient = useQueryClient();
+  const people = useQuery({ queryKey: ["hub-people"], queryFn: () => callHub<SitePeopleData>({ call: "people" }) });
+  function refresh() {
+    return queryClient.invalidateQueries({ queryKey: ["hub-people"] });
+  }
+  const assign = useMutation({
+    mutationFn: ({ who, roles }: { who: { email?: string, sub?: string }, roles: string[] }) => callHub({ call: "assign", who, roles }),
+    onSuccess: refresh,
+    onError: error => toast.error((error as Error).message)
+  });
+  const unassign = useMutation({
+    mutationFn: (principal: string) => callHub({ call: "unassign", principal }),
+    onSuccess: refresh,
+    onError: error => toast.error((error as Error).message)
+  });
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6 md:px-8">
       <header className="space-y-2 pt-6">
         <h1 className="text-3xl font-medium tracking-[-0.03em]">Users</h1>
         <p className="text-sm text-muted-foreground">
-          Your org's panel decides who can sign in here and with which roles. These are the people it has signed in. To change someone's roles, use the panel's Access tab for this site.
+          People sign in through your org's panel. These are the roles it gives them on this site; changes apply from their next sign-in, within about 10 minutes.
         </p>
       </header>
-      <section className="flex flex-col divide-y rounded-[16px] elevated">
-        {users.length === 0 && <p className="p-4 text-sm text-muted-foreground">Nobody has signed in through the panel yet.</p>}
-        {users.map(user => (
-          <div key={user.sub} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{user.name ?? user.email ?? user.sub}</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {user.name && user.email && `${user.email} · `}Last signed in {new Date(user.lastSignInAt).toLocaleDateString()}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {user.siteAdmin && <Badge>Owner</Badge>}
-              {user.roles.map(role => <Badge key={role} variant="secondary">{role}</Badge>)}
-              {!user.siteAdmin && user.roles.length === 0 && <span className="text-xs text-muted-foreground">No roles</span>}
-            </div>
-          </div>
-        ))}
-      </section>
+      {people.isError && <p className="text-sm text-destructive">{(people.error as Error).message}</p>}
+      {!people.data && !people.isError && <div className="flex justify-center p-12"><Spinner className="size-5" /></div>}
+      {people.data && (
+        <SitePeople
+          data={people.data}
+          pending={assign.isPending || unassign.isPending}
+          onAssign={(who, roles) => assign.mutateAsync({ who, roles })}
+          onUnassign={principal => unassign.mutateAsync(principal)}
+        />
+      )}
     </div>
   );
 }
 
-function RolePicker({ roles, value, disabled, onChange }: { roles: string[], value: string[], disabled?: boolean, onChange(next: string[]): void }) {
+/** `assignable`: the roles this person may give out; the others show but can't be changed. */
+function RolePicker({ roles, assignable, value, disabled, onChange }: { roles: string[], assignable: string[], value: string[], disabled?: boolean, onChange(next: string[]): void }) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-2">
       {roles.map(role => (
         <label key={role} className="flex items-center gap-2 text-sm">
           <Checkbox
             checked={value.includes(role)}
-            disabled={disabled}
+            disabled={disabled || !assignable.includes(role)}
             onCheckedChange={checked => onChange(checked ? [...value, role] : value.filter(r => r !== role))}
           />
           {role}
@@ -151,9 +164,9 @@ function RolePicker({ roles, value, disabled, onChange }: { roles: string[], val
   );
 }
 
-function InviteForm({ roles, pending, onInvite }: { roles: string[], pending: boolean, onInvite(input: { email: string, roles: string[] }): void }) {
+function InviteForm({ roles, assignable, pending, onInvite }: { roles: string[], assignable: string[], pending: boolean, onInvite(input: { email: string, roles: string[] }): void }) {
   const [email, setEmail] = useState("");
-  const [chosen, setChosen] = useState<string[]>(roles.filter(role => role !== "owner").slice(0, 1));
+  const [chosen, setChosen] = useState<string[]>(assignable.filter(role => role !== "owner").slice(0, 1));
   return (
     <form
       className="flex flex-col gap-4 rounded-[16px] elevated p-5"
@@ -170,7 +183,7 @@ function InviteForm({ roles, pending, onInvite }: { roles: string[], pending: bo
           <Button type="submit" disabled={pending || !email.trim() || chosen.length === 0}>{pending ? <Spinner /> : <UserPlusIcon />} Invite</Button>
         </div>
       </div>
-      <RolePicker roles={roles} value={chosen} onChange={setChosen} />
+      <RolePicker roles={roles} assignable={assignable} value={chosen} onChange={setChosen} />
     </form>
   );
 }

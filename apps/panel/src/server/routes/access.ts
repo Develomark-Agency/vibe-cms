@@ -87,13 +87,13 @@ export const access = new Hono<AppEnv>()
   .put("/sites/:id/assignments", body, async c => {
     const me = await hubAccess(c.env, c.get("session"));
     const site = await siteFor(c);
-    return c.json(await assign(c.env, me, site.id, c.req.valid("json")));
+    return c.json(await assign(c.env, me, site, c.req.valid("json")));
   })
 
   .delete("/sites/:id/assignments/:principal", async c => {
     const me = await hubAccess(c.env, c.get("session"));
     const site = await siteFor(c);
-    await unassign(c.env, me, site.id, c.req.param("principal"));
+    await unassign(c.env, me, site, c.req.param("principal"));
     return c.body(null, 204);
   })
 

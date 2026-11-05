@@ -10,7 +10,16 @@ export type PanelMessage =
   | { type: "vibe:code", code: string }
   | { type: "vibe:navigate", path: string }
   /** The panel's theme, and its accent for sites that don't set their own. */
-  | { type: "vibe:appearance", theme: Theme, accent: string | null };
+  | { type: "vibe:appearance", theme: Theme, accent: string | null }
+  /** The answer to a `vibe:hub` request. */
+  | { type: "vibe:hubResult", id: number, ok: true, result: unknown }
+  | { type: "vibe:hubResult", id: number, ok: false, error: string };
+
+/** What the editor of an org site may ask its panel, always about the framed site only. */
+export type HubCall =
+  | { call: "people" }
+  | { call: "assign", who: { email?: string, sub?: string }, roles: string[] }
+  | { call: "unassign", principal: string };
 
 export type EditorMessage =
   | { type: "vibe:ready", protocol: 1 }
@@ -27,7 +36,9 @@ export type EditorMessage =
   /** The user changed the theme in the editor; the panel follows. */
   | { type: "vibe:theme", theme: Theme }
   /** The site's name, accent or icon changed. */
-  | { type: "vibe:site", site: SiteSettings };
+  | { type: "vibe:site", site: SiteSettings }
+  /** A question for the hub about this site: who has which role here, and changes to that. */
+  | { type: "vibe:hub", id: number } & HubCall;
 
 export const embedded = typeof window !== "undefined" && window.parent !== window;
 
@@ -36,6 +47,8 @@ let panelOrigin: string | null = null;
 const codeWaiters: Array<(code: string) => void> = [];
 const navigateListeners = new Set<(path: string) => void>();
 const accentListeners = new Set<() => void>();
+const hubWaiters = new Map<number, { resolve(result: unknown): void, reject(error: Error): void }>();
+let hubCalls = 0;
 let panelAccent: string | null = null;
 
 if(embedded) {
@@ -45,6 +58,12 @@ if(embedded) {
     if(message?.type === "vibe:code" && typeof message.code === "string") {
       panelOrigin = event.origin;
       codeWaiters.splice(0).forEach(resolve => resolve(message.code));
+    }
+    if(message?.type === "vibe:hubResult" && event.origin === panelOrigin) {
+      const waiter = hubWaiters.get(message.id);
+      hubWaiters.delete(message.id);
+      if(message.ok) waiter?.resolve(message.result);
+      else waiter?.reject(new Error(message.error));
     }
     if(message?.type === "vibe:navigate" && typeof message.path === "string" && (event.origin === panelOrigin || panelOrigin === "*")) {
       navigateListeners.forEach(listener => listener(message.path));
@@ -163,4 +182,30 @@ export function renewSession(info: SiteInfo): Promise<SessionState | null> {
 export async function signOut(prefix: string) {
   setToken(undefined);
   await siteApi(prefix).session.$delete().catch(() => {});
+}
+
+/**
+ * Asks the panel this editor runs in something about this site that only the hub knows. Only for
+ * org sites, whose editor always runs inside the panel.
+ */
+export function callHub<T>(call: HubCall): Promise<T> {
+  if(!embedded || !panelOrigin || panelOrigin === "*") return Promise.reject(new Error("Open this site from your org's panel to manage who has which role"));
+  const id = ++hubCalls;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      hubWaiters.delete(id);
+      reject(new Error("The panel didn't answer"));
+    }, 20_000);
+    hubWaiters.set(id, {
+      resolve: result => {
+        clearTimeout(timer);
+        resolve(result as T);
+      },
+      reject: error => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+    postToPanel({ type: "vibe:hub", id, ...call } as EditorMessage);
+  });
 }

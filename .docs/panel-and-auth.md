@@ -85,7 +85,7 @@ The hub decides **who has which role where** (`site_assignments`: a `sub`, or a 
 
 ### The hub's own members
 
-The hub has members (`members`: `owner`, `admin`, `member` or a custom hub role from `hub_roles`), with four hub permissions: `members`, `templates`, `addSites`, `removeSites`. The first owner comes from a one-time setup link the hub prints to its logs (`https://<hub>/#setup=…`) while it has no owner; until it's claimed nobody can sign in. Passing `PANEL_ALLOW` without a member row lets someone sign in and see only the sites they hold a role on.
+The hub has members (`members`: `owner`, `admin`, `member` or a custom hub role from `hub_roles`), with five hub permissions: `members`, `roles`, `templates`, `addSites`, `removeSites`. Holders of `members` and `roles` who aren't the owner or an admin only give out, and create, hub roles within their own permissions. The hub sends no email. The first owner comes from a one-time setup link the hub prints to its logs (`https://<hub>/#setup=…`) while it has no owner; until it's claimed nobody can sign in. Passing `PANEL_ALLOW` without a member row lets someone sign in and see only the sites they hold a role on.
 
 ## Signing in
 
@@ -260,7 +260,7 @@ No secret is needed: the panel isn't proving who *owns* the site, only that the 
 
 **Server side: tokens for one site.** Sites never see a provider token. Each hub token is addressed to one site, so a compromised plugin's *server* code on site 12 can't replay what it receives to site 40. The hub's signing key is what every site trusts: it's a Worker secret, never stored in D1, so only code running in the hub can use it. Someone with the key could forge sign-ins to every site until it's replaced, the same as with any identity provider's keys. Replacing it locks them out: sites fetch the new key the first time they see a token signed with it.
 
-**Revocation.** Sites don't check back with the hub, so a token works until it expires: five minutes for a hub token, 12 hours for the site session the editor or CLI trades it for. Removing someone from the identity provider stops new tokens at the next refresh of their provider sign-in.
+**Revocation.** Sites don't check back with the hub, so a token works until it expires: five minutes for a hub token, 10 minutes for the site session the editor, CLI or an agent trades it for. Renewing goes through the hub again, so removed roles and site-admin grants stop within minutes; a session also ends when the site stops trusting the org that vouched for it. Removing someone from the identity provider stops new tokens at the next refresh of their provider sign-in.
 
 ## Shell forms
 

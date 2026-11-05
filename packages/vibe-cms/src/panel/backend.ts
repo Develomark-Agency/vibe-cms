@@ -44,7 +44,7 @@ export interface PanelUser {
   admin?: boolean
 }
 
-export type HubPermission = "members" | "templates" | "addSites" | "removeSites";
+export type HubPermission = "members" | "roles" | "templates" | "addSites" | "removeSites";
 
 /** One role's rules, as a site stores them. */
 export type PanelRoleRules = RoleRules;
@@ -79,6 +79,10 @@ export interface SiteRoleInfo {
 export interface SiteAccessInfo {
   site: PanelSite & { addedBy: string | null, addedAt: number | null },
   canManage: boolean,
+  /** Whether this person may give people roles here: the site's owners, or someone whose role on it manages roles. */
+  canAssign: boolean,
+  /** The roles they may give: all of them for owners, else those within their own. */
+  assignable: string[],
   me: { admin: boolean },
   owners: Array<{ sub: string, email: string | null, name: string | null, kind: "owner" | "admin" | "grant", grantedAt: number | null, adder: boolean }>,
   people: Array<{ principal: string, email: string | null, name: string | null, invited: boolean, roles: string[] }>,

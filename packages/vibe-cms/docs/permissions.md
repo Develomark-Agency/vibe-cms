@@ -25,7 +25,7 @@ export const roles: Record<string, RoleRules> = {
 ## Signing in
 
 - **Development** (`dev`, which defaults to Vite's `import.meta.env.DEV`): the editor, the CLI and local agents sign in as a local developer with every permission. No `VIBE_ORG` or roles needed.
-- **Deployed**: the site belongs to the org in its `VIBE_ORG` environment variable, and everyone signs in to that org's hub (the agency panel), which signs them in with its identity provider. Sign-in is the same for every site in the org, so it's deploy configuration, not part of the config file. For each site, the hub signs a short-lived token addressed to that site alone, issued by the org and carrying the provider identity (`<issuer>|<sub>`) and claims. The site finds the hub through the org's DNS record, checks the token against the hub's keys at `<hub>/.well-known/jwks.json`, works out roles itself, and creates its own session, valid for 12 hours. Sites have no secrets to configure; the session signing key is generated and stored in D1. See `vibe-cms docs deploy` for orgs.
+- **Deployed**: the site belongs to the org in its `VIBE_ORG` environment variable, and everyone signs in to that org's hub (the agency panel), which signs them in with its identity provider. Sign-in is the same for every site in the org, so it's deploy configuration, not part of the config file. For each site, the hub signs a short-lived token addressed to that site alone, issued by the org and carrying the provider identity (`<issuer>|<sub>`) and claims. The site finds the hub through the org's DNS record, checks the token against the hub's keys at `<hub>/.well-known/jwks.json`, works out roles itself, and creates its own session. A session the hub vouched for lasts 10 minutes and is renewed through the hub without a word to the user, so what the hub grants or takes away applies within minutes; it also ends as soon as the site trusts another org. Sites have no secrets to configure; the session signing key is generated and stored in D1. See `vibe-cms docs deploy` for orgs.
 - The editor of a deployed site only opens inside the hub, which hands it a one-time code; on its own it links to the site's page in the hub (`<hub>/s/<site id>/`). The CLI logs in to the hub with `vibe-cms login` (`vibe-cms docs cli`), and agents connect to the hub's `/mcp` (`vibe-cms docs agents`).
 - **Deployed without an org**: a site without `VIBE_ORG` signs people in itself (below).
 
@@ -59,7 +59,7 @@ createHandler(config, {
 });
 ```
 
-`owner` is a built-in role: every permission, plus managing roles and users. On a site without an org only the site gives it (the setup link or the Users page); on an org site, the hub's signed `siteAdmin` claim does (below). A `roles` claim naming `owner`, from an identity provider or the hub, is always ignored. Owners and roles with `all: true` can manage roles and users. A signed-in browser keeps an httpOnly cookie for 30 days, which the editor trades for a 12-hour session; signing out, or being removed, ends it. Agents and the CLI sign in to a site without an org the same way: the site's editor asks the signed-in user to approve them (`vibe-cms docs agents`, `vibe-cms docs cli`).
+`owner` is a built-in role: every permission, plus managing roles and users. On a site without an org only the site gives it (the setup link or the Users page); on an org site, the hub's signed `siteAdmin` claim does (below). A `roles` claim naming `owner`, from an identity provider or the hub, is always ignored. Owners and roles with `all: true` can manage roles and users; roles with `manageRoles: true` can too, within their own reach (below). A signed-in browser keeps an httpOnly cookie for 30 days, which the editor trades for a 12-hour session; signing out, or being removed, ends it. Agents and the CLI sign in to a site without an org the same way: the site's editor asks the signed-in user to approve them (`vibe-cms docs agents`, `vibe-cms docs cli`).
 
 ## Roles
 
@@ -77,7 +77,9 @@ A signed-in user's roles are the union of:
 
 Only the site's stored roles and the built-in `owner` count; other names are ignored and never widen access. A user with none gets "No access to this site".
 
-**Site admins from the hub.** The hub's owner and admins, and whoever added the site to the hub (or was made its owner there), manage the site. The hub says so with a `siteAdmin: true` claim it signs into the token, and the site makes them `owner` for that session. It's never stored on the site, can't be removed there, and lasts only while the site trusts that hub. On org sites the **Users** page shows who the hub signed in, read only: assignments are edited in the hub, on the site's **People and roles** page.
+**Site admins from the hub.** The hub's owner and admins, and whoever added the site to the hub (or was made its owner there), manage the site. The hub says so with a `siteAdmin: true` claim it signs into the token, and the site makes them `owner` for that session. It's never stored on the site and can't be removed there; the site's 10-minute sessions mean it's checked with the hub again within minutes, and it ends at once if the site stops trusting that org. On org sites the **Users** page asks the panel the editor runs in who has which role there, and changes it through the panel, with the signed-in person's own rights on the hub: the same list as the site's **People and roles** page in the hub.
+
+**Managing roles within your own.** A role with `manageRoles: true` ("Manage roles" on the Roles page) may create, change, delete and give out roles, but only roles that stay within what that person's own roles allow: no action on a type, media, language, site settings or backups they don't have themselves, never `all`, and never `owner`. Roles beyond their reach show read only, and so do people who hold them. On org sites the hub applies the same rule when they give people roles from the Users page. Templates (`POST /roles/apply`) stay owners-only.
 
 **Upgrading.** A config that still has `permissions.roles` has them copied into the database once, on the first request (names already stored are skipped), with a warning in the logs to remove the key. `permissions.users` is honored for one more release, only for people nothing else gives a role. Remove `permissions` from your config once the roles are on the site.
 
@@ -96,6 +98,7 @@ A role is an object of rules; a user may do anything any of their roles allows.
 | `siteSettings: true` | Changing the site's name, accent and icon (`vibe-cms docs config`). Not implied by anything but `all`. |
 | `backups: "take"` | Taking snapshots (`vibe-cms docs backups`), which reads every draft and file. Not implied by anything but `all`. |
 | `backups: true` | Taking and restoring them. A restore replaces everything. |
+| `manageRoles: true` | Creating, changing and giving out roles up to the person's own access (above). |
 
 Details that matter:
 

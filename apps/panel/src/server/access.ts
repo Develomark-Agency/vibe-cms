@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { PanelError, type PanelSite } from "vibe-cms/panel";
 import type { RoleRules } from "vibe-cms";
-import { describeRules } from "vibe-cms/roles";
+import { beyondReach, describeRules, type RoleSchema } from "vibe-cms/roles";
 import { adminToken, apiBase, hubOrigin } from "./hub.ts";
 import * as t from "./schema.ts";
 import { db, type Env, type SessionRow } from "./shared.ts";
@@ -15,7 +15,7 @@ import { randomString } from "./oidc.ts";
  * vouches for site admins (the signed `siteAdmin` claim).
  */
 
-export const HUB_PERMISSIONS = ["members", "templates", "addSites", "removeSites"] as const;
+export const HUB_PERMISSIONS = ["members", "roles", "templates", "addSites", "removeSites"] as const;
 export type HubPermission = typeof HUB_PERMISSIONS[number];
 
 /** Built-in hub roles; custom ones live in `hub_roles`. */
@@ -156,21 +156,37 @@ export async function listHubRoles(env: Env) {
   ];
 }
 
+/**
+ * Someone without the owner's or an admin's reach may only create, change and hand out hub roles
+ * whose permissions they hold themselves, and never owner or admin.
+ */
+async function requireHubRoleWithin(env: Env, access: HubAccess, role: string) {
+  if(access.admin) return;
+  if(role === OWNER || role === ADMIN) throw new PanelError(403, "Only the owner and admins can give out or change the owner and admin roles");
+  const extra = (await rolePermissions(env, role)).filter(p => !access.permissions.includes(p));
+  if(extra.length) throw new PanelError(403, `${role} goes beyond your own permissions: ${extra.join(", ")}`);
+}
+
 export async function saveHubRole(env: Env, access: HubAccess, name: string, permissions: unknown) {
-  requirePermission(access, "members");
+  requirePermission(access, "roles");
   if(BUILT_IN.has(name)) throw new PanelError(400, `${name} is built in`);
   if(!/^[a-z][a-z0-9 _-]{0,39}$/i.test(name)) throw new PanelError(400, "Role names are letters, digits, spaces, - and _, up to 40 characters");
   if(!Array.isArray(permissions) || permissions.some(p => !(HUB_PERMISSIONS as readonly string[]).includes(p))) {
     throw new PanelError(400, `Permissions are any of ${HUB_PERMISSIONS.join(", ")}`);
   }
+  // Up to your own: what the role had, and what it gets.
+  await requireHubRoleWithin(env, access, name);
+  const extra = (permissions as string[]).filter(p => !access.admin && !access.permissions.includes(p as HubPermission));
+  if(extra.length) throw new PanelError(403, `That goes beyond your own permissions: ${extra.join(", ")}`);
   const value = JSON.stringify([...new Set(permissions as string[])]);
   await db(env).insert(t.hubRoles).values({ name, permissions: value, updated_by: access.sub, updated_at: now() })
     .onConflictDoUpdate({ target: t.hubRoles.name, set: { permissions: value, updated_by: access.sub, updated_at: now() } });
 }
 
 export async function deleteHubRole(env: Env, access: HubAccess, name: string) {
-  requirePermission(access, "members");
+  requirePermission(access, "roles");
   if(BUILT_IN.has(name)) throw new PanelError(400, `${name} is built in`);
+  await requireHubRoleWithin(env, access, name);
   const [used] = await db(env).select({ id: t.members.id }).from(t.members).where(eq(t.members.role, name)).limit(1);
   if(used) throw new PanelError(409, "Some people still have this role. Give them another one first.");
   await db(env).delete(t.hubRoles).where(eq(t.hubRoles.name, name));
@@ -220,9 +236,11 @@ export async function inviteMember(env: Env, access: HubAccess, input: { email?:
   const email = normalizeEmail(input.email);
   const role = await checkRole(env, input.role ?? MEMBER);
   if(role === OWNER) throw new PanelError(400, "There's one owner. Make them an admin instead.");
+  await requireHubRoleWithin(env, access, role);
   const [existing] = await db(env).select().from(t.members).where(eq(t.members.email, email)).limit(1);
   if(existing) {
     if(existing.role === OWNER) throw new PanelError(409, "That's the owner");
+    await requireHubRoleWithin(env, access, existing.role);
     await db(env).update(t.members).set({ role }).where(eq(t.members.id, existing.id));
     return { id: existing.id, email, role };
   }
@@ -249,6 +267,10 @@ export async function updateMember(env: Env, access: HubAccess, id: string, inpu
     await db(env).update(t.members).set({ role: ADMIN }).where(eq(t.members.sub, access.sub));
   }
   if((role === ADMIN || member.role === ADMIN) && !access.admin) throw new PanelError(403, "Only the owner and admins can change admins");
+  if(role !== OWNER) {
+    await requireHubRoleWithin(env, access, role);
+    await requireHubRoleWithin(env, access, member.role);
+  }
   await db(env).update(t.members).set({ role }).where(eq(t.members.id, id));
   return { id, role };
 }
@@ -258,6 +280,7 @@ export async function removeMember(env: Env, access: HubAccess, id: string) {
   const member = await memberById(env, id);
   if(member.role === OWNER) throw new PanelError(403, "The owner can't be removed");
   if(member.role === ADMIN && !access.admin) throw new PanelError(403, "Only the owner and admins can remove admins");
+  await requireHubRoleWithin(env, access, member.role);
   const orm = db(env);
   await orm.delete(t.members).where(eq(t.members.id, id));
   if(member.sub) {
@@ -347,6 +370,33 @@ export async function siteRoles(env: Env, site: Pick<PanelSite, "id" | "admin">,
   return data.roles ?? [];
 }
 
+/**
+ * Who may give people roles on a site from the hub, and which roles: the site's owners on the hub may
+ * give any. Someone whose own role on the site has Manage roles may give roles within their own.
+ * Null: neither.
+ */
+async function assignReach(env: Env, access: HubAccess, site: Pick<PanelSite, "id" | "admin">, roles?: SiteRole[]): Promise<{ full: boolean, roles: SiteRole[], assignable: string[] } | null> {
+  if(await canManageSite(env, access, site.id)) {
+    const all = roles ?? await siteRoles(env, site, access.sub);
+    return { full: true, roles: all, assignable: all.map(role => role.name) };
+  }
+  const mine = (await siteClaims(env, access.sub, site.id)).roles;
+  if(!mine.length) return null;
+  const all = roles ?? await siteRoles(env, site, access.sub);
+  const held = all.filter(role => mine.includes(role.name)).map(role => role.rules);
+  if(!held.some(rules => rules.manageRoles)) return null;
+  const schema = await siteRolesCall(env, site, access.sub, "/roles/schema") as RoleSchema;
+  return { full: false, roles: all, assignable: all.filter(role => beyondReach(role.rules, held, schema).length === 0).map(role => role.name) };
+}
+
+async function requireAssignable(env: Env, access: HubAccess, site: Pick<PanelSite, "id" | "admin">, names: string[]) {
+  const reach = await assignReach(env, access, site);
+  if(!reach) throw new PanelError(403, "Only this site's owners, and people who manage its roles, can do that");
+  if(reach.full) return;
+  const beyond = names.filter(name => !reach.assignable.includes(name));
+  if(beyond.length) throw new PanelError(403, `Beyond your own roles on this site: ${beyond.join(", ")}`);
+}
+
 export async function siteAccess(env: Env, access: HubAccess, site: PanelSite) {
   const orm = db(env);
   const [row] = await orm.select().from(t.sites).where(eq(t.sites.id, site.id));
@@ -360,16 +410,19 @@ export async function siteAccess(env: Env, access: HubAccess, site: PanelSite) {
   const manage = await canManageSite(env, access, site.id);
   let roles: SiteRole[] | null = null;
   let rolesError: string | null = null;
-  if(manage) {
-    try {
-      roles = await siteRoles(env, site, access.sub);
-    } catch (error) {
-      rolesError = (error as Error).message;
-    }
+  let reach: Awaited<ReturnType<typeof assignReach>> = null;
+  try {
+    reach = await assignReach(env, access, site);
+    roles = reach?.roles ?? null;
+  } catch (error) {
+    rolesError = (error as Error).message;
   }
   return {
     site: { ...site, addedBy: row?.added_by ?? null, addedAt: row?.added_at ?? null },
     canManage: manage,
+    /** Whether this person may give people roles here, and which. */
+    canAssign: Boolean(reach),
+    assignable: reach?.assignable ?? [],
     owners: [
       ...admins.filter(m => m.sub).map(m => ({ sub: m.sub!, email: m.email, name: m.name, kind: m.role as "owner" | "admin", grantedAt: null as number | null, adder: false })),
       ...grants.filter(g => !admins.some(m => m.sub === g.sub)).map(g => ({ sub: g.sub, email: g.email, name: g.name, kind: "grant" as const, grantedAt: g.grantedAt, adder: g.sub === row?.added_by }))
@@ -395,8 +448,8 @@ export async function siteAccess(env: Env, access: HubAccess, site: PanelSite) {
 }
 
 /** Gives someone roles on a site, by email (resolved to their `sub` at sign-in) or by `sub`. */
-export async function assign(env: Env, access: HubAccess, siteId: string, input: { email?: unknown, sub?: unknown, roles?: unknown }) {
-  await requireSiteManager(env, access, siteId);
+export async function assign(env: Env, access: HubAccess, site: Pick<PanelSite, "id" | "admin">, input: { email?: unknown, sub?: unknown, roles?: unknown }) {
+  const siteId = site.id;
   if(!Array.isArray(input.roles) || input.roles.some(r => typeof r !== "string" || r === "owner")) throw new PanelError(400, "Expected roles as a list of the site's role names");
   const roles = [...new Set(input.roles as string[])];
   const orm = db(env);
@@ -415,6 +468,9 @@ export async function assign(env: Env, access: HubAccess, siteId: string, input:
     principal = member?.sub ?? seen?.sub ?? `email:${email}`;
     name = member?.name ?? seen?.name ?? null;
   }
+  // Up to your own: the roles given, and the roles they had.
+  const [before] = await orm.select({ roles: t.siteAssignments.roles }).from(t.siteAssignments).where(and(eq(t.siteAssignments.site_id, siteId), eq(t.siteAssignments.principal, principal)));
+  await requireAssignable(env, access, site, [...roles, ...before ? JSON.parse(before.roles) as string[] : []]);
   if(roles.length === 0) {
     await orm.delete(t.siteAssignments).where(and(eq(t.siteAssignments.site_id, siteId), eq(t.siteAssignments.principal, principal)));
     return { principal, roles };
@@ -426,8 +482,10 @@ export async function assign(env: Env, access: HubAccess, siteId: string, input:
   return { principal, roles };
 }
 
-export async function unassign(env: Env, access: HubAccess, siteId: string, principal: string) {
-  await requireSiteManager(env, access, siteId);
+export async function unassign(env: Env, access: HubAccess, site: Pick<PanelSite, "id" | "admin">, principal: string) {
+  const siteId = site.id;
+  const [before] = await db(env).select({ roles: t.siteAssignments.roles }).from(t.siteAssignments).where(and(eq(t.siteAssignments.site_id, siteId), eq(t.siteAssignments.principal, principal)));
+  await requireAssignable(env, access, site, before ? JSON.parse(before.roles) as string[] : []);
   await db(env).delete(t.siteAssignments).where(and(eq(t.siteAssignments.site_id, siteId), eq(t.siteAssignments.principal, principal)));
 }
 

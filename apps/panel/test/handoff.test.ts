@@ -11,7 +11,7 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   const callback = await signIn();
   expect(callback.status).toBe(302);
   expect(callback.headers.get("location")).toBe("https://panel.test/s/site-a/");
-  expect(await (await panel("/api/me")).json()).toEqual({ name: "Jane", email: "jane@agency.test", role: "owner", admin: true, permissions: ["members", "templates", "addSites", "removeSites"] });
+  expect(await (await panel("/api/me")).json()).toEqual({ name: "Jane", email: "jane@agency.test", role: "owner", admin: true, permissions: ["members", "roles", "templates", "addSites", "removeSites"] });
 
   const added = await panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://site-a.test" }) });
   expect(added.status).toBe(201);

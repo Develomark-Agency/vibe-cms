@@ -20,7 +20,8 @@ export function previewPages(prefix: string) {
     const url = new URL(c.req.url);
     const code = url.searchParams.get("code");
     if(!code) throw new HttpError(400, "Expected a code");
-    const session = await consumeCode(state.db, code);
+    // Previews only read drafts, so they keep their hour even when the hub vouched for the editor.
+    const { hubOrg: _hub, ...session } = await consumeCode(state.db, code);
     const { token, expiresAt } = await issueSession(state.db, session, state.siteId, url.origin);
     const cookie = previewCookie(token, Math.min(PREVIEW_TTL, expiresAt - Math.floor(Date.now() / 1000)), url.protocol === "https:");
     const path = safePath(url.searchParams.get("path"));

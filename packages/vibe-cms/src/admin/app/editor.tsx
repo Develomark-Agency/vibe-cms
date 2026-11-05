@@ -60,6 +60,7 @@ import {
 import { Field, FormValueContext } from "./fields.tsx";
 import { setEditorPage, showPreview } from "./preview.ts";
 import { Link, navigate, setNavigationBlocker } from "./router.tsx";
+import { confirmLeave } from "./confirm.tsx";
 import { Segmented } from "./segmented.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 
@@ -133,7 +134,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   // Unsaved-changes guard, for in-app navigation and for leaving the page.
   useEffect(() => {
     if(!dirty) return;
-    setNavigationBlocker(() => confirm("You have unsaved changes. Leave anyway?"));
+    setNavigationBlocker(confirmLeave);
     function beforeUnload(event: BeforeUnloadEvent) {
       event.preventDefault();
     }

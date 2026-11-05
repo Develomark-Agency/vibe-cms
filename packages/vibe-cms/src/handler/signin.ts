@@ -12,6 +12,7 @@ import type { EmailSender } from "./email.ts";
 import { authorizationUrl, exchangeCode, isAllowed, randomString, verifyIdToken, type OidcConfig } from "../oidc/index.ts";
 import type { Session } from "../server/index.ts";
 import { identitySession, OWNER } from "./auth.ts";
+import { fullRoleManager, outOfReach } from "./roles.ts";
 import { count, eq, getTableColumns, like, lt, or, sql } from "drizzle-orm";
 import { createDb } from "../db/client.ts";
 import { challenges, invites, meta, passkeys, signins, users } from "../db/schema.ts";
@@ -193,10 +194,26 @@ export async function listUsers(state: State) {
  * (inviting someone again is how they add a device or recover a lost passkey). Emailed when the
  * site can send email; returned either way, so it can be copied.
  */
+/**
+ * People who manage roles without being owners may only give out, and only change people who have,
+ * roles within their own; never `owner`.
+ */
+function requireWithinReach(state: State, by: Session, roles: string[]) {
+  if(fullRoleManager(state, by)) return;
+  if(roles.includes(OWNER)) throw new HttpError(403, "Only owners can give or change the owner role");
+  for(const role of roles) {
+    const problem = outOfReach(state, by, state.roles.map[role]);
+    if(problem) throw new HttpError(403, `${role}: ${problem}`);
+  }
+}
+
 export async function invite(state: State, origin: string, by: Session, input: { email?: unknown, roles?: unknown }) {
   const email = normalizeEmail(input.email);
   const roles = checkRoles(state, input.roles ?? []);
   if(roles.length === 0) throw new HttpError(400, "Give the user at least one role");
+  requireWithinReach(state, by, roles);
+  const existing = await userBy(state, eq(users.email, email));
+  if(existing) requireWithinReach(state, by, JSON.parse(existing.roles) as string[]);
   const user = await upsertUser(state, email, roles, by.email ?? by.sub);
   const mode = await signInMode(state);
   let link = `${origin}${state.prefix}/admin/`;
@@ -228,18 +245,20 @@ export async function invite(state: State, origin: string, by: Session, input: {
   return { user: { id: user.id, email, roles }, link, emailed, emailError, expiresAt: mode === "passkey" ? Date.now() + INVITE_TTL : null };
 }
 
-export async function updateUser(state: State, id: string, input: { roles?: unknown }) {
+export async function updateUser(state: State, by: Session, id: string, input: { roles?: unknown }) {
   const roles = checkRoles(state, input.roles);
   const user = await userBy(state, eq(users.id, id));
   if(!user) throw new HttpError(404, "No such user");
+  requireWithinReach(state, by, [...roles, ...JSON.parse(user.roles) as string[]]);
   if(!roles.includes(OWNER) && await isLastOwner(state, user)) throw new HttpError(409, "The site needs at least one owner");
   await createDb(state.db).update(users).set({ roles: JSON.stringify(roles) }).where(eq(users.id, id));
   return { id, roles };
 }
 
-export async function removeUser(state: State, id: string) {
+export async function removeUser(state: State, by: Session, id: string) {
   const user = await userBy(state, eq(users.id, id));
   if(!user) throw new HttpError(404, "No such user");
+  requireWithinReach(state, by, JSON.parse(user.roles) as string[]);
   if(await isLastOwner(state, user)) throw new HttpError(409, "The site needs at least one owner");
   const orm = createDb(state.db);
   await orm.batch([

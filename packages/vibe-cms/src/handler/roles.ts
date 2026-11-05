@@ -1,8 +1,8 @@
 import { count, eq, like } from "drizzle-orm";
 import { HttpError, type AnyConfig, type RoleRules } from "../config.ts";
 import { createDb } from "../db/client.ts";
-import { hubUsers, meta, roles as rolesTable, users } from "../db/schema.ts";
-import { fitRules, normalizeLegacyRules, OWNER_ROLE, PRESETS, presetRules, ruleIssues, staleKeys, validRoleName, type RoleSchema, type StoredRole } from "../roles.ts";
+import { meta, roles as rolesTable, users } from "../db/schema.ts";
+import { beyondReach, fitRules, normalizeLegacyRules, OWNER_ROLE, PRESETS, presetRules, ruleIssues, staleKeys, validRoleName, type RoleSchema, type StoredRole } from "../roles.ts";
 import type { Session } from "../server/index.ts";
 import { getMeta } from "./db.ts";
 import type { D1 } from "./platform.ts";
@@ -89,25 +89,51 @@ interface RoleState {
   org?: { current(): Promise<string | null> }
 }
 
-/** Who may edit roles: owners (the hub's site admins are owners) and `all` roles. */
-export function canManageRoles(state: RoleState, session: Session | null): boolean {
+/** Owners (the hub's site admins are owners) and `all` roles: may change any role. */
+export function fullRoleManager(state: RoleState, session: Session | null): boolean {
   if(!session || session.readOnly) return false;
   if(session.sub === "dev" || session.roles.includes(OWNER_ROLE)) return true;
   return session.roles.some(role => state.roles.map[role]?.all === true);
 }
 
+/** Owners, `all` roles, and `manageRoles` roles, which may only change roles within their own. */
+export function canManageRoles(state: RoleState, session: Session | null): boolean {
+  if(fullRoleManager(state, session)) return true;
+  return Boolean(session && !session.readOnly && session.roles.some(role => state.roles.map[role]?.manageRoles === true));
+}
+
 function requireManager(state: RoleState, session: Session | null): Session {
   if(!session) throw new HttpError(401, "Sign in required");
-  if(!canManageRoles(state, session)) throw new HttpError(403, "Only owners can change roles");
+  if(!canManageRoles(state, session)) throw new HttpError(403, "Only owners and people who manage roles can change roles");
   return session;
+}
+
+/** The rules of someone's roles. */
+export function heldRules(state: RoleState, session: Session): RoleRules[] {
+  return session.roles.flatMap(role => (state.roles.map[role] ? [state.roles.map[role]!] : []));
+}
+
+/** Why this person can't create, change or hand out a role with `rules`; null when they can. */
+export function outOfReach(state: RoleState, session: Session, rules: RoleRules | undefined): string | null {
+  if(!rules || fullRoleManager(state, session)) return null;
+  const beyond = beyondReach(rules, heldRules(state, session), roleSchema(state.config));
+  return beyond.length ? `That goes beyond your own roles: ${beyond.join("; ")}` : null;
+}
+
+function requireWithinReach(state: RoleState, session: Session, name: string, rules: RoleRules | undefined) {
+  const problem = outOfReach(state, session, rules);
+  if(problem) throw new HttpError(403, `${name}: ${problem}`);
 }
 
 export function listRoles(state: RoleState, session: Session | null) {
   if(!session) throw new HttpError(401, "Sign in required");
   const schema = roleSchema(state.config);
   return {
-    roles: state.roles.list.map(role => ({ ...role, stale: staleKeys(role.rules, schema) })),
-    canEdit: canManageRoles(state, session)
+    // `editable`: this person may change or delete the role. Partial managers can't touch roles beyond their own.
+    roles: state.roles.list.map(role => ({ ...role, stale: staleKeys(role.rules, schema), editable: canManageRoles(state, session) && !outOfReach(state, session, role.rules) })),
+    canEdit: canManageRoles(state, session),
+    /** Owners and `all` roles; otherwise new roles have to stay within this person's own. */
+    fullAccess: fullRoleManager(state, session)
   };
 }
 
@@ -132,8 +158,10 @@ export async function saveRole(state: RoleState, session: Session | null, name: 
   const issues = ruleIssues(input.rules, roleSchema(state.config));
   if(issues.length) throw new HttpError(400, issues.join("; "), { issues });
   const rules = input.rules as RoleRules;
-  // Only owners and `all` roles edit roles, and both already hold everything a role can grant.
   const current = state.roles.map[name];
+  // People who manage roles without being owners stay within their own: what the role had, and what it gets.
+  requireWithinReach(state, by, name, current);
+  requireWithinReach(state, by, name, rules);
   if(current?.all && !rules.all && !await someoneCanManage(state, name, rules)) {
     throw new HttpError(409, "Nobody else could manage the site after this change");
   }
@@ -145,8 +173,9 @@ export async function saveRole(state: RoleState, session: Session | null, name: 
 }
 
 export async function deleteRole(state: RoleState, session: Session | null, name: string) {
-  requireManager(state, session);
+  const by = requireManager(state, session);
   if(!state.roles.map[name]) throw new HttpError(404, `No role called ${name}`);
+  requireWithinReach(state, by, name, state.roles.map[name]);
   if(state.roles.map[name]!.all && !await someoneCanManage(state, name, null)) {
     throw new HttpError(409, "Nobody else could manage the site after this change");
   }
@@ -168,6 +197,8 @@ export function presets(state: RoleState) {
  */
 export async function applyRoles(state: RoleState, session: Session | null, input: { roles?: unknown, replace?: unknown }) {
   const by = requireManager(state, session);
+  // Templates replace roles wholesale: owners only.
+  if(!fullRoleManager(state, by)) throw new HttpError(403, "Only owners can apply a set of roles");
   if(typeof input.roles !== "object" || input.roles === null || Array.isArray(input.roles)) throw new HttpError(400, "Expected roles as { name: rules }");
   const schema = roleSchema(state.config);
   const skipped: string[] = [];
@@ -194,22 +225,4 @@ export async function applyRoles(state: RoleState, session: Session | null, inpu
   }
   await state.roles.refresh(true);
   return { roles: state.roles.list, skipped };
-}
-
-/** Remembers who the hub signed in, and as what, for the Users page of org sites. */
-export async function recordHubUser(db: D1, session: Session, siteAdmin: boolean): Promise<void> {
-  const values = { sub: session.sub, email: session.email ?? null, name: session.name ?? null, roles: JSON.stringify(session.roles.filter(role => role !== OWNER_ROLE || !siteAdmin)), site_admin: siteAdmin, last_sign_in_at: Date.now() };
-  await createDb(db).insert(hubUsers).values(values).onConflictDoUpdate({ target: hubUsers.sub, set: values });
-}
-
-export async function listHubUsers(db: D1) {
-  const rows = await createDb(db).select().from(hubUsers).orderBy(hubUsers.email);
-  return rows.map(row => ({
-    sub: row.sub,
-    email: row.email,
-    name: row.name,
-    roles: JSON.parse(row.roles) as string[],
-    siteAdmin: row.site_admin,
-    lastSignInAt: row.last_sign_in_at
-  }));
 }

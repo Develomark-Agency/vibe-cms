@@ -7,13 +7,15 @@ import { Badge } from "../admin/components/ui/badge.tsx";
 import { Button } from "../admin/components/ui/button.tsx";
 import { Checkbox } from "../admin/components/ui/checkbox.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../admin/components/ui/dialog.tsx";
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../admin/components/ui/dropdown-menu.tsx";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../admin/components/ui/dropdown-menu.tsx";
 import { Input } from "../admin/components/ui/input.tsx";
 import { Label } from "../admin/components/ui/label.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../admin/components/ui/select.tsx";
 import { Spinner } from "../admin/components/ui/spinner.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../admin/components/ui/tabs.tsx";
 import { Delayed } from "../admin/app/delayed.tsx";
+import { Person, SitePeople } from "../admin/app/site-people.tsx";
+import { askConfirm } from "../admin/app/confirm.tsx";
 import { editableRules, RoleRulesEditor } from "../admin/app/role-rules.tsx";
 import { cn } from "../admin/lib/utils.ts";
 import type { HubPermission, PanelBranding, PanelHub, PanelRoleRules, PanelSite, PanelUser, RoleTemplate } from "./backend.ts";
@@ -25,29 +27,12 @@ import { go } from "./location.ts";
  */
 
 const PERMISSION_LABELS: Record<HubPermission, { label: string, description: string }> = {
-  members: { label: "People", description: "Invite people, change their hub roles, remove them" },
+  members: { label: "People", description: "Invite people, change their hub roles (up to your own), remove them" },
+  roles: { label: "Hub roles", description: "Create and change hub roles, up to your own permissions" },
   templates: { label: "Templates", description: "Create, edit and delete templates" },
   addSites: { label: "Add sites", description: "Add sites; whoever adds a site manages it" },
   removeSites: { label: "Remove sites", description: "Remove any site from the panel" }
 };
-
-function initials(name: string | null | undefined, email: string | null | undefined): string {
-  const source = name?.trim() || email?.split("@")[0] || "?";
-  const parts = source.split(/[\s._-]+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? "")).toUpperCase();
-}
-
-function Person({ name, email, detail, invited }: { name: string | null, email: string | null, detail?: string, invited?: boolean }) {
-  return (
-    <div className="flex min-w-0 items-center gap-3">
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-full well text-[11px] font-medium text-muted-foreground">{invited ? "?" : initials(name, email)}</span>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{name ?? email ?? "Someone"}</p>
-        <p className="truncate text-xs text-muted-foreground">{detail ?? (name ? email : null) ?? ""}</p>
-      </div>
-    </div>
-  );
-}
 
 function RoleBadge({ role }: { role: string }) {
   if(role === "owner") return <Badge>Owner</Badge>;
@@ -109,6 +94,12 @@ export function PeoplePage({ hub, user }: { hub: PanelHub, user: PanelUser }) {
   const data = useQuery({ queryKey: ["members"], queryFn: () => hub.members() });
   const [inviteOpen, setInviteOpen] = useState(false);
   const canManage = user.permissions?.includes("members") ?? false;
+  const canEditRoles = user.permissions?.includes("roles") ?? false;
+  /** Hub roles this person may hand out: any for the owner and admins, else those within their own permissions. */
+  const mine = user.permissions ?? [];
+  function within(role: { name: string, permissions: HubPermission[] }) {
+    return user.admin || (role.name !== "owner" && role.name !== "admin" && role.permissions.every(p => mine.includes(p)));
+  }
   function refresh() {
     return queryClient.invalidateQueries({ queryKey: ["members"] });
   }
@@ -149,7 +140,9 @@ export function PeoplePage({ hub, user }: { hub: PanelHub, user: PanelUser }) {
             <ul className="divide-y">
               {members.map(member => {
                 const self = member.sub === me.sub;
-                const editable = canManage && !self && member.role !== "owner";
+                const current = roles.find(r => r.name === member.role);
+                const editable = canManage && !self && member.role !== "owner" && (!current || within(current));
+                const choices = roles.filter(r => r.name !== "owner" && (within(r) || r.name === member.role));
                 const siteSummary = member.role === "owner" || member.role === "admin"
                   ? `All ${sites} ${sites === 1 ? "site" : "sites"}`
                   : [member.managedSites ? `Manages ${member.managedSites}` : null, member.assignedSites.length ? (member.assignedSites.length > 2 ? `Role on ${member.assignedSites.length}` : member.assignedSites.join(", ")) : null].filter(Boolean).join(" · ") || "No sites";
@@ -158,10 +151,10 @@ export function PeoplePage({ hub, user }: { hub: PanelHub, user: PanelUser }) {
                     <Person name={member.name} email={member.email} invited={member.invited} detail={member.invited ? `Invited ${relative(member.addedAt)}` : undefined} />
                     <div className="sm:order-none">
                       {editable ? (
-                        <Select items={roles.filter(r => r.name !== "owner").map(r => ({ value: r.name, label: r.name }))} value={member.role} onValueChange={role => role && setRole.mutate({ id: member.id, role })}>
+                        <Select items={choices.map(r => ({ value: r.name, label: r.name }))} value={member.role} onValueChange={role => role && setRole.mutate({ id: member.id, role })}>
                           <SelectTrigger size="sm" className="w-40 capitalize"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {roles.filter(r => r.name !== "owner").map(r => <SelectItem key={r.name} value={r.name} className="capitalize">{r.name}</SelectItem>)}
+                            {choices.map(r => <SelectItem key={r.name} value={r.name} className="capitalize">{r.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       ) : <RoleBadge role={member.role} />}
@@ -172,8 +165,8 @@ export function PeoplePage({ hub, user }: { hub: PanelHub, user: PanelUser }) {
                         <DropdownMenu>
                           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`Actions for ${member.email ?? member.name}`}><MoreHorizontalIcon /></Button>} />
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem variant="destructive" onClick={() => {
-                              if(confirm(`Remove ${member.email ?? member.name} from the panel? They lose every site role the panel gave them.`)) remove.mutate(member.id);
+                            <DropdownMenuItem variant="destructive" onClick={async () => {
+                              if(await askConfirm({ title: `Remove ${member.email ?? member.name} from the panel?`, description: "They lose every site role the panel gave them, and are signed out of the panel. Sites stop letting them in within about 10 minutes.", action: "Remove", destructive: true })) remove.mutate(member.id);
                             }}>Remove from panel</DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -187,10 +180,10 @@ export function PeoplePage({ hub, user }: { hub: PanelHub, user: PanelUser }) {
           <p className="mt-3 text-xs text-muted-foreground">People who aren't listed can still sign in if your identity provider allows them; they only see sites they've been given a role on.</p>
         </TabsContent>
         <TabsContent value="roles" className="pt-4">
-          <HubRoles hub={hub} roles={roles} canManage={canManage} />
+          <HubRoles hub={hub} roles={roles} canManage={canEditRoles} mine={user.admin ? null : mine} />
         </TabsContent>
       </Tabs>
-      <InviteDialog hub={hub} roles={roles.filter(r => r.name !== "owner").map(r => r.name)} open={inviteOpen} onOpenChange={setInviteOpen} onDone={refresh} />
+      <InviteDialog hub={hub} roles={roles.filter(r => r.name !== "owner" && within(r)).map(r => r.name)} open={inviteOpen} onOpenChange={setInviteOpen} onDone={refresh} />
     </div>
   );
 }
@@ -243,7 +236,8 @@ function InviteDialog({ hub, roles, open, onOpenChange, onDone }: { hub: PanelHu
   );
 }
 
-function HubRoles({ hub, roles, canManage }: { hub: PanelHub, roles: Array<{ name: string, permissions: HubPermission[], builtIn: boolean }>, canManage: boolean }) {
+/** `mine`: the permissions this person holds, or null for the owner and admins, who may grant any. */
+function HubRoles({ hub, roles, canManage, mine }: { hub: PanelHub, roles: Array<{ name: string, permissions: HubPermission[], builtIn: boolean }>, canManage: boolean, mine: HubPermission[] | null }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const save = useMutation({
@@ -282,13 +276,13 @@ function HubRoles({ hub, roles, canManage }: { hub: PanelHub, roles: Array<{ nam
                     <Checkbox
                       aria-label={`${role.name}: ${PERMISSION_LABELS[p].label}`}
                       checked={role.permissions.includes(p)}
-                      disabled={role.builtIn || !canManage}
+                      disabled={role.builtIn || !canManage || (mine !== null && (!mine.includes(p) || !role.permissions.every(x => mine.includes(x))))}
                       onCheckedChange={on => save.mutate({ role: role.name, permissions: on ? [...role.permissions, p] : role.permissions.filter(x => x !== p) })}
                     />
                   </td>
                 ))}
                 <td className="pr-3 text-right">
-                  {!role.builtIn && canManage && (
+                  {!role.builtIn && canManage && (mine === null || role.permissions.every(x => mine.includes(x))) && (
                     <Button variant="ghost" size="icon-sm" aria-label={`Delete ${role.name}`} onClick={() => remove.mutate(role.name)}><XIcon /></Button>
                   )}
                 </td>
@@ -460,8 +454,8 @@ function TemplateEditor({ hub, template, canEdit, onDeleted }: { hub: PanelHub, 
         {canEdit && (
           <div className="flex flex-wrap gap-2">
             {!template.isDefault && <Button variant="outline" disabled={save.isPending} onClick={() => save.mutate({ isDefault: true })}>Make default</Button>}
-            <Button variant="outline" disabled={remove.isPending} onClick={() => {
-              if(confirm(`Delete ${template.name}? Sites that used it keep their roles.`)) remove.mutate();
+            <Button variant="outline" disabled={remove.isPending} onClick={async () => {
+              if(await askConfirm({ title: `Delete ${template.name}?`, description: "Sites that started from it keep their roles.", action: "Delete", destructive: true })) remove.mutate();
             }}>Delete</Button>
             <Button disabled={!dirty || save.isPending} onClick={() => save.mutate({ name, roles })}>{save.isPending && <Spinner />} Save template</Button>
           </div>
@@ -523,7 +517,6 @@ export function AccessPage({ hub, siteId, site }: { hub: PanelHub, siteId: strin
   const queryClient = useQueryClient();
   const access = useQuery({ queryKey: ["access", siteId], queryFn: () => hub.siteAccess(siteId) });
   const members = useQuery({ queryKey: ["members"], queryFn: () => hub.members(), enabled: access.data?.me.admin === true, retry: false });
-  const [adding, setAdding] = useState(false);
   const [applying, setApplying] = useState(false);
   function refresh() {
     return queryClient.invalidateQueries({ queryKey: ["access", siteId] });
@@ -597,26 +590,12 @@ export function AccessPage({ hub, siteId, site }: { hub: PanelHub, siteId: strin
             )}
           </section>
 
-          <section className="rounded-[16px] elevated">
-            <div className="flex items-center justify-between gap-3 border-b px-5 py-4">
-              <h2 className="font-medium">People with a role</h2>
-              {data.canManage && <Button size="sm" disabled={!data.roles?.length} onClick={() => setAdding(true)}><UserPlusIcon /> Add person</Button>}
-            </div>
-            {data.people.length === 0 && <p className="px-5 py-4 text-sm text-muted-foreground">Nobody yet. {data.canManage ? (data.roles?.length ? "Add someone to give them a role here." : "The site has no roles yet: add some in its editor first.") : ""}</p>}
-            <ul className="divide-y">
-              {data.people.map(person => (
-                <li key={person.principal} className="flex flex-col gap-3 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <Person name={person.name} email={person.email} detail={person.invited ? `${person.email} · hasn't signed in yet` : undefined} />
-                  <div className="flex items-center gap-1">
-                    {data.canManage ? (
-                      <RolesMenu roles={roleNames} value={person.roles} onChange={roles => assign.mutate({ who: person.invited ? { email: person.email! } : { sub: person.principal }, roles })} />
-                    ) : person.roles.map(role => <Badge key={role} variant="secondary">{role}</Badge>)}
-                    {data.canManage && <Button variant="ghost" size="icon-sm" aria-label={`Remove ${person.email ?? person.name}`} onClick={() => unassign.mutate(person.principal)}><XIcon /></Button>}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <SitePeople
+            data={{ people: data.people, roles: roleNames, canAssign: data.canAssign, assignable: data.assignable }}
+            pending={assign.isPending || unassign.isPending}
+            onAssign={(who, roles) => assign.mutateAsync({ who, roles })}
+            onUnassign={principal => unassign.mutateAsync(principal)}
+          />
         </div>
 
         <aside className="flex flex-col gap-4">
@@ -664,82 +643,8 @@ export function AccessPage({ hub, siteId, site }: { hub: PanelHub, siteId: strin
         </aside>
       </div>
 
-      <AddPersonDialog open={adding} onOpenChange={setAdding} roles={roleNames} pending={assign.isPending}
-        onAdd={(email, roles) => assign.mutate({ who: { email }, roles }, { onSuccess: () => setAdding(false) })} />
       {data.canManage && <ApplyTemplateDialog hub={hub} siteId={siteId} current={data.roles ?? []} open={applying} onOpenChange={setApplying} onApplied={refresh} />}
     </div>
-  );
-}
-
-function RolesMenu({ roles, value, onChange }: { roles: string[], value: string[], onChange(next: string[]): void }) {
-  const unknown = value.filter(role => !roles.includes(role));
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={
-        <Button variant="outline" size="sm" className="min-w-40 justify-between">
-          <span className="truncate">{value.length ? value.join(", ") : "No role"}</span>
-          <ChevronDownIcon className="text-muted-foreground" />
-        </Button>
-      } />
-      <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>Roles on this site</DropdownMenuLabel>
-        {roles.map(role => (
-          <DropdownMenuCheckboxItem key={role} checked={value.includes(role)} onCheckedChange={on => onChange(on ? [...value, role] : value.filter(r => r !== role))}>{role}</DropdownMenuCheckboxItem>
-        ))}
-        {unknown.length > 0 && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Not on the site any more, so ignored:</DropdownMenuLabel>
-            {unknown.map(role => <DropdownMenuCheckboxItem key={role} checked onCheckedChange={() => onChange(value.filter(r => r !== role))}>{role}</DropdownMenuCheckboxItem>)}
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function AddPersonDialog({ open, onOpenChange, roles, pending, onAdd }: { open: boolean, onOpenChange(open: boolean): void, roles: string[], pending: boolean, onAdd(email: string, roles: string[]): void }) {
-  const [email, setEmail] = useState("");
-  const [chosen, setChosen] = useState<string[]>([]);
-  useEffect(() => {
-    if(open) {
-      setEmail("");
-      setChosen(roles.slice(0, 1));
-    }
-  }, [open]);
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form className="grid gap-4" onSubmit={event => {
-          event.preventDefault();
-          onAdd(email.trim(), chosen);
-        }}>
-          <DialogHeader>
-            <DialogTitle>Add a person</DialogTitle>
-            <DialogDescription>They get these roles on this site the next time they sign in to the panel with this verified email. Your identity provider still has to let them in.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-2">
-            <Label htmlFor="person-email">Email</Label>
-            <Input id="person-email" type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)} placeholder="name@client.com" />
-          </div>
-          <div className="grid gap-2">
-            <Label>Roles</Label>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {roles.map(role => (
-                <label key={role} className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={chosen.includes(role)} onCheckedChange={on => setChosen(on ? [...chosen, role] : chosen.filter(r => r !== role))} />
-                  {role}
-                </label>
-              ))}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={!email.trim() || !chosen.length || pending}>{pending && <Spinner />} Add person</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
 

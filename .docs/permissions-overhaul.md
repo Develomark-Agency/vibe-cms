@@ -32,7 +32,7 @@ New tables in `apps/panel/src/server/schema.ts`:
 | `site_assignments` | `site_id`, `sub` or verified email, `roles` (JSON array of site role names): the hub's user→role assignments |
 | `templates` | `id`, `name`, `roles` (JSON, same shape as a site's stored roles), `is_default` |
 
-**Hub permissions**, held by roles: `members` (invite, change roles, remove), `templates` (create, edit, delete), `addSites`, `removeSites`. `owner` has all and cannot be removed or demoted by anyone else; `admin` has all but cannot touch the owner.
+**Hub permissions**, held by roles: `members` (invite, change roles, remove), `roles` (create and edit hub roles), `templates` (create, edit, delete), `addSites`, `removeSites`. Below owner and admin, `members` and `roles` only reach as far as the holder's own permissions. `owner` has all and cannot be removed or demoted by anyone else; `admin` has all but cannot touch the owner.
 
 **Bootstrap.** Until the hub has an owner, it prints a one-time setup link to its logs, same pattern as `announceSetup` on sites ([signin.ts](../packages/vibe-cms/src/handler/signin.ts)): a random token in `panel_meta`, shown as `https://<hub>/#setup=<token>`. Whoever opens it and signs in through the identity provider becomes `owner`; the token is then deleted. `PANEL_ALLOW` still applies. Until an owner exists, nobody else can sign in.
 
@@ -59,14 +59,14 @@ The token already carries `roles` from the IdP claim. It gains:
 
 **Resolution** (`identitySession` and `can`):
 - `can()` reads stored roles from state instead of `config.permissions.roles`. Cache per request/isolate with invalidation on role writes.
-- A token with `siteAdmin: true` yields the built-in `owner` for that request, but only from a verified hub token for a site in an org. It is never stored, cannot be removed on the site, and exists only while the site trusts that hub. This is a deliberate exception to "hub tokens naming `owner` are ignored"; the exception is the new signed claim, not the `roles` claim, which keeps filtering `owner`.
+- A token with `siteAdmin: true` yields the built-in `owner` for that request, but only from a verified hub token for a site in an org. It is never stored and cannot be removed on the site; sessions the hub vouched for last 10 minutes and renew through the hub, and end when the site stops trusting the org. This is a deliberate exception to "hub tokens naming `owner` are ignored"; the exception is the new signed claim, not the `roles` claim, which keeps filtering `owner`.
 - Unknown role names (from the hub, or a role referencing a deleted content type) are ignored and never widen access.
 
 **API** (new, under `/_vibe/api`, all requiring the `users`/roles permission):
 - `GET /roles`, `PUT /roles/:name`, `DELETE /roles/:name`, `GET /roles/presets`, `GET /roles/schema` (content types and locales, for the editor's rule builder).
 - Validation on save: rule keys must name existing types and locales; unknown keys are rejected with a clear error. At runtime they are ignored and flagged in the editor.
-- Guardrails: only owners, `all: true` roles and `siteAdmin` may edit; a change may not grant more than the editor holds; a save may not leave the site with nobody able to manage it.
-- The Users page extends to org sites for viewing who the hub has assigned (read-only; assignments are edited on the hub).
+- Guardrails: owners, `all: true` roles and `siteAdmin` may edit anything; `manageRoles: true` roles only roles within their own reach (`beyondReach` in `roles.ts`); a save may not leave the site with nobody able to manage it.
+- The Users page extends to org sites: the editor asks the panel it runs in (`vibe:hub` messages) for the hub's assignments, and changes them through it.
 
 **Editor UI.** A Roles page (list, rule builder per type, locales, media, `siteSettings`, `backups`) next to Users.
 

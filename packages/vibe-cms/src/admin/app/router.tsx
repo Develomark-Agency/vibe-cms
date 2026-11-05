@@ -39,10 +39,10 @@ export function useLocation(): { path: string, search: URLSearchParams, href: st
   return { path, search: new URLSearchParams(query), href };
 }
 
-/** Guards navigation away from unsaved changes. */
-let blocker: (() => boolean) | undefined;
+/** Guards navigation away from unsaved changes: true (or a promise of true) lets it go ahead. */
+let blocker: (() => boolean | Promise<boolean>) | undefined;
 
-export function setNavigationBlocker(fn: (() => boolean) | undefined) {
+export function setNavigationBlocker(fn: (() => boolean | Promise<boolean>) | undefined) {
   blocker = fn;
 }
 
@@ -148,7 +148,20 @@ window.addEventListener("popstate", (event: PopStateEvent & { hasUAVisualTransit
 });
 
 export function navigate(to: string, options: { replace?: boolean } = {}) {
-  if(blocker && !blocker()) return;
+  if(blocker) {
+    const guard = blocker;
+    void Promise.resolve(guard()).then(ok => {
+      if(!ok) return;
+      // Leaving drops the edits, so the guard goes with them.
+      if(blocker === guard) blocker = undefined;
+      go(to, options);
+    });
+    return;
+  }
+  go(to, options);
+}
+
+function go(to: string, options: { replace?: boolean }) {
   const url = base + (to.startsWith("/") ? to : `/${to}`);
   // Remember where this page was scrolled to, for back/forward.
   if(!options.replace) history.replaceState({ ...history.state, scroll: scrollRoot()?.scrollTop ?? 0 }, "");

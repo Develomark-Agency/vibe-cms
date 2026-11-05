@@ -45,9 +45,13 @@ export async function readSession(request: Request, api: ApiContext): Promise<Se
   const header = request.headers.get("authorization");
   if(!header?.startsWith("Bearer ")) return null;
   const token = header.slice(7);
-  return await verifySession(api.state.db, token, api.state.siteId)
-    ?? await grantSession(api.state, token)
-    ?? await sessionFromHubToken(api.state, token);
+  const session = await verifySession(api.state.db, token, api.state.siteId);
+  if(session) {
+    // A session the hub vouched for ends when the site stops trusting that org.
+    if(session.hubOrg && session.hubOrg !== await api.state.org.current()) return null;
+    return session;
+  }
+  return await grantSession(api.state, token) ?? await sessionFromHubToken(api.state, token);
 }
 
 export async function body<T>(request: Request): Promise<T> {

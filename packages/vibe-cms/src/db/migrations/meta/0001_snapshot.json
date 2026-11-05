@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "50ddcbe2-aaf1-4017-8cdc-16175245feff",
+  "id": "c40945f3-d95e-4bce-ab7e-5c4690631d68",
   "prevId": "c105adc8-18c7-4065-9409-99d36a40e377",
   "tables": {
     "vibe_assets": {
@@ -265,59 +265,6 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "vibe_hub_users": {
-      "name": "vibe_hub_users",
-      "columns": {
-        "sub": {
-          "name": "sub",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "roles": {
-          "name": "roles",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "site_admin": {
-          "name": "site_admin",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "last_sign_in_at": {
-          "name": "last_sign_in_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,

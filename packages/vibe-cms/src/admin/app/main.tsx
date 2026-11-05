@@ -17,6 +17,7 @@ import { TipHost, TooltipProvider } from "../components/ui/tooltip.tsx";
 import { createAdminClient, read, setUnauthorizedHandler, siteApi, type SessionState, type SiteInfo } from "./client.ts";
 import { AdminContext, collectionLabel, collectionSettings, localeName, useAdmin, type AdminContextValue } from "./context.tsx";
 import { ErrorBoundary } from "./error-boundary.tsx";
+import { ConfirmHost } from "./confirm.tsx";
 import { setAccent, setFavicon, startTheme, useTheme, type Theme } from "./theme.ts";
 import { Delayed } from "./delayed.tsx";
 import { MediaPage } from "./media.tsx";
@@ -300,7 +301,8 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
       {/* Flush with the window's edges (square corners at the bottom) so the scrollbar runs along the right edge instead of over a rounded corner. */}
       <main data-scroll-root className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto bg-background md:rounded-t-[20px] md:shadow-(--shadow-card)">
         {/* Sticky inside the scrolling panel rather than fixed to the window, so it stays clear of the scrollbar, whatever its width. */}
-        {config.locales!.length > 1 && (
+        {/* Not on pages that aren't per language, where it would sit over their sticky actions. */}
+        {config.locales!.length > 1 && path !== "/roles" && path !== "/users" && (
           <div className="pointer-events-none sticky top-0 z-30 hidden h-0 justify-end md:flex">
             <div className="pointer-events-auto mt-2.5 mr-2.5">
               <LocaleMenu locale={locale} setLocale={setLocale} />
@@ -316,6 +318,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
       <ErrorBoundary resetKey={previewOpen}><PreviewWindow /></ErrorBoundary>
       <TipHost />
       <Toaster position="bottom-right" />
+      <ConfirmHost />
     </div>
   );
 }

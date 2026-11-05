@@ -114,16 +114,6 @@ export const roles = sqliteTable("vibe_roles", {
   updated_at: integer().notNull()
 });
 
-/** People the org's hub signed in, with the roles it gave them: shown read only on the Users page of org sites. */
-export const hubUsers = sqliteTable("vibe_hub_users", {
-  sub: text().primaryKey(),
-  email: text(),
-  name: text(),
-  roles: text().notNull(),
-  site_admin: integer({ mode: "boolean" }).notNull().default(false),
-  last_sign_in_at: integer().notNull()
-});
-
 export const passkeys = sqliteTable("vibe_passkeys", {
   id: text().primaryKey(),
   user_id: text().notNull(),

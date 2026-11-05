@@ -165,3 +165,56 @@ describe("sites, assignments and templates", () => {
     expect((await json(panel(`/api/sites/${none.id}/roles`))).roles).toEqual([]);
   });
 });
+
+describe("managing roles within your own", () => {
+  test("someone whose site role manages roles gives out and edits only roles within it", async () => {
+    bareSite("https://mgr.test");
+    await as("jane@agency.test", "u-jane");
+    const site = await json(panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://mgr.test", templateId: null }) }));
+    const template = await json(panel("/api/templates", { method: "POST", body: JSON.stringify({
+      name: "Managed",
+      roles: { lead: { post: ["read", "write", "publish"], manageRoles: true }, writer: { post: ["read", "write"] }, boss: { all: true } }
+    }) }));
+    expect((await json(panel(`/api/sites/${site.id}/template`, { method: "POST", body: JSON.stringify({ templateId: template.id }) }))).state).toBe("applied");
+    await panel(`/api/sites/${site.id}/assignments`, { method: "PUT", body: JSON.stringify({ email: "bob@agency.test", roles: ["lead"] }) });
+
+    await as("bob@agency.test", "u-bob");
+    const access = await json(panel(`/api/sites/${site.id}/access`));
+    expect(access).toMatchObject({ canManage: false, canAssign: true });
+    expect(access.assignable.sort()).toEqual(["lead", "writer"]);
+    expect((await panel(`/api/sites/${site.id}/assignments`, { method: "PUT", body: JSON.stringify({ email: "carol@agency.test", roles: ["writer"] }) })).status).toBe(200);
+    const refused = await panel(`/api/sites/${site.id}/assignments`, { method: "PUT", body: JSON.stringify({ email: "carol@agency.test", roles: ["boss"] }) });
+    expect(refused.status).toBe(403);
+    // Not the site's owner on the hub: templates and owners stay out of reach.
+    expect((await panel(`/api/sites/${site.id}/template`, { method: "POST", body: JSON.stringify({ templateId: template.id }) })).status).toBe(403);
+
+    // On the site, a session the hub vouched for is short, and the same limits apply to editing roles.
+    const { code } = await json(panel(`/api/sites/${site.id}/code`, { method: "POST" }));
+    const session = await json(sites["https://mgr.test"]!(new Request("https://mgr.test/_vibe/api/session", { method: "POST", body: JSON.stringify({ code }) })));
+    expect(session.expiresAt - Date.now() / 1000).toBeLessThanOrEqual(600);
+    expect(session.permissions.roles).toBe(true);
+    function roles(path: string, init: RequestInit = {}) {
+      return sites["https://mgr.test"]!(new Request(`https://mgr.test/_vibe/api/roles${path}`, { ...init, headers: { authorization: `Bearer ${session.token}`, "content-type": "application/json" } }));
+    }
+    expect((await roles("/reviewer", { method: "PUT", body: JSON.stringify({ rules: { post: ["read"] } }) })).status).toBe(200);
+    expect((await roles("/deleter", { method: "PUT", body: JSON.stringify({ rules: { post: ["read", "delete"] } }) })).status).toBe(403);
+    expect((await roles("/root", { method: "PUT", body: JSON.stringify({ rules: { all: true } }) })).status).toBe(403);
+    expect((await roles("/boss", { method: "DELETE" })).status).toBe(403);
+    const listed = await json(roles(""));
+    expect(listed.fullAccess).toBe(false);
+    expect(listed.roles.find((role: { name: string }) => role.name === "boss").editable).toBe(false);
+    expect(listed.roles.find((role: { name: string }) => role.name === "writer").editable).toBe(true);
+  });
+
+  test("hub roles and members only reach as far as your own hub permissions", async () => {
+    await as("jane@agency.test", "u-jane");
+    expect((await panel("/api/hub-roles/helper", { method: "PUT", body: JSON.stringify({ permissions: ["members", "roles"] }) })).status).toBe(200);
+    await panel("/api/members", { method: "POST", body: JSON.stringify({ email: "hal@agency.test", role: "helper" }) });
+    await as("hal@agency.test", "u-hal");
+    expect((await panel("/api/hub-roles/greeter", { method: "PUT", body: JSON.stringify({ permissions: ["members"] }) })).status).toBe(200);
+    expect((await panel("/api/hub-roles/adder", { method: "PUT", body: JSON.stringify({ permissions: ["addSites"] }) })).status).toBe(403);
+    expect((await panel("/api/members", { method: "POST", body: JSON.stringify({ email: "x1@agency.test", role: "greeter" }) })).status).toBe(201);
+    expect((await panel("/api/members", { method: "POST", body: JSON.stringify({ email: "x2@agency.test", role: "admin" }) })).status).toBe(403);
+    expect((await panel("/api/members", { method: "POST", body: JSON.stringify({ email: "x3@agency.test", role: "site manager" }) })).status).toBe(403);
+  });
+});

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { can, permissionSummary } from "../src/handler/auth.ts";
-import { normalizeLegacyRules } from "../src/roles.ts";
+import { beyondReach, normalizeLegacyRules } from "../src/roles.ts";
+import type { Action } from "../src/config.ts";
 import { createHandler } from "../src/handler/index.ts";
 import { previewScope } from "../src/handler/preview.ts";
 import { field } from "../src/preview/index.ts";
@@ -1018,6 +1019,23 @@ describe("roles", () => {
   test("config roles are copied in today's terms: write used to imply publish", () => {
     expect(normalizeLegacyRules({ post: ["read", "write"], author: ["read"] })).toEqual({ post: ["read", "write", "publish"], author: ["read"] });
     expect(normalizeLegacyRules({ post: ["read", "write", "publish"], publish: false })).toEqual({ post: ["read", "write"] });
+  });
+
+  test("role managers only reach as far as their own roles", () => {
+    const schema = { types: [{ name: "post", label: "Post" }, { name: "author", label: "Author" }], locales: ["en", "fr"] };
+    const lead = [{ post: ["read", "write", "publish"] as Action[], media: ["read", "write"] as Action[], manageRoles: true }];
+    expect(beyondReach({ post: ["read", "write"] }, lead, schema)).toEqual([]);
+    expect(beyondReach({ post: ["read", "write", "publish", "delete"] }, lead, schema)).toEqual(["delete on post"]);
+    expect(beyondReach({ author: ["read"] }, lead, schema)).toEqual(["read on author"]);
+    expect(beyondReach({ "*": ["read"] }, lead, schema)).toEqual(["read on author", "read on other types"]);
+    expect(beyondReach({ all: true }, lead, schema)).toContain("Everything");
+    expect(beyondReach({ backups: "take", siteSettings: true }, lead, schema)).toEqual(["site settings", "taking backups"]);
+    // A translator can hand out French, not German or every language.
+    const translator = [{ "*": ["read"] as Action[], write: { locales: ["fr"] }, manageRoles: true }];
+    expect(beyondReach({ post: ["read"], write: { locales: ["fr"] } }, translator, schema)).toEqual([]);
+    expect(beyondReach({ post: ["read", "write"] }, translator, schema)).toEqual(["writing in every language"]);
+    // Owners and `all` reach everything.
+    expect(beyondReach({ all: true }, [{ all: true }], schema)).toEqual([]);
   });
 
   test("permission checks read stored roles", async () => {

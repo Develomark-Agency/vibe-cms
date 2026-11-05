@@ -18,7 +18,13 @@ export interface Session {
   /** Powers granted outside roles: `"backups"` for an agency panel's backup runs. */
   grants?: string[],
   /** A connection approved read only: whatever the roles say, it may only read. */
-  readOnly?: boolean
+  readOnly?: boolean,
+  /**
+   * Set when the site's hub vouched for this person: the org that signed it. Such sessions are short
+   * and renewed through the hub, so what the hub grants (or takes away) applies within minutes, and
+   * they end as soon as the site trusts another org.
+   */
+  hubOrg?: string
 }
 
 /**

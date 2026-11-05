@@ -8,7 +8,7 @@ import type { Action, RoleRules } from "./config.ts";
 export const ACTIONS: readonly Action[] = ["read", "write", "publish", "delete"];
 
 /** Rule keys that aren't content types. */
-const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "*"]);
+const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "manageRoles", "*"]);
 
 /** Built in, never stored: every permission, plus managing roles and who may sign in. */
 export const OWNER_ROLE = "owner";
@@ -115,7 +115,7 @@ export function ruleIssues(rules: unknown, schema: RoleSchema): string[] {
     if(value === undefined) continue;
     if(key === "backups") {
       if(typeof value !== "boolean" && value !== "take") issues.push("backups must be true, false or \"take\"");
-    } else if(["all", "publish", "siteSettings"].includes(key)) {
+    } else if(["all", "publish", "siteSettings", "manageRoles"].includes(key)) {
       if(typeof value !== "boolean") issues.push(`${key} must be true or false`);
     } else if(key === "write") {
       const locales = (value as { locales?: unknown })?.locales;
@@ -172,5 +172,82 @@ export function describeRules(rules: RoleRules): string {
   if(rules.media?.length) parts.push("media");
   if(rules.siteSettings) parts.push("settings");
   if(rules.backups) parts.push(rules.backups === "take" ? "takes backups" : "backups");
+  if(rules.manageRoles) parts.push("manages roles");
   return parts.join(", ") || "Nothing yet";
+}
+
+// --- Granting up to your own ---------------------------------------------------------
+
+/** What a set of roles allows, flattened: the most any of them gives, per content type and switch. */
+interface Reach {
+  all: boolean,
+  /** Per content type, and `*` for types without their own rule (and types added later). */
+  types: Map<string, Set<Action>>,
+  media: Set<Action>,
+  /** null: writes in every locale. */
+  locales: Set<string> | null,
+  siteSettings: boolean,
+  /** 0 none, 1 take, 2 take and restore. */
+  backups: number,
+  manageRoles: boolean
+}
+
+function typeActions(rules: RoleRules, key: string): Action[] {
+  const own = rules[key];
+  const actions = new Set<Action>((Array.isArray(own) ? own : rules["*"] as Action[] | undefined) ?? []);
+  if(rules.write && actions.size) actions.add("write");
+  if(rules.publish === false) actions.delete("publish");
+  if(rules.publish === true && actions.has("write")) actions.add("publish");
+  return [...actions];
+}
+
+function anyWrite(rules: RoleRules): boolean {
+  return Boolean(rules.write) || Object.entries(rules).some(([key, value]) => key !== "media" && !SPECIAL.has(key) && Array.isArray(value) && value.includes("write"))
+    || (Array.isArray(rules["*"]) && rules["*"].includes("write"));
+}
+
+function reach(roles: RoleRules[], types: string[]): Reach {
+  const out: Reach = { all: false, types: new Map(), media: new Set(), locales: new Set(), siteSettings: false, backups: 0, manageRoles: false };
+  for(const key of [...types, "*"]) out.types.set(key, new Set());
+  for(const rules of roles) {
+    if(rules.all) out.all = true;
+    for(const key of [...types, "*"]) for(const action of typeActions(rules, key)) out.types.get(key)!.add(action);
+    for(const action of rules.media ?? (anyWrite(rules) ? ["read", "write"] : ["read"]) as Action[]) out.media.add(action);
+    if(anyWrite(rules)) {
+      if(!rules.write) out.locales = null;
+      else if(out.locales) for(const locale of rules.write.locales) out.locales.add(locale);
+    }
+    if(rules.siteSettings) out.siteSettings = true;
+    out.backups = Math.max(out.backups, rules.backups === true ? 2 : rules.backups === "take" ? 1 : 0);
+    if(rules.manageRoles) out.manageRoles = true;
+  }
+  return out;
+}
+
+/**
+ * Why `candidate` goes beyond what `holder` (someone's roles) allows, in words; empty when it doesn't.
+ * Used for people who manage roles without being owners: they may only create, edit and hand out
+ * roles that stay within their own.
+ */
+export function beyondReach(candidate: RoleRules, holder: RoleRules[], schema: RoleSchema): string[] {
+  const types = schema.types.map(type => type.name);
+  const mine = reach(holder, types);
+  if(mine.all) return [];
+  const theirs = reach([candidate], types);
+  const problems: string[] = [];
+  if(theirs.all) problems.push("Everything");
+  for(const key of [...types, "*"]) {
+    const extra = [...theirs.types.get(key)!].filter(action => !mine.types.get(key)!.has(action));
+    if(extra.length) problems.push(`${extra.join(", ")} on ${key === "*" ? "other types" : key}`);
+  }
+  const media = [...theirs.media].filter(action => !mine.media.has(action));
+  if(media.length) problems.push(`${media.join(", ")} in the media library`);
+  if(mine.locales && anyWrite(candidate)) {
+    const extra = theirs.locales === null ? ["every language"] : [...theirs.locales].filter(locale => !mine.locales!.has(locale));
+    if(extra.length) problems.push(`writing in ${extra.join(", ")}`);
+  }
+  if(theirs.siteSettings && !mine.siteSettings) problems.push("site settings");
+  if(theirs.backups > mine.backups) problems.push(theirs.backups === 2 ? "restoring backups" : "taking backups");
+  if(theirs.manageRoles && !mine.manageRoles) problems.push("managing roles");
+  return problems;
 }

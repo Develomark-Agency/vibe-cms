@@ -16,6 +16,8 @@ export interface Access {
 }
 
 const SESSION_TTL = 12 * 60 * 60;
+/** Sessions the hub vouched for: renewed through the hub this often, so its grants are checked again. */
+const HUB_SESSION_TTL = 10 * 60;
 const CODE_TTL = 30;
 
 export const DEV_SESSION: Session = { sub: "dev", name: "Local developer", email: "dev@localhost", roles: ["dev"] };
@@ -42,8 +44,8 @@ export async function signValue(db: D1, value: string): Promise<string> {
 
 /** Issues a site session token. The site is both issuer and audience. */
 export async function issueSession(db: D1, session: Session, siteId: string, origin: string) {
-  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_TTL;
-  const token = await new SignJWT({ email: session.email, name: session.name, roles: session.roles })
+  const expiresAt = Math.floor(Date.now() / 1000) + (session.hubOrg ? HUB_SESSION_TTL : SESSION_TTL);
+  const token = await new SignJWT({ email: session.email, name: session.name, roles: session.roles, ...(session.hubOrg ? { hubOrg: session.hubOrg } : {}) })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuer(origin)
     .setAudience(siteId)
@@ -61,7 +63,8 @@ export async function verifySession(db: D1, token: string, siteId: string): Prom
       sub: payload.sub!,
       email: payload.email as string | undefined,
       name: payload.name as string | undefined,
-      roles: (payload.roles as string[] | undefined) ?? []
+      roles: (payload.roles as string[] | undefined) ?? [],
+      ...(typeof payload.hubOrg === "string" ? { hubOrg: payload.hubOrg } : {})
     };
   } catch {
     return null;
@@ -90,7 +93,7 @@ export async function sessionFromHubToken(state: Pick<EngineState, "config" | "o
   const { siteAdmin, ...claims } = Object.fromEntries(Object.entries(payload).filter(([key]) => !RESERVED.has(key)));
   // The hub's signed grant: its owner and admins, and whoever added the site, manage it as owners.
   // Only ever from a verified hub token, never stored, and gone once the site stops trusting the hub.
-  return identitySession(state, payload.sub, claims, [], siteAdmin === true);
+  return { ...identitySession(state, payload.sub, claims, [], siteAdmin === true), hubOrg: payload.iss! };
 }
 
 /**
@@ -177,7 +180,8 @@ export function can(access: Access, session: Session | null, permit: Permit): bo
 
 function allows(rules: RoleRules, { action, type, locale, scope }: Permit): boolean {
   if(rules.all) return true;
-  if(scope === "users") return false;
+  // Who may sign in, and as what: role managers too, limited to roles within their own (signin.ts).
+  if(scope === "users") return rules.manageRoles === true;
   if(scope === "site") return rules.siteSettings === true;
   // Restoring (`write`) needs `true`; taking a snapshot (`read`) also `"take"`.
   if(scope === "backups") return rules.backups === true || (rules.backups === "take" && action === "read");
@@ -239,6 +243,6 @@ export function permissionSummary(access: Access, session: Session) {
     locales: writeLocales,
     site: can(access, session, { action: "write", scope: "site" }),
     users: can(access, session, { action: "write", scope: "users" }),
-    roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true)
+    roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true || access.roles.map[role]?.manageRoles === true)
   };
 }

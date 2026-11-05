@@ -212,6 +212,10 @@ export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
             <Switch checked={rules.siteSettings === true} disabled={readOnly} aria-label="Site settings" onCheckedChange={on => set("siteSettings", on || undefined)} />
           </Row>
 
+          <Row title="Manage roles" description={types ? "Create, change and give out roles, but only up to what this role can do itself." : "Create, change and give out roles up to this role's own access."}>
+            <Switch checked={rules.manageRoles === true} disabled={readOnly} aria-label="Manage roles" onCheckedChange={on => set("manageRoles", on || undefined)} />
+          </Row>
+
           <ul className="border-t">
             <AccessRow
               title="Backups"

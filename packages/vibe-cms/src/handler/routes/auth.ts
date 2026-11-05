@@ -16,7 +16,6 @@ import {
   signOut
 } from "../signin.ts";
 import { jsonInput, readCookie, type SiteEnv } from "../http.ts";
-import { recordHubUser } from "../roles.ts";
 
 /** Who is signed in, and how people sign in: the editor's session, a site's own passkeys or identity provider. */
 export const auth = new Hono<SiteEnv>()
@@ -67,7 +66,6 @@ export const auth = new Hono<SiteEnv>()
     if(!token) throw new HttpError(400, "Expected token");
     const next = await sessionFromHubToken(state, token);
     if(!next || next.grants) throw new HttpError(401, "Not a sign-in token from this site's hub");
-    await recordHubUser(state.db, next, next.roles.includes("owner")).catch(() => {});
     return c.json({ code: await createCode(state.db, next), expiresIn: 30 });
   })
 
