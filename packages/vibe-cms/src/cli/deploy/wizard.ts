@@ -249,7 +249,7 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
 
   // The org and sign-in.
   vars.VIBE_ORG = (await p.text({
-    message: "Your org's domain, a domain you own like my-agency.com (empty: the panel's own address is the org)",
+    message: "Your org's domain, like my-agency.com. Sites use it to find this panel. No domain? Leave it empty and sites will use the panel's web address instead",
     initial: vars.VIBE_ORG,
     validate: v => !v.trim() || normalizeOrg(v) ? undefined : "Enter a domain like my-agency.com, or leave it empty"
   })).trim();
