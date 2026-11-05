@@ -51,6 +51,8 @@ Inside, `manifest.json` comes first, then `complete.json`, `tables/*.jsonl` (one
 
 A failure at any point before the commit leaves the live site untouched. Run the same restore again and it picks up the unfinished restore (`resumed`): rows are sent again (sending them twice changes nothing), and files already uploaded are skipped. Only one restore runs at a time. `backups.restoreStatus` shows the one in progress, `backups.restoreCancel` abandons it, and `force` replaces one that was left behind.
 
+Files go up (and come down, when a snapshot is taken) several at a time: at most six together, and never more than about 64 MB held in memory between them, counting each file as its size up to one 50 MB part. Small files go in parallel, a large video goes mostly alone, and the one at the front of the queue is never passed over. The runner takes `concurrency` and `memoryBudget` (bytes) options to change either, and the CLI shows one progress line, counting transfers that needed a retry and only naming one that fails again.
+
 Network errors, rate limits and platform errors (5xx) are retried with backoff, five attempts per step. Refusals from the CMS, such as a permission or a failed check, fail at once with the CMS's message.
 
 Edits made while a snapshot is being taken can land in it or not. The snapshot records what it actually saved and warns when a table changed during the run. A file the media library lists but the bucket has lost is left out of the snapshot with a warning. When restored, its asset comes back without the file.

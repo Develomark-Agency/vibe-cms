@@ -1,6 +1,7 @@
 import type { ActionCaller } from "../actions/client.ts";
 import { ORPCError } from "@orpc/client";
 import { isRetryable } from "../actions/errors.ts";
+import { pool } from "./pool.ts";
 import { BACKUP_TABLE_NAMES, type BackupFile, type BackupManifest, type BackupTable, type RestoreCheck } from "../handler/backups.ts";
 
 /**
@@ -60,7 +61,11 @@ export interface RunOptions {
   fetch?: typeof fetch,
   onProgress?: (progress: Progress) => void,
   /** Attempts per step before giving up. Defaults to 5. */
-  attempts?: number
+  attempts?: number,
+  /** Files transferred at once. Defaults to 6. */
+  concurrency?: number,
+  /** Memory the transfers in flight may hold together, in bytes. Defaults to 64 MB (see `transferWeight`). */
+  memoryBudget?: number
 }
 
 export class BackupError extends Error {
@@ -71,6 +76,21 @@ export class BackupError extends Error {
 }
 
 const PAGE = 200;
+
+/** Files in flight at once, and what they may hold between them; a Worker has about 128 MB in all. */
+const FILE_CONCURRENCY = 6;
+const MEMORY_BUDGET = 64 * 1024 * 1024;
+/** The most one transfer holds in memory: a part of a large file (smaller files stream and hold far less). */
+const PART_WEIGHT = 50 * 1024 * 1024;
+
+/** How much of the budget a file's transfer takes: its size, up to one part. */
+function transferWeight(size: number): number {
+  return Math.min(size, PART_WEIGHT);
+}
+
+function limits(options: RunOptions) {
+  return { limit: options.concurrency ?? FILE_CONCURRENCY, budget: options.memoryBudget ?? MEMORY_BUDGET };
+}
 
 async function backoff(attempt: number) {
   await new Promise(resolve => setTimeout(resolve, Math.min(30_000, 500 * 2 ** attempt) * (0.5 + Math.random() / 2)));
@@ -164,19 +184,23 @@ export async function takeSnapshot(options: RunOptions): Promise<SnapshotInfo> {
   let after: string | undefined;
   do {
     const page = await call<{ files: BackupFile[], next: string | null }>("backups.files", { after, limit: 50 });
-    for(const file of page.files) {
-      if(!file.exists || !file.url) {
-        warnings.push(`${file.key} is in the media library but missing from the site's bucket; it isn't in the snapshot.`);
-        continue;
-      }
+    // A page's files download a few at a time, and are recorded in the order the site listed them.
+    const saved: Array<SnapshotFile | undefined> = Array.from({ length: page.files.length });
+    let finished = files.length;
+    await pool(page.files, { ...limits(options), weight: file => (file.exists && file.url ? transferWeight(file.size) : 0) }, async (file, index) => {
+      if(!file.exists || !file.url) return;
       const object = fileObject(manifest.siteId, file);
       const have = await options.store.has(object);
       if(!have) {
         const response = await transfer(options, `Downloading ${file.key}`, () => doFetch(file.url!));
         await options.store.writeFile(object, response.body!, file.size);
       }
-      files.push({ key: file.key, mime: file.mime, size: file.size, etag: file.etag, object });
-      options.onProgress?.({ step: "file", key: file.key, done: files.length, total: manifest.files.count, transferred: !have });
+      saved[index] = { key: file.key, mime: file.mime, size: file.size, etag: file.etag, object };
+      options.onProgress?.({ step: "file", key: file.key, done: ++finished, total: manifest.files.count, transferred: !have });
+    });
+    for(const [index, file] of page.files.entries()) {
+      if(saved[index]) files.push(saved[index]!);
+      else warnings.push(`${file.key} is in the media library but missing from the site's bucket; it isn't in the snapshot.`);
     }
     after = page.next ?? undefined;
   } while(after);
@@ -276,7 +300,8 @@ export async function restoreSnapshot(options: RunOptions & { path: string, forc
     await call("backups.restoreFile", { restoreId, key, size: 0, mime: "application/octet-stream", lost: true });
     warnings.push(`${key} wasn't in the snapshot; its asset is restored without the file.`);
   }
-  for(const [index, file] of files.entries()) {
+  let finished = 0;
+  await pool(files, { ...limits(options), weight: file => transferWeight(file.size) }, async file => {
     const answer = await call<{ status: "present" | "upload", upload?: { url: string }, multipart?: { url: string, partSize: number } }>("backups.restoreFile", {
       restoreId, key: file.key, size: file.size, mime: file.mime, etag: file.etag ?? undefined
     });
@@ -298,8 +323,8 @@ export async function restoreSnapshot(options: RunOptions & { path: string, forc
       }
       uploaded++;
     }
-    options.onProgress?.({ step: "file", key: file.key, done: index + 1, total: files.length, transferred: answer.status !== "present" });
-  }
+    options.onProgress?.({ step: "file", key: file.key, done: ++finished, total: files.length, transferred: answer.status !== "present" });
+  });
 
   options.onProgress?.({ step: "commit" });
   await call("backups.restoreCommit", { restoreId, expected: manifest.tables });

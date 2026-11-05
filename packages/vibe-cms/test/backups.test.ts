@@ -24,6 +24,10 @@ let sites: Site[];
 let requests: string[];
 /** Set by a test to make the network fail. */
 let breakWhen: ((url: string, init?: RequestInit) => boolean) | null;
+/** File transfers (to and from signed links) going on right now, the most there were together, and how long each takes. */
+let inFlight = 0;
+let mostInFlight = 0;
+let transferDelay = 0;
 
 const network: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const request = new Request(input, init);
@@ -31,7 +35,17 @@ const network: typeof fetch = (async (input: RequestInfo | URL, init?: RequestIn
   if(breakWhen?.(request.url, init)) throw new TypeError("fetch failed");
   const target = sites.find(s => request.url.startsWith(s.origin));
   if(!target) throw new TypeError(`No site at ${request.url}`);
-  return target.vibe.handle(request, target.env, ctx);
+  const transferring = request.url.includes("/backups/files/");
+  if(transferring) {
+    inFlight++;
+    mostInFlight = Math.max(mostInFlight, inFlight);
+    if(transferDelay) await new Promise(resolve => setTimeout(resolve, transferDelay));
+  }
+  try {
+    return await target.vibe.handle(request, target.env, ctx);
+  } finally {
+    if(transferring) inFlight--;
+  }
 }) as typeof fetch;
 
 async function connect(target: Site) {
@@ -52,6 +66,9 @@ beforeEach(async () => {
   sites = [a, b];
   requests = [];
   breakWhen = null;
+  inFlight = 0;
+  mostInFlight = 0;
+  transferDelay = 0;
   dir = await mkdtemp(path.join(tmpdir(), "vibe-backups-"));
   store = folderStore(dir);
 });
@@ -285,5 +302,71 @@ describe(".vibe files", () => {
     const notTar = new Response(new Response("hello").body!.pipeThrough(new CompressionStream("gzip"))).body!;
     await expect(unpackSnapshot(notTar, folderStore(path.join(dir, "y")))).rejects.toThrow("isn't a .vibe file");
     expect((await listSnapshots(folderStore(path.join(dir, "x")), taken.manifest.siteId))).toEqual([]);
+  });
+});
+
+describe("transferring many files", () => {
+  /** A site with `n` small images of different sizes. */
+  async function manyImages(target: Site, n: number) {
+    const { actions } = await connect(target);
+    for(let i = 0; i < n; i++) await actions.assets.upload({ file: new File([png(20 + i, 20 + i)], `pic-${i}.png`, { type: "image/png" }) });
+  }
+
+  test("files go a few at a time, in both directions, and the snapshot is the same as one made a file at a time", async () => {
+    await manyImages(a, 14);
+    const source = await connect(a);
+    transferDelay = 15;
+
+    const serial = await takeSnapshot({ call: source.call, store, fetch: network, concurrency: 1 });
+    expect(mostInFlight).toBe(1);
+    mostInFlight = 0;
+
+    const fastDir = await mkdtemp(path.join(tmpdir(), "vibe-backups-fast-"));
+    try {
+      const fastStore = folderStore(fastDir);
+      const fast = await takeSnapshot({ call: source.call, store: fastStore, fetch: network, concurrency: 4 });
+      expect(mostInFlight).toBeGreaterThan(1);
+      expect(mostInFlight).toBeLessThanOrEqual(4);
+      // The same files in the same order, whichever way they came.
+      async function keys(s: BackupStore, p: string) {
+        return (JSON.parse(await s.readText(`${p}/files.json`) ?? "[]") as Array<{ key: string }>).map(f => f.key);
+      }
+      expect(await keys(fastStore, fast.path)).toEqual(await keys(store, serial.path));
+      expect(fast.manifest.files.count).toBe(14);
+
+      mostInFlight = 0;
+      const target = await connect(b);
+      const result = await restoreSnapshot({ call: target.call, store: fastStore, fetch: network, path: fast.path, concurrency: 4 });
+      expect(result.files).toEqual({ uploaded: 14, present: 0 });
+      expect(mostInFlight).toBeGreaterThan(1);
+      expect(mostInFlight).toBeLessThanOrEqual(4);
+      expect((await verifyRestore({ call: target.call, store: fastStore, path: fast.path })).ok).toBe(true);
+    } finally {
+      await rm(fastDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a memory budget smaller than the files makes them go one at a time, whatever the count limit", async () => {
+    await manyImages(a, 8);
+    const source = await connect(a);
+    transferDelay = 10;
+    const taken = await takeSnapshot({ call: source.call, store, fetch: network, concurrency: 6, memoryBudget: 1 });
+    expect(mostInFlight).toBe(1);
+    mostInFlight = 0;
+    const target = await connect(b);
+    await restoreSnapshot({ call: target.call, store, fetch: network, path: taken.path, concurrency: 6, memoryBudget: 1 });
+    expect(mostInFlight).toBe(1);
+    expect((await verifyRestore({ call: target.call, store, path: taken.path })).ok).toBe(true);
+  });
+
+  test("a transfer that keeps failing stops the import, and the live site stays as it was", async () => {
+    await manyImages(a, 6);
+    const source = await connect(a);
+    const taken = await takeSnapshot({ call: source.call, store, fetch: network });
+    const target = await connect(b);
+    await target.actions.documents.create({ type: "author", data: { name: "Stays" }, publish: true });
+    breakWhen = (url, init) => url.includes("/backups/files/") && init?.method === "PUT";
+    await expect(restoreSnapshot({ call: target.call, store, fetch: network, path: taken.path, attempts: 2, concurrency: 3 })).rejects.toThrow("fetch failed");
+    expect((await target.actions.documents.list({ type: "author" })).total).toBe(1);
   });
 });

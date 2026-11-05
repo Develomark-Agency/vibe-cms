@@ -23,6 +23,8 @@ function bytes(n: number): string {
 
 function reporter() {
   const tty = process.stderr.isTTY;
+  // A transfer that fails once and works the second time is routine on a long run: counted, not shown.
+  let quiet = 0;
   return {
     progress(p: Progress) {
       let line: string;
@@ -30,13 +32,19 @@ function reporter() {
       else if(p.step === "file") line = `  files ${p.done}/${p.total}`;
       else if(p.step === "commit") line = "  finishing";
       else {
-        process.stderr.write(`${tty ? "\r\x1b[2K" : ""}${styleText("yellow", "↻")} ${p.what} failed (${p.error}); retry ${p.attempt}\n`);
+        if(p.attempt < 2) {
+          quiet++;
+          return;
+        }
+        process.stderr.write(`${tty ? "\r\x1b[2K" : ""}${styleText("yellow", "↻")} ${p.what} failed again (${p.error}); retry ${p.attempt}\n`);
         return;
       }
       if(tty) process.stderr.write(`\r\x1b[2K${line}`);
     },
     done() {
       if(tty) process.stderr.write("\r\x1b[2K");
+      if(quiet) process.stderr.write(`${styleText("dim", `  ${quiet} ${quiet === 1 ? "transfer needed" : "transfers needed"} a retry, and went through`)}\n`);
+      quiet = 0;
     }
   };
 }
