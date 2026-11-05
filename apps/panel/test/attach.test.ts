@@ -166,7 +166,9 @@ describe("attaching a site", () => {
   });
 
   test("Cloudflare's same-account Worker block is explained, whichever way it hits", async () => {
-    const blocked = async () => new Response("error code: 1042", { status: 404 });
+    async function blocked() {
+      return new Response("error code: 1042", { status: 404 });
+    }
 
     // The panel can't call the site.
     sites["https://blocked-site.test"] = blocked;
