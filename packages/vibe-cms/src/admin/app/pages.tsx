@@ -192,16 +192,23 @@ export function DocumentRoute({ type, id }: { type: string, id: string }) {
   return <EditorPage key={`${type}/${id}`} type={type} id={id === "new" ? null : id} />;
 }
 
-export function Dashboard() {
-  const { cms, config, locale, session, site } = useAdmin();
-  const types = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
-  const stats = useQuery({
+/** The newest few documents and the total of each readable type: the dashboard's cards, and the navigation's counts. */
+export function useTypeStats(types: string[], enabled = true) {
+  const { cms, locale } = useAdmin();
+  return useQuery({
     queryKey: ["dashboard", locale],
+    enabled,
     queryFn: async () => Promise.all(types.map(async type => {
       const result = await cms.actions.documents.list({ type, locale, limit: 5 });
       return { type, ...result };
     }))
   });
+}
+
+export function Dashboard() {
+  const { config, session, site } = useAdmin();
+  const types = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
+  const stats = useTypeStats(types);
   useEffect(() => {
     document.title = site.name;
   }, [site.name]);

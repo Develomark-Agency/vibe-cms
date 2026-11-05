@@ -110,7 +110,7 @@ export interface DocumentSlotProps {
   cms: AdminClient
 }
 
-/** A sidebar link. */
+/** A link in the editor's navigation, under "Tools". */
 export interface NavItem {
   label: string,
   /** Relative to the plugin: `"/"` links to `/_vibe/admin/p/<plugin>`. */

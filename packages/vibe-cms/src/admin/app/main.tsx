@@ -1,7 +1,7 @@
 import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SearchIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import Fuse from "fuse.js";
@@ -11,22 +11,6 @@ import type { AdminPlugin, AdminPluginFactory, AdminClient } from "../index.ts";
 import { Button } from "../components/ui/button.tsx";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "../components/ui/command.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
-import { Kbd } from "../components/ui/kbd.tsx";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarTrigger
-} from "../components/ui/sidebar.tsx";
 import { Toaster } from "../components/ui/sonner.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { TipHost, TooltipProvider } from "../components/ui/tooltip.tsx";
@@ -38,7 +22,6 @@ import { Delayed } from "./delayed.tsx";
 import { MediaPage } from "./media.tsx";
 import { Dashboard, DocumentRoute, ListPage, useDebounced } from "./pages.tsx";
 import { Marked, markTitle } from "./marked.tsx";
-import { SiteMark } from "../components/site-mark.tsx";
 import { SiteSettingsPage } from "./settings.tsx";
 import { SignIn } from "./signin.tsx";
 import { UsersPage } from "./users.tsx";
@@ -48,6 +31,7 @@ import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigati
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
 import { openPick, type PreviewPick } from "./reveal.ts";
 import { PreviewWindow } from "./preview-window.tsx";
+import { MegaNav, type NavGroup, type NavItem } from "./nav.tsx";
 import { embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 
 const queryClient = new QueryClient({
@@ -177,7 +161,7 @@ function Shell({ config, info, session, prefix, onSignOut }: {
 }
 
 function Layout({ onSignOut }: { onSignOut(): void }) {
-  const { config, session, plugins, locale, setLocale, info, site, cms } = useAdmin();
+  const { config, session, plugins, locale, setLocale, info, cms } = useAdmin();
   const { path } = useLocation();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setTheme] = useTheme();
@@ -251,183 +235,61 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
     return to === "/" ? path === "/" : path === to || path.startsWith(`${to}/`);
   }
 
+  const groups: NavGroup[] = [
+    {
+      key: "content",
+      label: "Content",
+      items: [
+        ...collections.map((type): NavItem => ({
+          key: `content:${type}`,
+          to: `/content/${type}${locale !== config.defaultLocale ? `?locale=${locale}` : ""}`,
+          label: collectionLabel(config, type),
+          icon: <Icon name={collectionSettings(config, type).icon ?? "file-text"} />,
+          type
+        })),
+        ...(session.permissions.media.read ? [{ key: "media", to: "/media", label: "Media", icon: <ImageIcon /> } satisfies NavItem] : [])
+      ]
+    },
+    {
+      key: "settings",
+      label: "Settings",
+      items: [
+        ...(session.permissions.site ? [{ key: "site", to: "/settings", label: "Site", icon: <SlidersHorizontalIcon /> } satisfies NavItem] : []),
+        ...(canManageUsers ? [{ key: "users", to: "/users", label: "Users", icon: <UsersIcon /> } satisfies NavItem] : []),
+        ...singletons.map((type): NavItem => ({
+          key: `content:${type}`,
+          to: `/content/${type}`,
+          label: collectionLabel(config, type),
+          icon: <Icon name={collectionSettings(config, type).icon ?? "settings"} />,
+          type
+        }))
+      ]
+    },
+    {
+      key: "tools",
+      label: "Tools",
+      items: plugins.slots.nav!.map((item): NavItem => ({ key: `tool:${item.to}`, to: item.to, label: item.label, icon: <Icon name={item.icon} /> }))
+    }
+  ].filter(group => group.items.length > 0);
+
+  // Embedded in the panel, the account and its theme switch already live in the panel's own bar.
+  const accountMenu = !embedded || canConnect ? (
+    <AccountMenu theme={theme} setTheme={setTheme} canConnect={canConnect} onSignOut={onSignOut} />
+  ) : null;
+
   return (
-    <SidebarProvider className="h-full min-h-0 bg-sidebar">
-      <Sidebar collapsible="icon" variant="inset" className="[&_[data-slot=sidebar-inner]]:bg-transparent">
-        <SidebarHeader>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton size="lg" render={<Link to="/" />} tooltip={site.name}>
-                <SiteMark name={site.name} icon={site.icon?.url ?? site.favicon} className="size-8 rounded-[10px] text-sm" />
-                <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate text-sm font-semibold">{site.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{location.host}</span>
-                </div>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-          {/* Opens the palette; styled as a field so it doesn't read as a page. */}
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            aria-label="Search"
-            className="mt-1 flex h-9 w-full items-center gap-2 rounded-[10px] well pr-1.5 pl-2.5 text-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
-          >
-            <SearchIcon className="size-4 shrink-0" />
-            <span className="flex-1 text-left group-data-[collapsible=icon]:hidden">Search…</span>
-            <Kbd className="h-6 rounded-[4px] px-1.5 group-data-[collapsible=icon]:hidden">⌘J</Kbd>
-          </button>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <NavButton active={active("/")} to="/" tooltip="Dashboard"><HomeIcon /> <span>Dashboard</span></NavButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton tooltip="Preview" isActive={previewOpen} aria-pressed={previewOpen} onClick={() => (previewOpen ? closePreview() : void showPreview(cms))}>
-                    <AppWindowIcon /> <span>Preview</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-          <SidebarGroup>
-            <SidebarGroupLabel className="eyebrow">Content</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {collections.map(type => (
-                  <SidebarMenuItem key={type}>
-                    <NavButton active={active(`/content/${type}`)} to={`/content/${type}${locale !== config.defaultLocale ? `?locale=${locale}` : ""}`} tooltip={collectionLabel(config, type)}>
-                      <Icon name={collectionSettings(config, type).icon ?? "file-text"} />
-                      <span>{collectionLabel(config, type)}</span>
-                    </NavButton>
-                  </SidebarMenuItem>
-                ))}
-                {session.permissions.media.read && (
-                  <SidebarMenuItem>
-                    <NavButton active={active("/media")} to="/media" tooltip="Media"><ImageIcon /> <span>Media</span></NavButton>
-                  </SidebarMenuItem>
-                )}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-          {(singletons.length > 0 || session.permissions.site || canManageUsers) && (
-            <SidebarGroup>
-              <SidebarGroupLabel className="eyebrow">Settings</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {session.permissions.site && (
-                    <SidebarMenuItem>
-                      <NavButton active={active("/settings")} to="/settings" tooltip="Site"><SlidersHorizontalIcon /> <span>Site</span></NavButton>
-                    </SidebarMenuItem>
-                  )}
-                  {canManageUsers && (
-                    <SidebarMenuItem>
-                      <NavButton active={active("/users")} to="/users" tooltip="Users"><UsersIcon /> <span>Users</span></NavButton>
-                    </SidebarMenuItem>
-                  )}
-                  {singletons.map(type => (
-                    <SidebarMenuItem key={type}>
-                      <NavButton active={active(`/content/${type}`)} to={`/content/${type}`} tooltip={collectionLabel(config, type)}>
-                        <Icon name={collectionSettings(config, type).icon ?? "settings"} />
-                        <span>{collectionLabel(config, type)}</span>
-                      </NavButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          )}
-          {plugins.slots.nav!.length > 0 && (
-            <SidebarGroup>
-              <SidebarGroupLabel className="eyebrow">Tools</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {plugins.slots.nav!.map(item => (
-                    <SidebarMenuItem key={item.to}>
-                      <NavButton active={active(item.to)} to={item.to} tooltip={item.label}>
-                        <Icon name={item.icon} /> <span>{item.label}</span>
-                      </NavButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          )}
-          {/* Apart from the content types, at the bottom, so it doesn't read as one of them. */}
-          {canTrash && (
-            <SidebarGroup className="mt-auto">
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <NavButton active={active("/trash")} to="/trash" tooltip="Trash"><Trash2Icon /> <span>Trash</span></NavButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          )}
-        </SidebarContent>
-        <SidebarFooter>
-          {/* In the sidebar rather than floating over the page, where it covered bottom-anchored controls. */}
-          {info.dev && !embedded && (
-            <p className="px-2 text-[11px] leading-snug text-muted-foreground group-data-[collapsible=icon]:hidden" title="Signed in without an identity provider">
-              Development mode: signed in without an identity provider
-            </p>
-          )}
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger render={
-                  <SidebarMenuButton size="lg" tooltip={session.user.name ?? session.user.email ?? "Account"}>
-                    <div className="flex size-8 items-center justify-center rounded-full bg-sidebar-accent text-xs font-medium">
-                      {(session.user.name ?? session.user.email ?? "?").charAt(0).toUpperCase()}
-                    </div>
-                    <div className="grid flex-1 text-left leading-tight">
-                      <span className="truncate text-sm font-medium">{session.user.name ?? session.user.email}</span>
-                      <span className="truncate text-xs text-muted-foreground">{session.user.roles.join(", ") || "No roles"}</span>
-                    </div>
-                  </SidebarMenuButton>
-                } />
-                <DropdownMenuContent side="top" align="start" className="w-56">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel className="truncate">{session.user.email ?? session.user.sub}</DropdownMenuLabel>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger>{theme === "dark" ? <MoonIcon /> : theme === "light" ? <SunIcon /> : <MonitorIcon />} Theme</DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
-                      <DropdownMenuRadioGroup value={theme} onValueChange={next => setTheme(next as Theme)}>
-                        <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                  {canConnect && (
-                    <DropdownMenuItem onClick={() => navigate("/connections")}><PlugIcon /> Connected apps</DropdownMenuItem>
-                  )}
-                  {!embedded && !info.dev && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={async () => {
-                        await signOut(info.prefix);
-                        onSignOut();
-                      }}><LogOutIcon /> Sign out</DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-      </Sidebar>
-      {/* Flush with the window's right edge (no margin, square corners there) so the scrollbar runs along it instead of over a rounded corner. */}
-      <SidebarInset data-scroll-root className="relative z-10 min-h-0 overflow-y-auto md:peer-data-[variant=inset]:mr-0 md:peer-data-[variant=inset]:rounded-l-[20px] md:peer-data-[variant=inset]:rounded-r-none md:peer-data-[variant=inset]:shadow-(--shadow-card)">
-        <div className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
-          <SidebarTrigger />
-        </div>
+    <div className="relative flex h-full min-h-0 flex-col bg-sidebar">
+      <MegaNav
+        groups={groups}
+        isActive={active}
+        onSearch={() => setPaletteOpen(true)}
+        previewOpen={previewOpen}
+        onPreview={() => (previewOpen ? closePreview() : void showPreview(cms))}
+        trash={canTrash ? { to: "/trash" } : null}
+        account={accountMenu}
+      />
+      {/* Flush with the window's edges (square corners at the bottom) so the scrollbar runs along the right edge instead of over a rounded corner. */}
+      <main data-scroll-root className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto bg-background md:rounded-t-[20px] md:shadow-(--shadow-card)">
         {/* Sticky inside the scrolling panel rather than fixed to the window, so it stays clear of the scrollbar, whatever its width. */}
         {config.locales!.length > 1 && (
           <div className="pointer-events-none sticky top-0 z-30 hidden h-0 justify-end md:flex">
@@ -440,12 +302,55 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
         <div className="min-h-full" data-page>
           <ErrorBoundary resetKey={path}>{page}</ErrorBoundary>
         </div>
-      </SidebarInset>
+      </main>
       <ErrorBoundary resetKey={paletteOpen}><Palette open={paletteOpen} onOpenChange={setPaletteOpen} /></ErrorBoundary>
       <ErrorBoundary resetKey={previewOpen}><PreviewWindow /></ErrorBoundary>
       <TipHost />
       <Toaster position="bottom-right" />
-    </SidebarProvider>
+    </div>
+  );
+}
+
+/** The signed-in user: theme, connected apps, sign out. Only where the panel isn't already offering them. */
+function AccountMenu({ theme, setTheme, canConnect, onSignOut }: { theme: Theme, setTheme(theme: Theme): void, canConnect: boolean, onSignOut(): void }) {
+  const { session, info } = useAdmin();
+  const name = session.user.name ?? session.user.email ?? "Account";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={
+        <button type="button" aria-label={name} title={info.dev && !embedded ? "Development mode: signed in without an identity provider" : name} className="ml-1 flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground/[0.07] text-xs font-medium outline-none transition-[background-color,scale] duration-150 hover:bg-foreground/[0.12] focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96]">
+          {name.charAt(0).toUpperCase()}
+        </button>
+      } />
+      <DropdownMenuContent side="bottom" align="end" className="w-56">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="truncate">{session.user.email ?? session.user.sub}</DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>{theme === "dark" ? <MoonIcon /> : theme === "light" ? <SunIcon /> : <MonitorIcon />} Theme</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuRadioGroup value={theme} onValueChange={next => setTheme(next as Theme)}>
+              <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {canConnect && (
+          <DropdownMenuItem onClick={() => navigate("/connections")}><PlugIcon /> Connected apps</DropdownMenuItem>
+        )}
+        {!embedded && !info.dev && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={async () => {
+              await signOut(info.prefix);
+              onSignOut();
+            }}><LogOutIcon /> Sign out</DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -497,20 +402,6 @@ function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: s
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-/** A sidebar link. The active item is a raised tile with an accent-coloured icon; hover is only a faint tint. */
-function NavButton({ to, active, tooltip, children }: { to: string, active: boolean, tooltip: string, children: React.ReactNode }) {
-  return (
-    <SidebarMenuButton
-      isActive={active}
-      tooltip={tooltip}
-      className="rounded-[10px] transition-[background-color,box-shadow,color,scale] duration-150 ease-out active:scale-[0.98] data-active:raised data-active:font-medium data-active:[&_svg]:text-brand"
-      render={<Link to={to} />}
-    >
-      {children}
-    </SidebarMenuButton>
   );
 }
 
