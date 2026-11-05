@@ -6,6 +6,18 @@ import { authHeaders, CloudflareApi, findPanels, show, whoami, type Account, typ
 import { Cancelled, type Prompts } from "./prompts.ts";
 import { configRoot, listHubs, readHub, removeHub, writeHub, type Bundle, type HubRecord } from "./state.ts";
 
+/** A resource the panel needs that doesn't exist yet. Nothing is created until the person confirms the whole plan. */
+interface ToCreate {
+  kind: "D1 database" | "R2 bucket",
+  name: string
+}
+
+/** The panel's settings, and the Cloudflare resources the deploy has to create first. */
+interface Plan {
+  record: HubRecord,
+  create: ToCreate[]
+}
+
 export interface WizardDeps {
   exec: Exec,
   prompts: Prompts,
@@ -84,7 +96,8 @@ async function wizard(deps: WizardDeps) {
   let record: HubRecord | null = null;
   let secrets: string[] = [];
   if(choice === "new") {
-    record = await configure(deps, root, account, api, null);
+    const plan = await configure(deps, root, account, api, null);
+    return void await deploy(deps, root, plan, {}, [], api);
   } else if(choice === "search") {
     if(!api) throw new Error("Searching needs Cloudflare's API, which wrangler's login couldn't reach. Log in again with `wrangler login`.");
     const found = await searchCloudflare(deps, root, account, api);
@@ -119,13 +132,12 @@ async function wizard(deps: WizardDeps) {
       return void p.outro(`Forgot ${record.name} here. It's still deployed; search Cloudflare to bring it back.`);
     }
     const extra: Secrets = {};
-    if(action === "settings") record = await configure(deps, root, account, api, record);
+    let plan: Plan = { record, create: [] };
+    if(action === "settings") plan = await configure(deps, root, account, api, record);
     if(action === "key") extra.HUB_SIGNING_KEY = await generateHubKey();
     if(action === "secret") extra.OIDC_CLIENT_SECRET = await p.password({ message: "New OIDC client secret", validate: required("The client secret") });
-    await deploy(deps, root, record, extra, secrets, api);
-    return;
+    await deploy(deps, root, plan, extra, secrets, api);
   }
-  await deploy(deps, root, record, {}, [], api);
 }
 
 async function chooseAccount({ exec, prompts: p }: WizardDeps): Promise<Account> {
@@ -194,10 +206,11 @@ async function searchCloudflare({ prompts: p }: WizardDeps, root: string, accoun
 
 type Secrets = Partial<Record<"OIDC_CLIENT_SECRET" | "HUB_SIGNING_KEY" | "PANEL_SETUP_TOKEN", string>>;
 
-/** The questions for a panel's settings, with the current ones as defaults. Creates nothing. */
-async function configure(deps: WizardDeps, root: string, account: Account, api: CloudflareApi | null, current: HubRecord | null): Promise<HubRecord> {
+/** The questions for a panel's settings, with the current ones as defaults. Creates nothing: what's missing goes in the plan. */
+async function configure(deps: WizardDeps, root: string, account: Account, api: CloudflareApi | null, current: HubRecord | null): Promise<Plan> {
   const { prompts: p } = deps;
   const vars = { ...current?.vars };
+  const create: ToCreate[] = [];
 
   let name = current?.name;
   if(!name) {
@@ -209,36 +222,27 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
     });
   }
 
-  // Resources: shown and confirmed one at a time, and reused when they already exist.
-  const database = current?.database ?? await resource(deps, api, account, {
-    kind: "D1 database",
-    defaultName: name,
-    existing: async () => (await api!.databases(account.id)).map(d => ({ name: d.name, id: d.id })),
-    create: async n => {
-      const args = ["d1", "create", n];
-      const result = await runShown(deps, args);
-      const id = result.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] ?? (await api?.databases(account.id).catch(() => []))?.find(d => d.name === n)?.id;
-      if(!id) throw new Error("The database was created, but its ID couldn't be read. Find it with `wrangler d1 list`.");
-      return { name: n, id };
-    }
-  });
+  // Resources: named now, reused when they exist, created at the end once the whole plan is confirmed.
+  let database = current?.database;
+  if(!database) {
+    const picked = await resource(deps, api, { kind: "D1 database", defaultName: name, existing: async () => (await api!.databases(account.id)).map(d => ({ name: d.name, id: d.id })) });
+    database = { name: picked.name, id: picked.id ?? "" };
+    if(!picked.id) create.push({ kind: "D1 database", name: picked.name });
+  }
 
   let backups = current ? current.backups : null;
   if(!current) {
     if(await p.confirm({ message: "Keep daily backups of sites in an R2 bucket?", initial: true })) {
-      backups = (await resource(deps, api, account, {
-        kind: "R2 bucket",
-        defaultName: `${name}-backups`,
-        existing: async () => (await api!.buckets(account.id)).map(b => ({ name: b, id: b })),
-        create: async n => {
-          await runShown(deps, ["r2", "bucket", "create", n]);
-          return { name: n, id: n };
-        }
-      })).name;
+      const picked = await resource(deps, api, { kind: "R2 bucket", defaultName: `${name}-backups`, existing: async () => (await api!.buckets(account.id)).map(b => ({ name: b, id: b })) });
+      backups = picked.name;
+      if(!picked.id) create.push({ kind: "R2 bucket", name: picked.name });
     }
   } else if(await p.confirm({ message: backups ? `Backups go to ${backups}. Change that?` : "Backups are off. Turn them on?", initial: false })) {
     const bucket = await p.text({ message: "R2 bucket name (empty for none)", initial: backups ?? `${name}-backups`, validate: v => !v || RESOURCE_NAME.test(v) ? undefined : "3 to 63 characters: lowercase letters, numbers and dashes" });
-    if(bucket && bucket !== backups) await runShown(deps, ["r2", "bucket", "create", bucket]);
+    if(bucket && bucket !== backups) {
+      const exists = api ? (await api.buckets(account.id).catch(() => [])).includes(bucket) : false;
+      if(!exists) create.push({ kind: "R2 bucket", name: bucket });
+    }
     backups = bucket || null;
   }
 
@@ -255,7 +259,7 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
 
   // The address: the Worker's own, or a custom domain.
   let domain = current?.domain ?? null;
-  const wantsDomain = await p.confirm({ message: domain ? `Keep serving the panel from ${domain}?` : "Serve the panel from your own domain (like admin.my-agency.com)?", initial: Boolean(domain) });
+  const wantsDomain = await p.confirm({ message: domain ? `Keep serving the panel from ${domain}?` : "Serve the panel from your own domain (like admin.my-agency.com)? No keeps its workers.dev address; you can add a domain later", initial: Boolean(domain) });
   if(wantsDomain) {
     domain = (await p.text({ message: "Panel hostname", initial: domain ?? `admin.${vars.VIBE_ORG}`, validate: v => HOSTNAME.test(v.trim()) ? undefined : "Enter a hostname like admin.my-agency.com" })).trim().toLowerCase();
     const zone = api ? await api.zoneFor(account.id, domain).catch(() => null) : null;
@@ -274,20 +278,19 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
   }
   if(domain) delete vars.PANEL_URL;
 
-  return { version: 1, accountId: account.id, accountName: account.name, name, database, backups, vars, domain, url: current?.url, secrets: current?.secrets };
+  return { record: { version: 1, accountId: account.id, accountName: account.name, name, database, backups, vars, domain, url: current?.url, secrets: current?.secrets }, create };
 }
 
+/** Asks for a resource's name. An existing one comes back with its id (and can be reused); a new one has none yet. */
 async function resource(
   deps: WizardDeps,
   api: CloudflareApi | null,
-  _account: Account,
   options: {
     kind: string,
     defaultName: string,
-    existing: () => Promise<Array<{ name: string, id: string }>>,
-    create: (name: string) => Promise<{ name: string, id: string }>
+    existing: () => Promise<Array<{ name: string, id: string }>>
   }
-) {
+): Promise<{ name: string, id?: string }> {
   const { prompts: p } = deps;
   const name = await p.text({ message: `${options.kind} name`, initial: options.defaultName, validate: v => RESOURCE_NAME.test(v) ? undefined : "3 to 63 characters: lowercase letters, numbers and dashes" });
   const existing = api ? (await options.existing().catch(() => [])).find(r => r.name === name) : undefined;
@@ -295,8 +298,22 @@ async function resource(
     if(!await p.confirm({ message: `${options.kind} "${name}" already exists. Use it?`, initial: true })) throw new Cancelled();
     return existing;
   }
-  if(!await p.confirm({ message: `Create ${options.kind} "${name}"?`, initial: true })) throw new Cancelled();
-  return options.create(name);
+  return { name };
+}
+
+/** Creates the resources the plan named, showing each command, and fills in the new database's id. */
+async function createResources(deps: WizardDeps, api: CloudflareApi | null, record: HubRecord, create: ToCreate[]) {
+  for(const item of create) {
+    if(item.kind === "R2 bucket") {
+      await runShown(deps, ["r2", "bucket", "create", item.name]);
+      continue;
+    }
+    const result = await runShown(deps, ["d1", "create", item.name]);
+    const id = result.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]
+      ?? (await api?.databases(record.accountId).catch(() => []))?.find(d => d.name === item.name)?.id;
+    if(!id) throw new Error("The database was created, but its ID couldn't be read. Find it with `wrangler d1 list`, then run the wizard again and choose to use it.");
+    record.database = { name: item.name, id };
+  }
 }
 
 /** Shows a wrangler command, runs it, and stops with wrangler's own message if it fails. */
@@ -315,9 +332,10 @@ async function addressOf(record: HubRecord, api: CloudflareApi | null): Promise<
   return sub ? `https://${record.name}.${sub}.workers.dev` : record.url;
 }
 
-async function deploy(deps: WizardDeps, root: string, record: HubRecord, replace: Secrets, existing: string[], api: CloudflareApi | null) {
+async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secrets, existing: string[], api: CloudflareApi | null) {
   const { exec, prompts: p } = deps;
-  const url = await addressOf(record, api);
+  const { record, create } = plan;
+  let url = await addressOf(record, api);
   const needsOwner = url ? await (deps.needsOwner ?? defaultNeedsOwner)(url) : null;
 
   const secrets: Secrets = { ...replace };
@@ -332,14 +350,18 @@ async function deploy(deps: WizardDeps, root: string, record: HubRecord, replace
   p.note([
     `Worker      ${record.name}`,
     `Address     ${url ?? "its workers.dev address"}${record.domain ? " (custom domain)" : ""}`,
-    `Database    ${record.database.name}`,
-    `Backups     ${record.backups ?? "off"}`,
+    `Database    ${record.database.name}${create.some(c => c.kind === "D1 database") ? " (new)" : ""}`,
+    `Backups     ${record.backups ? `${record.backups}${create.some(c => c.kind === "R2 bucket") ? " (new)" : ""}` : "off"}`,
     `Org         ${record.vars.VIBE_ORG}`,
     `Sign-in     ${record.vars.OIDC_ISSUER}`,
     `Secrets     ${Object.keys(secrets).map(k => k === "PANEL_SETUP_TOKEN" ? "one-time setup link" : k).join(", ") || "unchanged"}`
   ].join("\n"), "About to deploy");
-  if(!await p.confirm({ message: "Deploy now?", initial: true })) throw new Cancelled();
+  if(create.length) {
+    p.note(create.map(c => `$ ${show(c.kind === "D1 database" ? ["d1", "create", c.name] : ["r2", "bucket", "create", c.name])}`).join("\n"), "Created first");
+  }
+  if(!await p.confirm({ message: create.length ? "Create these and deploy now?" : "Deploy now?", initial: true })) throw new Cancelled();
 
+  await createResources(deps, api, record, create);
   const dir = await writeHub(root, { ...record, url }, deps.bundle);
   const configPath = path.join(dir, "wrangler.jsonc");
   p.info(`Settings saved in ${dir}`);
@@ -355,6 +377,8 @@ async function deploy(deps: WizardDeps, root: string, record: HubRecord, replace
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+  // A Worker's workers.dev address can only be known once the account has one: look again after the deploy.
+  url ??= await addressOf(record, api);
   await writeHub(root, { ...record, url, secrets: [...new Set([...existing, ...Object.keys(secrets)])] }, deps.bundle);
 
   await finish(deps, record, url, secrets.PANEL_SETUP_TOKEN, api);

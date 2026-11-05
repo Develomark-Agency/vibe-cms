@@ -11,7 +11,7 @@ export type Exec = (args: string[], options?: { cwd?: string, stream?: boolean }
 
 /** Wrangler through bunx, so it uses the person's own login and nothing here handles credentials by hand. */
 export async function wranglerExec(args: string[], { cwd, stream }: { cwd?: string, stream?: boolean } = {}): Promise<ExecResult> {
-  const proc = Bun.spawn(["bunx", "wrangler", ...args], { cwd, stdin: "ignore", stdout: stream ? "inherit" : "pipe", stderr: stream ? "inherit" : "pipe", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } });
+  const proc = Bun.spawn(["bunx", "wrangler", ...args], { cwd, stdin: stream ? "inherit" : "ignore", stdout: stream ? "inherit" : "pipe", stderr: stream ? "inherit" : "pipe", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } });
   const [stdout, stderr, code] = await Promise.all([
     stream ? "" : new Response(proc.stdout as ReadableStream).text(),
     stream ? "" : new Response(proc.stderr as ReadableStream).text(),

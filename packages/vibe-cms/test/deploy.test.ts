@@ -155,10 +155,8 @@ describe("admin deploy", () => {
       [/No panels found/, "new"],
       [/Worker name/, "vibe-panel"],
       [/D1 database name/, "vibe-panel"],
-      [/Create D1 database/, true],
       [/Keep daily backups/, true],
       [/R2 bucket name/, "vibe-panel-backups"],
-      [/Create R2 bucket/, true],
       [/org's domain/, "agency.test"],
       [/OIDC issuer/, "https://idp.test"],
       [/OIDC client ID/, "client"],
@@ -166,14 +164,14 @@ describe("admin deploy", () => {
       [/Serve the panel from your own domain/, true],
       [/Panel hostname/, "admin.agency.test"],
       [/OIDC client secret/, "s3cret"],
-      [/Deploy now/, true],
+      [/deploy now/i, true],
       [/Add the DNS record/, true]
     ]);
     await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
 
     const commands = wrangler.calls.map(c => c.args.slice(0, 4).join(" "));
-    expect(commands).toContain("d1 create vibe-panel");
-    expect(commands).toContain("r2 bucket create vibe-panel-backups");
+    expect(commands.slice(0, 3)).toEqual(["whoami --json", "d1 create vibe-panel", "r2 bucket create vibe-panel-backups"]);
+    expect(commands[3]).toMatch(/^deploy /);
     const deployed = wrangler.calls.find(c => c.args[0] === "deploy")!;
     expect(Object.keys(deployed.secrets!).sort()).toEqual(["HUB_SIGNING_KEY", "OIDC_CLIENT_SECRET", "PANEL_SETUP_TOKEN"]);
     expect(deployed.secrets!.OIDC_CLIENT_SECRET).toBe("s3cret");
@@ -193,17 +191,28 @@ describe("admin deploy", () => {
     expect(ui.left()).toEqual([]);
   });
 
-  test("declining a resource stops before anything is created or deployed", async () => {
+  test("nothing is created until the whole plan is confirmed, and declining it creates nothing", async () => {
     const wrangler = fakeWrangler();
     const { api } = fakeApi();
     const ui = script([
       [/No panels found/, "new"],
       [/Worker name/, "vibe-panel"],
       [/D1 database name/, "vibe-panel"],
-      [/Create D1 database/, false]
+      [/Keep daily backups/, true],
+      [/R2 bucket name/, "vibe-panel-backups"],
+      [/org's domain/, "agency.test"],
+      [/OIDC issuer/, "https://idp.test"],
+      [/OIDC client ID/, "client"],
+      [/Who may sign in/, "agency.test"],
+      [/Serve the panel from your own domain/, false],
+      [/OIDC client secret/, "s3cret"],
+      [/Create these and deploy now/, false]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => api });
+    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => api, needsOwner: async () => null });
     expect(wrangler.calls.map(c => c.args[0])).toEqual(["whoami"]);
+    const out = ui.log.join("\n");
+    expect(out).toContain("$ wrangler d1 create vibe-panel");
+    expect(out).toContain("$ wrangler r2 bucket create vibe-panel-backups");
     expect(ui.log.at(-1)).toContain("Nothing");
   });
 
@@ -215,7 +224,7 @@ describe("admin deploy", () => {
     const ui = script([
       [/Which panel/, "hub:acc1:vibe-panel"],
       [/what next/, "redeploy"],
-      [/Deploy now/, true],
+      [/deploy now/i, true],
       [/Add the DNS record/, false]
     ]);
     await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
@@ -233,7 +242,7 @@ describe("admin deploy", () => {
     const ui = script([
       [/Which panel/, "hub:acc1:vibe-panel"],
       [/what next/, "key"],
-      [/Deploy now/, true],
+      [/deploy now/i, true],
       [/Add the DNS record/, false]
     ]);
     await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
@@ -260,12 +269,40 @@ describe("admin deploy", () => {
       [/No panels found/, "search"],
       [/Which one/, "found-panel"],
       [/what next/, "redeploy"],
-      [/Deploy now/, true],
+      [/deploy now/i, true],
       [/Add the DNS record/, false]
     ]);
     await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
     expect((await readHub(root, "acc1", "found-panel"))?.vars.VIBE_ORG).toBe("agency.test");
     expect(wrangler.calls.find(c => c.args[0] === "deploy")!.args).not.toContain("--secrets-file");
+  });
+
+  test("the whole setup works without a custom domain, on the workers.dev address", async () => {
+    const root = await tmpRoot();
+    const wrangler = fakeWrangler();
+    const { api, txt } = fakeApi();
+    const ui = script([
+      [/No panels found/, "new"],
+      [/Worker name/, "vibe-panel"],
+      [/D1 database name/, "vibe-panel"],
+      [/Keep daily backups/, false],
+      [/org's domain/, "agency.test"],
+      [/OIDC issuer/, "https://idp.test"],
+      [/OIDC client ID/, "client"],
+      [/Who may sign in/, "agency.test"],
+      [/Serve the panel from your own domain/, false],
+      [/OIDC client secret/, "s3cret"],
+      [/deploy now/i, true],
+      [/Add the DNS record/, true]
+    ]);
+    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
+    const saved = (await readHub(root, "acc1", "vibe-panel"))!;
+    expect(saved.domain).toBeNull();
+    expect(saved.url).toBe("https://vibe-panel.agency.workers.dev");
+    expect(JSON.parse((await readFile(path.join(root, "acc1", "vibe-panel", "wrangler.jsonc"), "utf8")).replace(/^\/\/.*\n/, "")).routes).toBeUndefined();
+    expect(ui.log.join("\n")).toContain("https://vibe-panel.agency.workers.dev/#setup=");
+    expect(txt).toEqual([{ name: "_vibe-hub.agency.test", content: "https://vibe-panel.agency.workers.dev" }]);
+    expect(ui.left()).toEqual([]);
   });
 
   test("an unreachable domain deploys to workers.dev and says what to do", async () => {
@@ -276,7 +313,6 @@ describe("admin deploy", () => {
       [/No panels found/, "new"],
       [/Worker name/, "p"],
       [/D1 database name/, "p"],
-      [/Create D1 database/, true],
       [/Keep daily backups/, false],
       [/org's domain/, "elsewhere.test"],
       [/OIDC issuer/, "https://idp.test"],
@@ -286,7 +322,7 @@ describe("admin deploy", () => {
       [/Panel hostname/, "admin.elsewhere.test"],
       [/Deploy to workers.dev for now/, true],
       [/OIDC client secret/, "x"],
-      [/Deploy now/, true]
+      [/deploy now/i, true]
     ]);
     await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
     const saved = (await readHub(root, "acc1", "p"))!;
@@ -300,7 +336,7 @@ describe("admin deploy", () => {
     await writeHub(root, { ...record, secrets: ["OIDC_CLIENT_SECRET", "HUB_SIGNING_KEY"] }, bundle);
     const wrangler = fakeWrangler();
     const { api, txt } = fakeApi({ txtRecords: async () => [{ id: "r", content: "https://old-hub.test" }] });
-    const ui = script([[/Which panel/, "hub:acc1:vibe-panel"], [/what next/, "redeploy"], [/Deploy now/, true]]);
+    const ui = script([[/Which panel/, "hub:acc1:vibe-panel"], [/what next/, "redeploy"], [/deploy now/i, true]]);
     await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
     expect(txt).toEqual([]);
     expect(ui.log.join("\n")).toContain("already exists");
