@@ -205,6 +205,17 @@ export function useTypeStats(types: string[], enabled = true) {
   });
 }
 
+/**
+ * Column count (3 or 4) that leaves the fewest empty cells on the last row, so
+ * a count like 9 is a clean 3×3 instead of 4 + 4 + 1. Ties go to more columns.
+ */
+function fillColumns(count: number): number {
+  function empty(cols: number) {
+    return (cols - (count % cols)) % cols;
+  }
+  return empty(4) <= empty(3) ? 4 : 3;
+}
+
 export function Dashboard() {
   const { config, session, site } = useAdmin();
   const types = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
@@ -244,7 +255,10 @@ export function Dashboard() {
 
       <section className="flex flex-col gap-3">
         <h2 className="eyebrow">Content</h2>
-        <div className="stagger grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-3">
+        <div
+          style={{ "--cols": `repeat(${fillColumns(types.length)}, minmax(0, 1fr))` } as CSSProperties}
+          className="stagger grid grid-cols-2 gap-3 md:grid-cols-(--cols) max-md:[&>:last-child:nth-child(odd)]:col-span-2"
+        >
           {types.map((type, i) => {
             const entry = stats.data?.find(s => s.type === type);
             const settings = collectionSettings(config, type);
@@ -253,7 +267,7 @@ export function Dashboard() {
                 key={type}
                 to={`/content/${type}`}
                 style={staggerIndex(i)}
-                className="group/card relative flex flex-col gap-6 rounded-[16px] elevated p-5 transition-[box-shadow,scale] duration-200 ease-out hover:shadow-(--shadow-raised-hover) active:scale-[0.98]"
+                className="group/card relative flex flex-col gap-6 rounded-[16px] elevated p-5 transition-[box-shadow,scale,translate] duration-200 ease-out hover:-translate-y-px hover:shadow-(--shadow-raised-hover) active:translate-y-0 active:scale-[0.98]"
               >
                 <span className="flex items-center justify-between text-sm text-muted-foreground">
                   {collectionLabel(config, type)}

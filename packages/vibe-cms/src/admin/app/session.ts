@@ -15,6 +15,12 @@ export type PanelMessage =
 export type EditorMessage =
   | { type: "vibe:ready", protocol: 1 }
   | { type: "vibe:needCode" }
+  /**
+   * The editor's interface is on screen with its fonts loaded. `ready` only means the handshake
+   * began, which is well before that, so the panel keeps its placeholder up until this arrives.
+   * Carries nothing, so it is sent to any origin like `ready`. Panels that predate it fall back to a timer.
+   */
+  | { type: "vibe:painted" }
   | { type: "vibe:navigated", path: string }
   | { type: "vibe:title", title: string }
   | { type: "vibe:shortcut", key: string }
@@ -69,9 +75,29 @@ export function subscribePanelAccent(listener: () => void): () => void {
 
 export function postToPanel(message: EditorMessage) {
   if(!embedded) return;
-  const open = message.type === "vibe:ready" || message.type === "vibe:needCode";
+  const open = message.type === "vibe:ready" || message.type === "vibe:needCode" || message.type === "vibe:painted";
   if(!open && !panelOrigin) return;
   window.parent.postMessage(message, open ? "*" : panelOrigin!);
+}
+
+/**
+ * Tells the panel the interface has painted: after the next frame, and once the fonts in use have
+ * loaded (or a second has passed), so the panel never fades in text that is about to change typeface.
+ * Returns a cancel function.
+ */
+export function announcePainted(): () => void {
+  let cancelled = false;
+  requestAnimationFrame(() => {
+    const fonts = typeof document !== "undefined" && document.fonts ? document.fonts.ready : Promise.resolve();
+    void Promise.race([fonts, new Promise(resolve => setTimeout(resolve, 1000))]).then(() => {
+      requestAnimationFrame(() => {
+        if(!cancelled) postToPanel({ type: "vibe:painted" });
+      });
+    });
+  });
+  return () => {
+    cancelled = true;
+  };
 }
 
 export function onPanelNavigate(listener: (path: string) => void) {

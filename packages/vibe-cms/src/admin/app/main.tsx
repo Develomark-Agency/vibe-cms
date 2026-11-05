@@ -32,7 +32,7 @@ import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview,
 import { openPick, type PreviewPick } from "./reveal.ts";
 import { PreviewWindow } from "./preview-window.tsx";
 import { MegaNav, type NavGroup, type NavItem } from "./nav.tsx";
-import { embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
+import { announcePainted, embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false } }
@@ -167,6 +167,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   const [theme, setTheme] = useTheme();
   const previewOpen = useSyncExternalStore(subscribePreview, () => getPreview().open);
   useNavigationSync();
+  useEffect(() => (embedded ? announcePainted() : undefined), []);
 
   // The preview's picker: a click there opens that block or field here.
   const readable = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);

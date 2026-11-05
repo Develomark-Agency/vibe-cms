@@ -207,8 +207,16 @@
  * and (on snapshots) a touch of blur animate.
  */
 
+/*
+ * Tailwind's stock curves are too gentle to feel intentional, and every
+ * `transition` / `ease-out` utility in the app reads them. Replacing them here
+ * upgrades all of it at once.
+ */
 @theme {
-  --ease-out-soft: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-out-soft: var(--ease-out);
+  --default-transition-timing-function: var(--ease-out);
 }
 
 /*
@@ -255,7 +263,7 @@
   animation-timing-function: var(--ease-out-soft);
 }
 
-/* Pages hand over rather than overlap: the old one is nearly gone before the new one settles in. */
+/* Pages hand over rather than overlap: the old one fades quickly while the new one moves in. */
 /*
  * The page is captured under a different name before and after the change,
  * so the two don't pair up: pairing would move the arriving page from where
@@ -268,8 +276,9 @@
   animation: 100ms ease-out both vibe-page-out;
 }
 
+/* No delay: the new page starts moving as soon as it is captured, so a navigation never waits on its own animation. */
 ::view-transition-new(page-in) {
-  animation: 240ms var(--ease-out-soft) 60ms both vibe-page-in;
+  animation: 190ms var(--ease-out-soft) both vibe-page-in;
 }
 
 @keyframes vibe-page-out {

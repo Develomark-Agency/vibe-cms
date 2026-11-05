@@ -579,16 +579,19 @@ function itemSummary(schema: AnySchema, value: unknown, index: number): string {
   return `Item ${index + 1}`;
 }
 
-const HIDDEN = { opacity: 0, y: 10, filter: "blur(4px)" };
+const HIDDEN = { opacity: 0, y: 6, filter: "blur(2px)" };
 const SHOWN = { opacity: 1, y: 0, filter: "blur(0px)" };
 const EASE = [0.32, 0.72, 0, 1] as const;
 const LAYOUT = { duration: 0.3, ease: EASE };
 
 /**
  * Opens and closes by height, with the content fading, unblurring and sliding into place.
+ * Height and content share one clock, and closing is quicker than opening: the user
+ * decides slowly, the interface answers fast.
  * Motion animates from wherever each value currently is, so toggling mid-animation reverses smoothly.
  */
 function Collapse({ open, children }: { open: boolean, children: ReactNode }) {
+  const duration = open ? 0.22 : 0.15;
   return (
     <MotionConfig reducedMotion="user">
       <motion.div
@@ -596,9 +599,9 @@ function Collapse({ open, children }: { open: boolean, children: ReactNode }) {
         className="overflow-hidden"
         initial={false}
         animate={{ height: open ? "auto" : 0 }}
-        transition={{ duration: 0.28, ease: EASE }}
+        transition={{ duration, ease: EASE }}
       >
-        <motion.div initial={false} animate={open ? SHOWN : HIDDEN} transition={{ duration: open ? 0.32 : 0.2, ease: EASE }}>
+        <motion.div initial={false} animate={open ? SHOWN : HIDDEN} transition={{ duration: open ? 0.2 : 0.12, ease: EASE }}>
           {children}
         </motion.div>
       </motion.div>

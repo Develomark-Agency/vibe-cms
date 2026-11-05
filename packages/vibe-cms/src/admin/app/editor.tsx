@@ -38,6 +38,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from "../components/ui/input.tsx";
 import { Kbd } from "../components/ui/kbd.tsx";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../components/ui/sheet.tsx";
+import { Crossfade } from "../components/crossfade.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
@@ -367,8 +368,14 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                 onClick={() => (dirty || id === null ? void save({ publish: true }) : void action("publishOnly"))}
                 disabled={busy !== null || (status === "published" && !dirty)}
               >
-                {busy === "publish" ? <Spinner /> : status === "published" && !dirty ? <CheckIcon /> : <CloudUploadIcon />}
-                {status === "published" && !dirty ? "Published" : "Publish"}
+                <Crossfade
+                  active={busy === "publish" ? "busy" : status === "published" && !dirty ? "published" : "publish"}
+                  options={{
+                    publish: <><CloudUploadIcon /> Publish</>,
+                    busy: <><Spinner /> Publish</>,
+                    published: <><CheckIcon /> Published</>
+                  }}
+                />
               </Button>
             )}
             {id !== null && (

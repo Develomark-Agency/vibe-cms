@@ -45,6 +45,7 @@ import { Input } from "../admin/components/ui/input.tsx";
 import { Kbd } from "../admin/components/ui/kbd.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../admin/components/ui/popover.tsx";
 import { Toaster } from "../admin/components/ui/sonner.tsx";
+import { Skeleton } from "../admin/components/ui/skeleton.tsx";
 import { Spinner } from "../admin/components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../admin/components/ui/tooltip.tsx";
 import { SiteMark as SharedSiteMark } from "../admin/components/site-mark.tsx";
@@ -685,10 +686,10 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
                 recheck.cancel();
                 portal.leave();
               }}
-              className="group/card relative flex items-center gap-3 rounded-[18px] elevated p-2.5 transition-shadow duration-200 ease-out hover:shadow-(--shadow-raised-hover)"
+              className="group/card relative flex items-center gap-3 rounded-[18px] elevated p-2.5 transition-[box-shadow,scale] duration-200 ease-out hover:shadow-(--shadow-raised-hover) has-[[data-open-site]:active]:scale-[0.985]"
             >
               <SiteMark site={site} className={cn("size-11 rounded-[8px] text-sm transition-[filter,opacity]", site.problem && "opacity-30 grayscale")} />
-              <motion.button whileTap={{ scale: 0.985 }} className="min-w-0 flex-1 text-left after:absolute after:inset-0" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
+              <button data-open-site className="min-w-0 flex-1 text-left outline-none after:absolute after:inset-0 after:rounded-[18px] focus-visible:after:ring-3 focus-visible:after:ring-ring/50" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
                 <span className={cn("block truncate font-medium", site.problem && "text-muted-foreground")}>{site.name}</span>
                 <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                   {site.problem && (
@@ -705,7 +706,7 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
                   {site.problem && <span aria-hidden>·</span>}
                   <span className="truncate">{new URL(site.url).host}</span>
                 </span>
-              </motion.button>
+              </button>
               {/* Same 44px square and 8px corner as the mark: both sit 10px inside the 18px card. */}
               <div className="relative z-10 flex items-center">
                 <Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label={site.favorite ? "Unstar" : "Star"} onClick={async () => {
@@ -868,6 +869,43 @@ function AgentsDialog({ backend, open, onOpenChange }: { backend: PanelBackend, 
   );
 }
 
+/**
+ * What the editor looks like before it has loaded: its menu bar and the page it
+ * opens on, in skeleton form, drawn the moment the frame starts loading so the
+ * panel never shows an empty body. Not wrapped in `Delayed`: the editor takes
+ * long enough to arrive that this is always worth showing.
+ */
+function EditorShell({ dashboard }: { dashboard: boolean }) {
+  return (
+    <div aria-hidden className="absolute inset-0 overflow-hidden bg-background">
+      <div className="flex h-14 items-center gap-2 px-4">
+        <Skeleton className="h-8 w-32 rounded-[10px]" />
+        <Skeleton className="h-8 w-24 rounded-[10px]" />
+        <Skeleton className="h-8 w-20 rounded-[10px]" />
+        <Skeleton className="ml-3 h-8 w-20 rounded-[10px]" />
+        <Skeleton className="h-8 w-20 rounded-[10px]" />
+        <Skeleton className="h-8 w-16 rounded-[10px]" />
+      </div>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 py-6 md:px-8">
+        <div className="flex flex-col gap-3 pt-6">
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="h-9 w-72 max-w-full" />
+          <Skeleton className="h-4 w-40" />
+        </div>
+        {dashboard ? (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-[6.25rem] rounded-[16px]" />)}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: 7 }, (_, i) => <Skeleton key={i} className="h-11 rounded-[12px]" />)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Frames one site's editor and speaks the panel ↔ editor protocol with it. */
 function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
   backend: PanelBackend,
@@ -890,6 +928,29 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
   // Bumped by Retry: checks again from the start and reloads the frame.
   const [attempt, setAttempt] = useState(0);
   const framed = state === "loading" || state === "ready" || state === "denied" || (state === "unreachable" && error === null);
+  // `ready` only means the editor's handshake began; its interface follows once its code has loaded.
+  // The editor says when that has painted (`vibe:painted`); an older one that doesn't is revealed after a moment.
+  const [painted, setPainted] = useState(false);
+  useEffect(() => {
+    if(state !== "ready") {
+      setPainted(false);
+      return;
+    }
+    const timer = setTimeout(() => setPainted(true), 2500);
+    return () => clearTimeout(timer);
+  }, [state, attempt]);
+  const revealed = state === "ready" && painted;
+  // The placeholder stays under the editor until its fade-in has finished, so the two cross-fade instead of the page flashing.
+  const [shellDone, setShellDone] = useState(false);
+  useEffect(() => {
+    if(!revealed) {
+      setShellDone(false);
+      return;
+    }
+    const timer = setTimeout(() => setShellDone(true), 320);
+    return () => clearTimeout(timer);
+  }, [revealed]);
+  const showShell = state === "connecting" || state === "loading" || (state === "ready" && !shellDone);
   // The src is fixed per site; later navigation happens inside the editor and is mirrored here.
   const src = useMemo(() => `${site.admin}${initialPath.startsWith("/") ? initialPath : `/${initialPath}`}`, [site.id]);
 
@@ -956,6 +1017,9 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
           sendAppearance();
           setState("ready");
           break;
+        case "vibe:painted":
+          setPainted(true);
+          break;
         case "vibe:theme":
           if(isTheme(message.theme)) setTheme(message.theme);
           break;
@@ -996,28 +1060,21 @@ function SiteFrame({ backend, branding, site, initialPath, onShortcut }: {
 
   return (
     <div className="absolute inset-0">
-      {framed && <iframe key={attempt} ref={frame} src={src} title={`${site.name} editor`} className={cn("size-full border-0 bg-background transition-opacity duration-300 ease-out", state === "ready" ? "opacity-100" : "opacity-0", state === "denied" && "invisible")} allow="clipboard-write" />}
-      {(state === "connecting" || state === "loading" || state === "trouble") && (
+      {showShell && <EditorShell dashboard={initialPath === "/" || initialPath === ""} />}
+      {framed && <iframe key={attempt} ref={frame} src={src} title={`${site.name} editor`} className={cn("relative size-full border-0 bg-background transition-opacity duration-300 ease-out", revealed ? "opacity-100" : "opacity-0", state === "denied" && "invisible")} allow="clipboard-write" />}
+      {state === "trouble" && (
         <div className="absolute inset-0 flex items-center justify-center bg-background p-6">
-          <Delayed ms={state === "trouble" ? 0 : 300}>
-            <div className="rise-in flex max-w-sm flex-col items-center gap-3 text-center">
-              <SiteMark site={site} className="size-12 rounded-[10px] text-base" />
-              <h2 className="font-semibold">{site.name}</h2>
-              {state === "trouble" ? (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    Having trouble connecting to {host}. {backend.mode === "local" ? "Check that its dev server is running" : "Check that the site is online"}; this page opens it as soon as it answers.
-                  </p>
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => go("/")}>Back to sites</Button>
-                    <Button variant="ghost" onClick={retry}>Try now</Button>
-                  </div>
-                </>
-              ) : (
-                <p className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner className="size-3.5" /> Connecting to {host}…</p>
-              )}
+          <div className="rise-in flex max-w-sm flex-col items-center gap-3 text-center">
+            <SiteMark site={site} className="size-12 rounded-[10px] text-base" />
+            <h2 className="font-semibold">{site.name}</h2>
+            <p className="text-sm text-muted-foreground">
+              Having trouble connecting to {host}. {backend.mode === "local" ? "Check that its dev server is running" : "Check that the site is online"}; this page opens it as soon as it answers.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => go("/")}>Back to sites</Button>
+              <Button variant="ghost" onClick={retry}>Try now</Button>
             </div>
-          </Delayed>
+          </div>
         </div>
       )}
       {(state === "denied" || state === "unreachable") && (
