@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { PanelError } from "vibe-cms/panel";
 import { handleMcp, siteToken } from "../mcp.ts";
 import { canSeeSite, hubAccess } from "../access.ts";
+import { attachSite } from "../sites.ts";
 import {
   authorize,
   codePage,
@@ -28,7 +29,7 @@ import type { AppEnv } from "../context.ts";
 export const agents = new Hono<AppEnv>();
 
 // Browsers reach these from other origins (an agent's web client), so they answer preflights.
-for(const path of ["/mcp", "/oauth/token", "/oauth/register", "/oauth/revoke", "/site-token", "/.well-known/*"]) {
+for(const path of ["/mcp", "/oauth/token", "/oauth/register", "/oauth/revoke", "/site-token", "/site-attach", "/.well-known/*"]) {
   agents.options(path, () => corsPreflight());
 }
 
@@ -54,6 +55,23 @@ agents.post("/site-token", async c => {
   const grant = await grantForRequest(c.req.raw, c.env);
   if(!grant) return c.json({ error: "Log in again: this access token is unknown or expired" }, 401, { "www-authenticate": "Bearer" });
   return siteTokenRoute(c.req.raw, c.env, grant);
+});
+
+/**
+ * `POST /site-attach` with an OAuth access token: attaches a site from its claim link, for the CLI and
+ * other clients, as the connection's user. Body: `{ link, templateId? }`; the reply is the added site.
+ */
+agents.post("/site-attach", async c => {
+  const grant = await grantForRequest(c.req.raw, c.env);
+  if(!grant) return c.json({ error: "Log in again: this access token is unknown or expired" }, 401, { "www-authenticate": "Bearer" });
+  if(grant.scope === SCOPE_READ) throw new PanelError(403, "This connection is read-only, and attaching a site changes things");
+  const input = await c.req.json().catch(() => null) as { link?: unknown, templateId?: unknown } | null;
+  if(typeof input?.link !== "string") throw new PanelError(400, "Expected link");
+  if(input.templateId !== undefined && input.templateId !== null && typeof input.templateId !== "string") throw new PanelError(400, "Expected templateId");
+  const [session] = await db(c.env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
+  if(!session) throw new PanelError(401, "This connection's sign-in is gone. Log in again.");
+  const site = await attachSite(c.env, await hubAccess(c.env, session), { link: input.link, templateId: input.templateId });
+  return c.json(site, 201, { "cache-control": "no-store" });
 });
 
 agents.all("/mcp", async c => {

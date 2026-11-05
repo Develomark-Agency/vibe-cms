@@ -7,8 +7,8 @@
   "assets": {
     "directory": "dist/client",
     "binding": "ASSETS",
-    // The API, sign-in, agent and CLI (OAuth, MCP, site tokens) routes run in the Worker; everything else is the app.
-    "run_worker_first": ["/api/*", "/auth/*", "/mcp", "/oauth/*", "/site-token", "/.well-known/*"],
+    // The API, sign-in, agent and CLI (OAuth, MCP, site tokens, attaching sites) routes run in the Worker; everything else is the app.
+    "run_worker_first": ["/api/*", "/auth/*", "/mcp", "/oauth/*", "/site-token", "/site-attach", "/.well-known/*"],
     "not_found_handling": "single-page-application"
   },
   "d1_databases": [

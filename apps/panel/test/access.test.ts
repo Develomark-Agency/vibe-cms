@@ -37,6 +37,39 @@ afterAll(async () => {
 });
 
 describe("bootstrap", () => {
+  test("a PANEL_SETUP_TOKEN secret is the setup link's token, and stops working once the hub has an owner", async () => {
+    const outer = env.DB;
+    env.DB = createD1() as unknown as D1Database;
+    env.PANEL_SETUP_TOKEN = "chosen-by-the-wizard";
+    try {
+      idp.email = "jane@agency.test";
+      idp.sub = "u-jane";
+      jar.clear();
+      const wrong = await panel("/auth/login?setup=guess");
+      idp.nonce = new URL(wrong.headers.get("location")!).searchParams.get("nonce")!;
+      const refused = await panel(`/auth/callback?code=good-code&state=${new URL(wrong.headers.get("location")!).searchParams.get("state")}`);
+      expect(decodeURIComponent(refused.headers.get("location")!)).toContain("no owner yet");
+
+      jar.clear();
+      const login = await panel("/auth/login?setup=chosen-by-the-wizard");
+      idp.nonce = new URL(login.headers.get("location")!).searchParams.get("nonce")!;
+      await panel(`/auth/callback?code=good-code&state=${new URL(login.headers.get("location")!).searchParams.get("state")}`);
+      expect(await json(panel("/api/me"))).toMatchObject({ role: "owner" });
+
+      // The secret stays on the Worker, but an owned hub no longer reads it.
+      jar.clear();
+      idp.email = "bob@agency.test";
+      idp.sub = "u-bob";
+      const again = await panel("/auth/login?setup=chosen-by-the-wizard");
+      idp.nonce = new URL(again.headers.get("location")!).searchParams.get("nonce")!;
+      await panel(`/auth/callback?code=good-code&state=${new URL(again.headers.get("location")!).searchParams.get("state")}`);
+      expect(await json(panel("/api/me"))).toMatchObject({ role: null, admin: false });
+    } finally {
+      delete env.PANEL_SETUP_TOKEN;
+      env.DB = outer;
+    }
+  });
+
   test("nobody signs in until the setup link claims the hub, and it works once", async () => {
     const outer = env.DB;
     env.DB = createD1() as unknown as D1Database;

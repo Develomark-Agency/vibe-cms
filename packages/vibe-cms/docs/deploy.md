@@ -24,6 +24,8 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
    "vars": { "VIBE_ORG": "my-agency.com" }
    ```
 
+   Or leave `VIBE_ORG` out and attach the site afterwards: it logs a claim link, and `vibe-cms admin attach <link>` (or pasting the link in the panel's **Add a site** box) tells it which org it belongs to (`vibe-cms docs cli`).
+
    The site finds the hub through the org's DNS record (see [Orgs](#orgs)) and accepts tokens issued by the org for this site, checked against the hub's keys at `/.well-known/jwks.json`. Who may do what is the site's own roles, edited on its Roles page; the hub assigns them to people per site (`vibe-cms docs permissions`).
 
 5. **Build and deploy.**
@@ -40,7 +42,7 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 
 - `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, its org and hub, a pending org move, and the editor's URL.
 - The editor only opens inside the hub. `https://<site>/_vibe/admin/` on its own links to the site's page in the hub.
-- Add the site to the hub by its URL; the hub checks the site belongs to its org, makes you the site's owner, and writes its starting roles from a template if you pick one. Then give people roles on it under **People and roles**. Running a hub (`apps/panel` in the vibe-cms repository) needs its own D1 database, OIDC client and signing key; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
+- Add the site to the hub by its URL, or paste its claim link if it was deployed without `VIBE_ORG`; the hub checks the site belongs to its org, makes you the site's owner, and writes its starting roles from a template if you pick one. Then give people roles on it under **People and roles**. Running a hub needs its own D1 database, OIDC client and signing key, which `vibe-cms admin deploy` sets up (or by hand: `apps/panel` in the vibe-cms repository); for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
 - Agents connect to the panel's `/mcp`, not to each site (`vibe-cms docs agents`).
 - To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms login <org>` and `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
 
@@ -49,7 +51,7 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 An org is a domain you own that names your agency, like `my-agency.com`. It doesn't have to host anything. Sites trust the org, not the hub's address, so the hub can move without touching any site.
 
 1. **Pick the domain.** Your agency's own domain is fine.
-2. **Deploy the hub** (`apps/panel`) on a custom domain, e.g. `admin.my-agency.com`, with `VIBE_ORG=my-agency.com` and its signing key (`bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY`).
+2. **Deploy the hub.** `bunx vibe-cms admin deploy` walks through it (`vibe-cms docs cli`): the database, sign-in, a custom domain, the signing key and the setup link. By hand, deploy `apps/panel` with `VIBE_ORG=my-agency.com` and its signing key (`bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY`).
 3. **Add a DNS record** that points the org at the hub:
 
    ```

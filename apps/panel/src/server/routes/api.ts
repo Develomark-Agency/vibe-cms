@@ -1,16 +1,17 @@
 import { Hono } from "hono";
 import { and, count, eq, isNotNull } from "drizzle-orm";
-import { fetchDescriptor, normalizeBranding, PanelError, type PanelSite } from "vibe-cms/panel";
+import { normalizeBranding, PanelError } from "vibe-cms/panel";
 import { hubRecordName, resolveHub } from "vibe-cms/org";
 import * as t from "../schema.ts";
-import { codeFor, hubOrg, hubOrigin, moveSites, rememberOrigin, syncOrg } from "../hub.ts";
+import { codeFor, hubOrigin, moveSites, rememberOrigin, syncOrg } from "../hub.ts";
 import { listAgents, oauth, resourceUrl, revokeGrant } from "../oauth.ts";
 import { currentSession, db, siteById } from "../shared.ts";
 import type { AppEnv } from "../context.ts";
 import { backups } from "./backups.ts";
-import { siteBody } from "./validate.ts";
+import { attachBody, siteBody } from "./validate.ts";
+import { addSite, attachSite } from "../sites.ts";
 import { access } from "./access.ts";
-import { announceSetup, applyTemplate, defaultTemplateId, grantAdder, hasOwner, hubAccess, requirePermission, requireVisibleSite, visibleSiteIds } from "../access.ts";
+import { announceSetup, hasOwner, hubAccess, requireVisibleSite, visibleSiteIds } from "../access.ts";
 
 /**
  * The panel's JSON API, mounted at `/api`: sites, the org, connected agents, backups. One chain, so
@@ -73,27 +74,14 @@ export const api = new Hono<AppEnv>()
   })
 
   .post("/sites", siteBody, async c => {
-    const env = c.env;
-    const me = await hubAccess(env, c.get("session"));
-    requirePermission(me, "addSites");
-    const input = c.req.valid("json");
-    const descriptor = await fetchDescriptor(input.url);
-    // The site has to have agreed to trust this hub's org.
-    const org = hubOrg(env);
-    if(descriptor.org !== org) {
-      throw new PanelError(422, descriptor.org ? `This site trusts another org (${descriptor.org}), not ${org}` : `This site doesn't belong to an org yet. Set VIBE_ORG=${org} in its environment and deploy it.`);
-    }
-    const site: PanelSite = { id: descriptor.id, url: new URL(descriptor.admin).origin, name: descriptor.name, admin: descriptor.admin, favorite: false };
-    const [existing] = await db(env).select({ id: t.sites.id }).from(t.sites).where(eq(t.sites.id, site.id));
-    await db(env).insert(t.sites)
-      .values({ id: site.id, url: site.url, name: site.name, admin: site.admin, org: descriptor.org, added_by: me.sub, added_at: Date.now() })
-      .onConflictDoUpdate({ target: t.sites.id, set: { url: site.url, name: site.name, admin: site.admin, org: descriptor.org } });
-    if(existing) return c.json({ ...site, template: null }, 201);
-    // Whoever adds a site manages it; then its starting roles, copied from a template.
-    await grantAdder(env, site.id, me.sub);
-    const templateId = input.templateId === undefined ? await defaultTemplateId(env) : input.templateId;
-    const template = templateId ? await applyTemplate(env, site, templateId, me.sub) : null;
-    return c.json({ ...site, template }, 201);
+    const me = await hubAccess(c.env, c.get("session"));
+    return c.json(await addSite(c.env, me, c.req.valid("json")), 201);
+  })
+
+  // A site that logged a claim link: the panel tells it which org it belongs to, then adds it.
+  .post("/sites/attach", attachBody, async c => {
+    const me = await hubAccess(c.env, c.get("session"));
+    return c.json(await attachSite(c.env, me, c.req.valid("json")), 201);
   })
 
   .delete("/sites/:id", async c => {

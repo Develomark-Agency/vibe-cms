@@ -318,20 +318,52 @@ async function runLogin({ org: value, site, prefix, headless }: { org?: string, 
       return;
     }
     if(!value) throw new Error("Name your org (vibe-cms login my-agency.com), or a site with --site");
-    const org = normalizeOrg(value);
-    if(!org) throw new Error(`Expected a domain like my-agency.com or a URL, got "${value}"`);
-    const origin = await resolveHub(org);
-    const root = projectRoot();
-    secrets();
-    const meta = await metadata(origin);
-    const login = {
-      hub: origin,
-      ...await authorize(origin, meta, `vibe-cms CLI (${path.basename(root)})`, headless ? { redirectUri: `${origin}/oauth/code` } : undefined),
-      ...(org === origin ? {} : { org })
-    };
-    await saveLogin(root, login);
-    console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged in")} to ${styleText("cyan", origin)} for ${styleText("dim", root)}\n`);
+    const login = await loginToHub(value, headless);
+    console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged in")} to ${styleText("cyan", login.hub)} for ${styleText("dim", projectRoot())}\n`);
   }
+}
+
+/** Logs this project in to an org's hub (a domain, or the hub's URL) and keeps the login in the keychain. */
+async function loginToHub(value: string, headless: boolean): Promise<Login> {
+  const org = normalizeOrg(value);
+  if(!org) throw new Error(`Expected a domain like my-agency.com or a URL, got "${value}"`);
+  const origin = await resolveHub(org);
+  const root = projectRoot();
+  secrets();
+  const meta = await metadata(origin);
+  const login: Login = {
+    hub: origin,
+    ...await authorize(origin, meta, `vibe-cms CLI (${path.basename(root)})`, headless ? { redirectUri: `${origin}/oauth/code` } : undefined),
+    ...(org === origin ? {} : { org })
+  };
+  await saveLogin(root, login);
+  return login;
+}
+
+/**
+ * A POST to this project's hub as the logged-in user, with a refreshed access token. Without a login it
+ * logs in first when `hub` says where, which is how a brand new project gets its first one.
+ */
+export async function hubPost(pathname: string, body: unknown, options: { hub?: string, headless?: boolean } = {}): Promise<Response> {
+  secrets();
+  const root = projectRoot();
+  let login = await readLogin(root);
+  if(!login) {
+    if(!options.hub) throw new Error("Not logged in to a hub for this project. Pass --hub <your org's domain or the panel's URL>, or run vibe-cms login first.");
+    login = await loginToHub(options.hub, options.headless ?? false);
+  }
+  for(const retry of [false, true]) {
+    login = await accessToken(root, login, retry);
+    const response = await fetch(`${login.hub}${pathname}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${login.accessToken}` },
+      body: JSON.stringify(body)
+    }).catch(() => null);
+    if(!response) throw new Error(`Couldn't reach ${login.hub}`);
+    if(response.status === 401 && !retry) continue;
+    return response;
+  }
+  throw new Error(`${login.hub} keeps refusing this login. Run vibe-cms login again.`);
 }
 
 export const logoutCommand = command({

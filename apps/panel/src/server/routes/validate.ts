@@ -21,6 +21,14 @@ export const siteBody = validator("json", value => {
   return { url: text(input, "url"), templateId: templateId as string | null | undefined };
 });
 
+/** `{ link }`: a site's claim link, to attach it. */
+export const attachBody = validator("json", value => {
+  const input = object(value);
+  const templateId = input.templateId;
+  if(templateId !== undefined && templateId !== null && typeof templateId !== "string") throw new PanelError(400, "Expected templateId");
+  return { link: text(input, "link"), templateId: templateId as string | null | undefined };
+});
+
 /** `{ snapshot }`: the snapshot to restore. */
 export const restoreBody = validator("json", value => ({ snapshot: text(object(value), "snapshot") }));
 

@@ -59,7 +59,7 @@ import { ConfirmHost } from "../admin/app/confirm.tsx";
 import { BackupDefaultsDialog, BackupsDialog } from "./backups.tsx";
 import { go, listeners, useRoute } from "./location.ts";
 import { AccessPage, PeoplePage, SetupCard, TemplatePicker, TemplatesPage } from "./access.tsx";
-import { DEFAULT_BRANDING, fetchDescriptor, PanelError, type PanelBackend, type PanelBranding, type PanelSite, type PanelUser } from "./backend.ts";
+import { DEFAULT_BRANDING, fetchDescriptor, isClaimLink, PanelError, type PanelBackend, type PanelBranding, type PanelSite, type PanelUser } from "./backend.ts";
 
 /**
  * Clicks inside the framed editor never reach this document, so popups can't
@@ -777,15 +777,17 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
 function useAddSite(backend: PanelBackend, url: string, onAdded: () => void, templateId?: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => backend.addSite(url.trim(), templateId),
+    // A claim link attaches a site that doesn't belong to an org yet; an address adds one that does.
+    mutationFn: () => (isClaimLink(url) && backend.attachSite ? backend.attachSite(url.trim(), templateId) : backend.addSite(url.trim(), templateId)),
     onSuccess: site => {
       void queryClient.invalidateQueries({ queryKey: ["sites"] });
       onAdded();
       const template = site.template;
-      if(template?.state === "pending") toast.warning(`Added ${site.name}. Its starting roles will be written once the site can be reached.`);
-      else if(template?.state === "failed") toast.error(`Added ${site.name}, but its starting roles couldn't be written: ${template.error}`);
-      else if(template?.skipped.length) toast.success(`Added ${site.name}. ${template.skipped.length} ${template.skipped.length === 1 ? "rule" : "rules"} skipped: ${template.skipped.join("; ")}`);
-      else toast.success(`Added ${site.name}`);
+      const verb = isClaimLink(url) ? "Attached" : "Added";
+      if(template?.state === "pending") toast.warning(`${verb} ${site.name}. Its starting roles will be written once the site can be reached.`);
+      else if(template?.state === "failed") toast.error(`${verb} ${site.name}, but its starting roles couldn't be written: ${template.error}`);
+      else if(template?.skipped.length) toast.success(`${verb} ${site.name}. ${template.skipped.length} ${template.skipped.length === 1 ? "rule" : "rules"} skipped: ${template.skipped.join("; ")}`);
+      else toast.success(`${verb} ${site.name}`);
       go(`/s/${encodeURIComponent(site.id)}/`);
     }
   });
@@ -803,13 +805,13 @@ function AddSiteForm({ backend }: { backend: PanelBackend }) {
     }} className="grid gap-3">
       <div className="space-y-1">
         <h2 className="text-sm font-medium">Add a site</h2>
-        <p className="text-sm text-muted-foreground">{hosted ? "Paste the address of a site running vibe-cms." : "Enter the address of a running dev server."}</p>
+        <p className="text-sm text-muted-foreground">{hosted ? "Paste the address of a site running vibe-cms, or the claim link a new site logged." : "Enter the address of a running dev server."}</p>
       </div>
       <div className="flex gap-2">
         <Input value={url} onChange={e => {
           setUrl(e.target.value);
           if(add.isError) add.reset();
-        }} placeholder={hosted ? "client-site.com" : "localhost:4321"} aria-label="Site URL" className="min-w-0 flex-1" />
+        }} placeholder={hosted ? "client-site.com or its claim link" : "localhost:4321"} aria-label="Site URL or claim link" className="min-w-0 flex-1" />
         <Button type="submit" disabled={!url.trim() || add.isPending}>{add.isPending && <Spinner />} Add</Button>
       </div>
       {add.isError && <p className="text-sm text-destructive">{(add.error as Error).message}</p>}
@@ -838,16 +840,17 @@ function AddSiteDialog({ backend, open, onOpenChange }: { backend: PanelBackend,
           <DialogHeader>
             <DialogTitle>Add a site</DialogTitle>
             <DialogDescription>
-              Paste the site's address. The panel reads its <code className="text-xs">/.well-known/vibe-cms</code> and checks that it trusts this panel's identity provider.
+              Paste the site's address. The panel reads its <code className="text-xs">/.well-known/vibe-cms</code> and checks that it trusts this panel's org.
+              {backend.attachSite && <> A site deployed without an org logs a claim link instead (ending in <code className="text-xs">#claim=…</code>): paste that, and the panel attaches it to your org.</>}
             </DialogDescription>
           </DialogHeader>
-          <Input autoFocus value={url} onChange={e => setUrl(e.target.value)} placeholder="https://client-site.com" aria-label="Site URL" />
+          <Input autoFocus value={url} onChange={e => setUrl(e.target.value)} placeholder={backend.attachSite ? "https://client-site.com, or its claim link" : "https://client-site.com"} aria-label="Site URL or claim link" />
           {add.isError && <p className="text-sm text-destructive">{(add.error as Error).message}</p>}
           {backend.hub && open && <TemplatePicker hub={backend.hub} value={templateId} onChange={setTemplateId} />}
           {backend.hub && <p className="text-xs text-muted-foreground">You'll own this site and can change its roles at any time. The panel's admins can too.</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={!url.trim() || add.isPending}>{add.isPending && <Spinner />} Add site</Button>
+            <Button type="submit" disabled={!url.trim() || add.isPending}>{add.isPending && <Spinner />} {isClaimLink(url) ? "Attach site" : "Add site"}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -4,6 +4,8 @@ The agency's hub: sign in once, pick a site, edit it. Sites trust your org (a do
 
 ## Deploy
 
+The easy way: `bunx vibe-cms admin deploy` asks for everything below, runs and shows each `wrangler` command, and prints the setup link at the end (`vibe-cms docs cli`). The steps by hand:
+
 1. Register an OIDC client with your identity provider. Redirect URI: `https://<panel host>/auth/callback`.
 2. Create the database: `bunx wrangler d1 create vibe-panel`, and put its ID in `wrangler.jsonc`.
 3. Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `PANEL_ALLOW` in `wrangler.jsonc`, and the secret with `bunx wrangler secret put OIDC_CLIENT_SECRET`.
@@ -12,7 +14,7 @@ The agency's hub: sign in once, pick a site, edit it. Sites trust your org (a do
 6. For backups, create the archive with `bunx wrangler r2 bucket create vibe-panel-backups`. The bucket binding and the cron trigger are already in `wrangler.jsonc`; remove them to run without backups.
 7. Optionally white-label it with `PANEL_NAME`, `PANEL_ACCENT` (`#rrggbb`) and `PANEL_ICON` (an image URL).
 8. `bun run deploy`.
-9. **Claim it.** Until the panel has an owner, nobody can sign in. It prints a one-time setup link to its logs (`bunx wrangler tail`): `https://<panel host>/#setup=…`. Open it and sign in: you become the panel's owner, and the link stops working.
+9. **Claim it.** Until the panel has an owner, nobody can sign in. It prints a one-time setup link to its logs (`bunx wrangler tail`): `https://<panel host>/#setup=…`. (With `vibe-cms admin deploy`, the link is printed by the wizard, using a `PANEL_SETUP_TOKEN` secret.) Open it and sign in: you become the panel's owner, and the link stops working.
 
 Sites that should appear in this panel are deployed with the same org:
 
@@ -20,6 +22,8 @@ Sites that should appear in this panel are deployed with the same org:
 // the site's wrangler.jsonc
 "vars": { "VIBE_ORG": "my-agency.com" }
 ```
+
+A site deployed without `VIBE_ORG` logs a one-time claim link instead (`https://<site>/_vibe/admin/#claim=…`). Paste it in the panel's **Add a site** box, or run `vibe-cms admin attach "<link>"`: the panel tells the site its org (the site checks the `_vibe-hub` record and the hub's keys first) and adds it. Over HTTP that is `POST /api/sites/attach` (signed in) or `POST /site-attach` (OAuth bearer, not for read-only connections) with `{ "link", "templateId"? }`; agents use the `sites_attach` MCP tool.
 
 The panel signs each signed-in user a short-lived token for one site at a time, issued by the org, with the identity provider's claims (email, name, …) passed through. Sites check it against the panel's keys at `/.well-known/jwks.json` and resolve the role names against their own stored roles. Site editors only open inside the panel; the panel's own URLs (`/s/<site id>/…`) are the links to bookmark.
 

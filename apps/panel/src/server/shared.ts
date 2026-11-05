@@ -31,7 +31,11 @@ export interface Env {
   /** Secret: the hub's private ES256 signing key as JWK JSON, from `bunx vibe-cms hub keygen`. */
   HUB_SIGNING_KEY?: string,
   /** Identity provider claim whose values sites receive as `roles`, e.g. `groups`. */
-  OIDC_ROLES_CLAIM?: string
+  OIDC_ROLES_CLAIM?: string,
+  /** Secret: a one-time setup token chosen by `vibe-cms admin deploy`, so the setup link can be shown at deploy time. */
+  PANEL_SETUP_TOKEN?: string,
+  /** Marks a Worker as a vibe-cms panel, so `vibe-cms admin deploy` can find it on Cloudflare. */
+  VIBE_PANEL?: string
 }
 
 export type { SessionRow } from "./schema.ts";

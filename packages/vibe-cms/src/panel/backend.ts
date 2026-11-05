@@ -239,6 +239,11 @@ export interface PanelBackend {
   sites(): Promise<PanelSite[]>,
   /** `templateId`: undefined for the panel's default template, null for none. Hosted panels only. */
   addSite(url: string, templateId?: string | null): Promise<PanelSite & { template?: TemplateResult | null }>,
+  /**
+   * Attaches a site from its claim link: the panel tells the site which org it belongs to, then adds it.
+   * Hosted panels only; `templateId` as for `addSite`.
+   */
+  attachSite?(link: string, templateId?: string | null): Promise<PanelSite & { template?: TemplateResult | null }>,
   removeSite(id: string): Promise<void>,
   setFavorite(id: string, favorite: boolean): Promise<void>,
   /** A one-time code for the framed site. `null` when the site signs in by itself (development). */
@@ -264,6 +269,11 @@ export class PanelError extends Error {
 }
 
 /** The origin of a typed site address. Without a scheme it's HTTPS, except for local dev servers, which only speak HTTP. */
+/** Whether what was pasted is a site's claim link (`…#claim=…`) and not just its address. */
+export function isClaimLink(text: string): boolean {
+  return /#claim=\S+/.test(text.trim());
+}
+
 export function siteOrigin(url: string): string {
   url = url.trim();
   if(/^https?:\/\//.test(url)) return new URL(url).origin;

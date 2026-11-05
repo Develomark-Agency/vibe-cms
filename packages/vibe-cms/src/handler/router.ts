@@ -3,7 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import { HttpError } from "../config.ts";
 import { fromHttpError } from "../actions/define.ts";
 import { errorBody, isActionError } from "../actions/errors.ts";
-import { announceSetup } from "./signin.ts";
+import { announceClaim, announceSetup } from "./signin.ts";
 import { Engine } from "./engine.ts";
 import { errorResponse, json, readSession, type SiteEnv } from "./http.ts";
 import { actions } from "./routes/actions.ts";
@@ -82,7 +82,10 @@ export function createRouter(prefix: string) {
     const { state, dev, ctx } = c.env;
     const url = new URL(c.req.url);
     // A site nobody owns yet prints its one-time setup link to its logs.
-    if(!dev) ctx.waitUntil?.(announceSetup(state, url.origin).catch(() => {}));
+    if(!dev) {
+      ctx.waitUntil?.(announceSetup(state, url.origin).catch(() => {}));
+      ctx.waitUntil?.(announceClaim(state, url.origin).catch(() => {}));
+    }
     const session = await readSession(c.req.raw, c.env);
     c.set("session", session);
     c.set("engine", new Engine(state, { origin: url.origin, session, trusted: false, ctx }));

@@ -60,8 +60,12 @@ async function meta(env: Env, key: string): Promise<string | null> {
   return row?.value ?? null;
 }
 
-/** The one-time setup token, made on first use and kept until someone claims the hub. */
+/**
+ * The one-time setup token, kept until someone claims the hub. `PANEL_SETUP_TOKEN` (a secret set by
+ * `vibe-cms admin deploy`, which shows the link itself) wins; otherwise one is made on first use.
+ */
 export async function setupToken(env: Env): Promise<string> {
+  if(env.PANEL_SETUP_TOKEN) return env.PANEL_SETUP_TOKEN;
   const existing = await meta(env, "setup_token");
   if(existing) return existing;
   await db(env).insert(t.panelMeta).values({ key: "setup_token", value: randomString(24) }).onConflictDoNothing();
@@ -90,8 +94,8 @@ export async function announceSetup(env: Env, origin: string) {
 export async function admitSignIn(env: Env, identity: { sub: string, email?: string, emailVerified: boolean, name?: string }, setup: string | null): Promise<string | null> {
   const orm = db(env);
   if(!await hasOwner(env)) {
-    const stored = await meta(env, "setup_token");
-    if(!setup || !stored || setup !== stored) return "This panel has no owner yet. Open the setup link from the panel's logs to claim it.";
+    const stored = env.PANEL_SETUP_TOKEN || await meta(env, "setup_token");
+    if(!setup || !stored || setup !== stored) return "This panel has no owner yet. Open the setup link to claim it (`vibe-cms admin deploy` prints it; otherwise it's in the panel's logs).";
     const [existing] = await orm.select().from(t.members).where(eq(t.members.sub, identity.sub));
     if(existing) await orm.update(t.members).set({ role: OWNER }).where(eq(t.members.id, existing.id));
     else await orm.insert(t.members).values({ id: newId("mem"), sub: identity.sub, email: identity.email?.toLowerCase() ?? null, name: identity.name ?? null, role: OWNER, added_by: "setup", added_at: now() });

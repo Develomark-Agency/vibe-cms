@@ -46,6 +46,7 @@ export function hostedBackend(base = location.origin, fetch?: typeof globalThis.
     },
     sites: async () => read(await api.sites.$get()),
     addSite: async (url, templateId) => read(await api.sites.$post({ json: { url, templateId } })),
+    attachSite: async (link, templateId) => read(await api.sites.attach.$post({ json: { link, templateId } })),
     removeSite: async id => done(await api.sites[":id"].$delete({ param: { id } })),
     setFavorite: async (id, favorite) => {
       const route = api.sites[":id"].favorite;

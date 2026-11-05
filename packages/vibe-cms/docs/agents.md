@@ -58,7 +58,7 @@ Add the site's own MCP endpoint, `https://<site>/_vibe/api/mcp`, as a custom con
 
 ## Tools
 
-One tool per action, with dots as underscores: `documents.publish` → `documents_publish`. The panel adds `sites_list` and a `site` argument on every tool.
+One tool per action, with dots as underscores: `documents.publish` → `documents_publish`. The panel adds `sites_list` and a `site` argument on every tool, and `sites_attach` (a newly deployed site's claim link in, the site added to the panel out; not offered to read-only connections, `vibe-cms docs cli`).
 
 | Group | Tools |
 |---|---|

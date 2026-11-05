@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { handle } from "../src/server/index.ts";
 import { pkceChallenge, randomString } from "../src/server/oidc.ts";
-import { assignRoles, env, idp, installMock, ISSUER, panel, removeMock, signIn, siteId } from "./mock.ts";
+import { assignRoles, env, idp, installMock, ISSUER, panel, removeMock, signIn, site, siteId, sites } from "./mock.ts";
 
 beforeAll(installMock);
 afterAll(removeMock);
@@ -272,5 +272,71 @@ describe("the CLI: site tokens and revocation", () => {
     expect((await tokens({ grant_type: "refresh_token", refresh_token: refresh, client_id: client.client_id })).status).toBe(400);
     // Unknown tokens get the same answer, so revocation can't probe for valid ones.
     expect((await panel("/oauth/revoke", form({ token: "vpr_nope", client_id: client.client_id }))).status).toBe(200);
+  });
+});
+
+describe("attaching a site", () => {
+  let n = 0;
+
+  // Leave the shared panel as it was: other files list its sites.
+  afterAll(async () => {
+    await (env.DB as unknown as { prepare(sql: string): { run(): Promise<unknown> } }).prepare("DELETE FROM sites WHERE url LIKE 'https://agent-claim-%'").run();
+  });
+
+  /** A site deployed without an org, and the claim link it logs. */
+  async function unclaimed() {
+    const origin = `https://agent-claim-${++n}.test`;
+    sites[origin] = site("");
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...args: unknown[]) => void lines.push(args.join(" "));
+    try {
+      await sites[origin]!(new Request(`${origin}/_vibe/api/info`));
+      await new Promise(resolve => setTimeout(resolve, 30));
+    } finally {
+      console.log = log;
+    }
+    return { origin, link: lines.join("\n").match(/(https:\/\/\S+#claim=\S+)/)![1]! };
+  }
+
+  test("an agent attaches a site from its claim link, with the user's permission to add sites", async () => {
+    const { access_token: token } = await connectWithTokens();
+    const { tools } = (await mcp(token, "tools/list")).body.result;
+    expect(tools.find((t: { name: string }) => t.name === "sites_attach").inputSchema.required).toEqual(["link"]);
+
+    const { origin, link } = await unclaimed();
+    const attached = await call(token, "sites_attach", { link });
+    expect(attached.isError).toBeUndefined();
+    expect(attached.structuredContent.site).toMatchObject({ url: origin });
+    expect((await call(token, "sites_list")).structuredContent.sites.map((s: { url: string }) => s.url)).toContain(origin);
+
+    const other = await unclaimed();
+    const bad = await call(token, "sites_attach", { link: `${other.origin}/_vibe/admin/#claim=nope` });
+    expect(bad.isError).toBe(true);
+    expect((await call(token, "sites_attach", {})).isError).toBe(true);
+  });
+
+  test("a read-only agent can't attach, and doesn't see the tool", async () => {
+    const { access_token: token } = await connectWithTokens({ readOnly: true });
+    expect((await mcp(token, "tools/list")).body.result.tools.map((t: { name: string }) => t.name)).not.toContain("sites_attach");
+    const { link } = await unclaimed();
+    expect((await call(token, "sites_attach", { link })).isError).toBe(true);
+  });
+
+  test("the CLI's route attaches with an access token, and refuses read-only ones", async () => {
+    function post(token: string, body: unknown) {
+      return panel("/site-attach", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    }
+    const { link, origin } = await unclaimed();
+    expect((await post("vpa_nope", { link })).status).toBe(401);
+
+    const readOnly = await connectWithTokens({ readOnly: true });
+    expect((await post(readOnly.access_token, { link })).status).toBe(403);
+
+    const { access_token: token } = await connectWithTokens();
+    expect((await post(token, {})).status).toBe(400);
+    const response = await post(token, { link });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ url: origin });
   });
 });

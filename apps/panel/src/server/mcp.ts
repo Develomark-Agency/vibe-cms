@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import * as t from "./schema.ts";
 import { db, siteById, type Env, type SessionRow } from "./shared.ts";
 import { hubAccess, visibleSiteIds } from "./access.ts";
+import { attachSite } from "./sites.ts";
 
 /**
  * The panel's MCP server: the same tools as a site's own, plus `sites_list`, with
@@ -13,7 +14,7 @@ import { hubAccess, visibleSiteIds } from "./access.ts";
  * session the panel gets for the agent's user, so the site decides what's allowed.
  */
 
-const INSTRUCTIONS = `Content management for the sites in this agency panel. Call sites_list first; every other tool takes the site's id as \`site\`.
+const INSTRUCTIONS = `Content management for the sites in this agency panel. To add a newly deployed site, call sites_attach with the claim link the site logged. Otherwise call sites_list first; every other tool takes the site's id as \`site\`.
 Each call runs on that site as the signed-in user, and each site decides what they may do there: a Forbidden error means this user can't, not that the tool is broken. Read-only connections only have read-only tools.
 
 ${CONTENT_INSTRUCTIONS}`;
@@ -28,6 +29,19 @@ const sitesList: McpTool = {
   annotations: { title: "List sites", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
 };
 
+const sitesAttach: McpTool = {
+  name: "sites_attach",
+  title: "Attach a site",
+  description: "Add a newly deployed site to this panel. Pass its claim link: the address, ending in #claim=…, that the site logs once when it's deployed without an org. The panel tells the site which org it belongs to, adds it, and makes the user its owner. Needs the user's permission to add sites; a link works once.",
+  inputSchema: {
+    type: "object",
+    properties: { link: { type: "string", description: "The site's claim link, like https://client.com/_vibe/admin/#claim=…" } },
+    required: ["link"],
+    additionalProperties: false
+  },
+  annotations: { title: "Attach a site", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+};
+
 let siteTools: McpTool[] | undefined;
 
 function allTools(): McpTool[] {
@@ -38,7 +52,7 @@ function allTools(): McpTool[] {
       required: ["site", ...((schema.required as string[] | undefined) ?? [])]
     })
   });
-  return [sitesList, ...siteTools];
+  return [sitesList, sitesAttach, ...siteTools];
 }
 
 /** A site session for the agent's (or CLI's) user: cached, or from the same handoff the editor uses. */
@@ -99,6 +113,20 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
         const results = await db(env).select({ id: t.sites.id, name: t.sites.name, url: t.sites.url }).from(t.sites).orderBy(t.sites.name);
         const visible = await visibleForGrant(env, grant);
         return textResult({ sites: results.filter(site => visible === "all" || visible.has(site.id)) });
+      }
+      if(name === sitesAttach.name) {
+        if(readOnly) return errorResult({ code: "FORBIDDEN", message: "This agent was connected read-only. Reconnect it to make changes." });
+        if(typeof args.link !== "string" || !args.link) return errorResult({ code: "BAD_REQUEST", message: "link: pass the site's claim link, ending in #claim=…" });
+        const [session] = await db(env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
+        if(!session) return errorResult({ code: "UNAUTHORIZED", message: "This connection's sign-in is gone. Reconnect the agent." });
+        try {
+          const site = await attachSite(env, await hubAccess(env, session), { link: args.link });
+          return textResult({ site: { id: site.id, name: site.name, url: site.url }, template: site.template });
+        } catch (error) {
+          if(!(error instanceof PanelError)) throw error;
+          const code = error.status === 403 ? "FORBIDDEN" : error.status === 400 || error.status === 401 || error.status === 409 || error.status === 422 ? "BAD_REQUEST" : "SERVICE_UNAVAILABLE";
+          return errorResult({ code, message: error.message });
+        }
       }
       const action = actions.get(name);
       if(!action) return null;

@@ -2,11 +2,12 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { styleText } from "node:util";
-import { command, extendType, number, option, optional, run, string, subcommands } from "cmd-ts";
+import { command, extendType, flag, number, option, optional, positional, run, string, subcommands } from "cmd-ts";
 import pkg from "../../package.json" with { type: "json" };
 import { actionCommands } from "./actions.ts";
 import { exportCommand, importCommand } from "./backups.ts";
 import { docs } from "./docs.ts";
+import { locateBundle } from "./deploy/bundle.ts";
 import { hubCommand } from "./hub.ts";
 import { loginCommand, logoutCommand } from "./login.ts";
 
@@ -39,8 +40,8 @@ const Path = extendType(string, { displayName: "path", from: async value => valu
 
 const brand = `${styleText(["bold", "magenta"], "◆")} ${styleText("bold", "vibe-cms")} ${styleText("dim", `v${pkg.version}`)}`;
 
-const admin = command({
-  name: "admin",
+const adminDev = command({
+  name: "dev",
   description: "Run a local panel for development sites",
   args: {
     port: option({ long: "port", short: "p", type: Port, defaultValue: () => 5173, defaultValueIsSerializable: true, description: "Port to serve the panel on" }),
@@ -81,6 +82,58 @@ const admin = command({
   }
 });
 
+const adminDeploy = command({
+  name: "deploy",
+  description: "Deploy the agency panel to Cloudflare, step by step",
+  args: {},
+  examples: [{ description: "Set up, redeploy or find a panel", command: "vibe-cms admin deploy" }],
+  async handler() {
+    const [{ runWizard }, { clackPrompts }, { wranglerExec }] = await Promise.all([import("./deploy/wizard.ts"), import("./deploy/prompts.ts"), import("./deploy/cloudflare.ts")]);
+    try {
+      if(!process.stdin.isTTY) throw new Error("`vibe-cms admin deploy` asks questions, so it needs a terminal.");
+      await runWizard({
+        exec: wranglerExec,
+        prompts: clackPrompts,
+        bundle: await locateBundle(),
+        setAccount: id => { process.env.CLOUDFLARE_ACCOUNT_ID = id; }
+      });
+    } catch (error) {
+      console.error(`\n${styleText("red", "✗")} ${(error as Error).message}\n`);
+      process.exit(1);
+    }
+  }
+});
+
+const adminAttach = command({
+  name: "attach",
+  description: "Attach a newly deployed site to your org's panel, from the claim link it logged",
+  args: {
+    link: positional({ type: string, displayName: "claim link", description: "The link a site without VIBE_ORG logs, ending in #claim=…" }),
+    hub: option({ long: "hub", type: optional(Text), description: "Your org's domain or the panel's URL, to log in first when this project has no login" }),
+    template: option({ long: "template", type: optional(Text), description: "A role template's id, or \"none\" for no starting roles (default: the panel's default)" }),
+    headless: flag({ long: "headless", description: "Don't open a browser to log in: print a link, and paste the code it shows" })
+  },
+  examples: [
+    { description: "Attach a site once it's deployed", command: "vibe-cms admin attach \"https://client.com/_vibe/admin/#claim=…\"" },
+    { description: "…logging in to the panel on the way", command: "vibe-cms admin attach \"…\" --hub my-agency.com" }
+  ],
+  async handler({ link, hub, template, headless }) {
+    try {
+      const { attach, describeAttached } = await import("./attach.ts");
+      console.log(`\n${describeAttached(await attach({ link, hub, template, headless })).join("\n")}\n`);
+    } catch (error) {
+      console.error(`\n${styleText("red", "✗")} ${(error as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  }
+});
+
+const admin = subcommands({
+  name: "admin",
+  description: "The agency panel: run one locally, or deploy it",
+  cmds: { dev: adminDev, deploy: adminDeploy, attach: adminAttach }
+});
+
 const buildAdminCommand = command({
   name: "build-admin",
   description: "Build the site's editor without the Vite plugin",
@@ -115,4 +168,12 @@ await run(subcommands({
     import: importCommand,
     ...actionCommands()
   }
-}), process.argv.slice(2));
+}), adminArgs(process.argv.slice(2)));
+
+/** `vibe-cms admin --site …` is the local panel, as it was before `admin deploy`: it means `admin dev`. */
+function adminArgs(args: string[]) {
+  if(args[0] !== "admin") return args;
+  const next = args[1];
+  if(next === "dev" || next === "deploy" || next === "attach" || next === "--help" || next === "-h" || next === "help") return args;
+  return ["admin", "dev", ...args.slice(1)];
+}

@@ -34,10 +34,13 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "devices": "bun scripts/devices.ts",
+    "build:panel": "bun scripts/build-panel.ts",
+    "prepack": "bun scripts/build-panel.ts",
     "db:generate": "bun scripts/db-generate.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
+    "@clack/prompts": "^1.8.1",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.12",

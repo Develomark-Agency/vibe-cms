@@ -139,6 +139,21 @@ export async function announceSetup(state: State, origin: string) {
   console.log(`vibe-cms: nobody can sign in to this site yet. Open this link to become its owner (it works once):\n  ${origin}${state.prefix}/admin/#setup=${token}`);
 }
 
+/** Sites (by database) whose claim link this isolate already printed. */
+const claimAnnounced = new WeakSet<object>();
+
+/**
+ * The other way a new site gets going: a hub claims it for its org, with this link (`vibe-cms admin
+ * attach`, or the panel's "Add a site"). Printed beside the setup link, while nobody owns the site.
+ */
+export async function announceClaim(state: State, origin: string) {
+  if(claimAnnounced.has(state.db) || !await needsSetup(state)) return;
+  claimAnnounced.add(state.db);
+  const token = await state.org.claimToken();
+  if(!token) return;
+  console.log(`vibe-cms: to attach this site to your org's panel instead, add it there with this claim link (\`vibe-cms admin attach\`, or the panel's "Add a site"); it works once:\n  ${origin}${state.prefix}/admin/#claim=${token}`);
+}
+
 async function checkSetupToken(state: State, token: string | undefined) {
   const stored = await getMeta(state.db, "setup_token");
   if(!token || !stored || token !== stored || !await needsSetup(state)) throw new HttpError(403, "This setup link was already used, or isn't this site's");
