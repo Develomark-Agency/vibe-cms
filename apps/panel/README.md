@@ -4,7 +4,7 @@ The agency's hub: sign in once, pick a site, edit it. Sites trust your org (a do
 
 ## Deploy
 
-The easy way: `bunx vibe-cms admin deploy` asks for everything below, runs and shows each `wrangler` command, and prints the setup link at the end (`vibe-cms docs cli`). The steps by hand:
+The full walkthrough, from deploying the panel to attaching a site and moving content, is `vibe-cms docs deploy`. The easy way: `bunx vibe-cms admin deploy` asks for everything below, runs and shows each `wrangler` command, and prints the setup link at the end (`vibe-cms docs cli`). The steps by hand:
 
 1. Register an OIDC client with your identity provider. Redirect URI: `https://<panel host>/auth/callback`.
 2. Create the database: `bunx wrangler d1 create vibe-panel`, and put its ID in `wrangler.jsonc`.

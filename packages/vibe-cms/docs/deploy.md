@@ -1,89 +1,203 @@
 # Deploying
 
-Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep the cron trigger, build so the editor is in the static assets, and set up sign-in through your org's hub (`VIBE_ORG`).
+Deploy an agency panel and a site on Cloudflare, connect them, and move your content across: what you need first, then the steps in order.
 
-## Checklist
+## What you're setting up
 
-1. **Create the resources.** vibe-cms never provisions anything.
+- **The panel** is one Worker per agency. People sign in to it with your identity provider, and every site's editor opens inside it.
+- **A site** is one Worker per client: the site itself, its content API and the editor's files.
+- **The org** is the name sites use to find their panel. It's either a domain you own (one DNS record points it at the panel) or simply the panel's own address.
 
-   ```sh
-   bunx wrangler d1 create my-site
-   bunx wrangler r2 bucket create my-site-media
-   ```
+## Before you start
 
-   Put the database ID in `wrangler.jsonc` (`d1_databases[].database_id`) and the bucket name in `r2_buckets[].bucket_name`. The CMS creates its tables (all prefixed `vibe_`, so it can share a database with your own tables) on the first request each isolate handles.
+- **Bun.** The CLI runs on Bun: `bunx vibe-cms …`.
+- **A Cloudflare login for `wrangler`.** Run `bunx wrangler login` as the account that will own the panel and the sites (`bunx wrangler whoami` shows who you are). It needs permission for Workers, D1 and R2. To let the wizard attach a custom domain or add the org's DNS record it also needs DNS access on that domain's zone; without it, the wizard prints what to add instead. With several accounts, the wizard asks which one (or set `CLOUDFLARE_ACCOUNT_ID`).
+- **An OpenID Connect identity provider.** People sign in to the panel through it. Any OIDC provider works: Google, Okta, Microsoft Entra, Auth0, Keycloak, Clerk, Cloudflare Access. In the provider, create an application with a client secret, then note three things:
+  - the **issuer** (or the provider's discovery URL, which is fine to paste),
+  - the **client ID**,
+  - the **client secret**.
 
-2. **Keep the cron trigger.** `"triggers": { "crons": ["* * * * *"] }` runs scheduled publishing and unpublishing, and purges the trash after `trash.days` (default 30). Without it, schedules never fire and the trash is only emptied by hand. Plugin cron jobs run only on schedules that are also triggers on the Worker.
+  Register this redirect URI on the application: `https://<panel address>/auth/callback`. The wizard shows it before it deploys anything. Two providers need specific settings:
+  - **Clerk:** add an OAuth application (Dashboard → OAuth applications) with the scopes `openid`, `email`, `profile` and `offline_access`, and copy its client secret when it's shown, because Clerk shows it once. The issuer is your Clerk frontend URL.
+  - **Cloudflare Access:** add a SaaS application of type OIDC (Zero Trust → Access controls → Applications) with the scopes `openid`, `email` and `profile`, plus `groups` if group names should decide who signs in. The issuer is `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client id>`. Access policies decide who can sign in.
+- **Decide on addresses.** Both are optional, and the defaults need nothing:
+  - *The panel's address.* Its `workers.dev` address works as it is. A custom domain (like `admin.my-agency.com`) is attached for you when the domain's zone is in the same Cloudflare account.
+  - *The org.* A domain you own (like `my-agency.com`) gets one DNS record and lets the panel move addresses later without touching sites. With no domain, leave the org empty and the panel's own address is the org. A site then trusts that exact address, so moving to a domain later means moving every site to the new org (see [Orgs](#orgs)).
 
-3. **Keep the assets binding.** The editor is static files under `/_vibe/admin/`. The CMS serves its deep links (`/_vibe/admin/documents/post`) through the assets binding: `env.ASSETS`, or whatever you pass as `bindings.assets`.
+## 1. Deploy the panel
 
-4. **Set up sign-in.** Production sites have no dev sign-in and no password form: everyone signs in to your org's hub (the agency panel), which signs them in with your identity provider and vouches for them to each site. Set one environment variable on the site, the same for every site in the org:
-
-   ```jsonc
-   // wrangler.jsonc
-   "vars": { "VIBE_ORG": "my-agency.com" }
-   ```
-
-   Or leave `VIBE_ORG` out and attach the site afterwards: it logs a claim link, and `vibe-cms admin attach <link>` (or pasting the link in the panel's **Add a site** box) tells it which org it belongs to (`vibe-cms docs cli`).
-
-   The site finds the hub through the org's DNS record (see [Orgs](#orgs)) and accepts tokens issued by the org for this site, checked against the hub's keys at `/.well-known/jwks.json`. Who may do what is the site's own roles, edited on its Roles page; the hub assigns them to people per site (`vibe-cms docs permissions`).
-
-5. **Build and deploy.**
-
-   | Setup | Build | Deploy |
-   |---|---|---|
-   | Vite + `@cloudflare/vite-plugin` | `vite build` | `wrangler deploy` |
-   | Astro + `@astrojs/cloudflare` | `astro build` | `wrangler deploy` |
-   | Wrangler only | `vibe-cms build-admin --out <assets dir>/_vibe/admin` | `wrangler deploy` |
-
-   The Vite builds write `.wrangler/deploy/config.json`, which points `wrangler deploy` at the generated `dist/…/wrangler.json`. Check that the client output contains `_vibe/admin/index.html` before deploying.
-
-## Panel and site on workers.dev
-
-Cloudflare doesn't let one Worker call another Worker's `workers.dev` address in the same account, and the panel and its sites call each other (the panel reads the site's descriptor and signs people in to it; the site fetches the panel's keys). Without help, adding a site fails with Cloudflare's error 1042, and the panel says so. Add the `global_fetch_strictly_public` compatibility flag to **both** the panel and the site and deploy them again:
-
-```jsonc
-// wrangler.jsonc (Alchemy: compatibilityFlags)
-"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"]
+```sh
+bunx vibe-cms admin deploy
 ```
 
-`vibe-cms admin deploy` sets it on the panel. Custom domains (not routes) and service bindings avoid the limit too, so a site on its own domain doesn't need it.
+It runs from any directory and needs no project. It asks everything first, shows a plan, and creates nothing until you confirm. In order, it asks for:
 
-## After deploying
+1. The Cloudflare account, if you have several.
+2. Whether to set up a new panel, reuse one saved on this machine, or search Cloudflare for one.
+3. The Worker name, the D1 database name, and whether to keep daily backups in an R2 bucket (and its name). Names that already exist can be reused.
+4. Your org's domain, or nothing to use the panel's own address.
+5. The identity provider: its issuer (checked against its discovery document straight away), the client ID, who may sign in (email domains or group names; empty means whoever the provider lets in), and, if the provider doesn't say whether emails are verified, whether to trust them.
+6. A custom domain for the panel, or nothing for its `workers.dev` address.
+7. The client secret, stored as a Worker secret and never printed.
 
-- `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, its org and hub, a pending org move, and the editor's URL.
-- The editor only opens inside the hub. `https://<site>/_vibe/admin/` on its own links to the site's page in the hub.
-- Add the site to the hub by its URL, or paste its claim link if it was deployed without `VIBE_ORG`; the hub checks the site belongs to its org, makes you the site's owner, and writes its starting roles from a template if you pick one. Then give people roles on it under **People and roles**. Running a hub needs its own D1 database, OIDC client and signing key, which `vibe-cms admin deploy` sets up (or by hand: `apps/panel` in the vibe-cms repository); for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
-- Agents connect to the panel's `/mcp`, not to each site (`vibe-cms docs agents`).
-- To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms login <org>` and `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
+The plan lists the redirect URI to register at your provider and the `wrangler` commands that create the database and bucket. Confirm it, and the wizard creates them, deploys the panel, and prints:
 
-## Orgs
+- the **redirect URI** to register at the provider (if you haven't yet),
+- the org's **DNS record**, added for you when the domain's zone is in the account (an existing record is never overwritten), or printed to add yourself,
+- the **setup link**.
 
-An org is a domain you own that names your agency, like `my-agency.com`. It doesn't have to host anything. Sites trust the org, not the hub's address, so the hub can move without touching any site.
+The panel's settings are saved, without secrets, in `~/.config/vibe-cms/panels/<account id>/<worker name>/`. Run the wizard again whenever you want to redeploy after upgrading `vibe-cms`, change settings, replace the signing key or the client secret, or find a panel you deployed from another machine.
 
-1. **Pick the domain.** Your agency's own domain is fine.
-2. **Deploy the hub.** `bunx vibe-cms admin deploy` walks through it (`vibe-cms docs cli`): the database, sign-in, a custom domain, the signing key and the setup link. By hand, deploy `apps/panel` with `VIBE_ORG=my-agency.com` and its signing key (`bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY`).
-3. **Add a DNS record** that points the org at the hub:
+### Sign in for the first time
 
-   ```
-   _vibe-hub.my-agency.com   TXT   "https://admin.my-agency.com"
-   ```
+Open the setup link in a browser and sign in with your identity provider. You become the panel's owner, and the link stops working. Until someone claims the panel nobody can sign in, so keep the link to yourself. If you lose it before using it, run the wizard again for a new one.
 
-4. **Deploy sites with `VIBE_ORG=my-agency.com`**, then add each to the hub by its URL. The hub checks the site's descriptor names its org.
+Then use **People** to invite others: add an email address and a role, and it becomes theirs when they sign in with that verified email. The panel sends no email, so tell them its address yourself.
 
-To **move the hub to another address**: add the new redirect URL at your identity provider, deploy the hub there, and change the TXT record. Sites look the record up again within its TTL (one minute to an hour); nothing is redeployed.
+## 2. Deploy a site
 
-To **rename the org** (say `my-agency.com` → `new-agency.com`): add `_vibe-hub.new-agency.com`, set the hub's `VIBE_ORG` to the new name and deploy it. The hub remembers its previous orgs and asks each site to move, signed with its key. A site checks the move against the hub's keys it already has, and that the new org's hub serves the same key, then waits **72 hours** (`VIBE_ORG_MOVE_DELAY`, in seconds, changes it) before it trusts the new org. Meanwhile its editor shows a banner, anyone who can change the site's settings can cancel the move, and the hub keeps signing for the old org so nobody is locked out. A real rename can wait three days; a move nobody asked for gets noticed.
+A site is your own Worker with the CMS in it (`vibe-cms docs getting-started`). To deploy it on Cloudflare it needs:
 
-`VIBE_ORG` and accepted moves:
+| Needs | Why |
+|---|---|
+| A D1 database, bound however you like (`DB` in the examples) | Content. The CMS creates its tables (prefixed `vibe_`) on the first request. |
+| An R2 bucket (`MEDIA`) | Media files. Optional if the site has no media. |
+| The cron trigger `"* * * * *"` | Scheduled publishing, and emptying the trash after 30 days. |
+| The assets binding with the editor built into it | The editor is static files under `/_vibe/admin/`. |
+| The `nodejs_compat` compatibility flag | Required by the CMS. |
+| The `global_fetch_strictly_public` compatibility flag | Needed when the panel and the site are both on `workers.dev` in one Cloudflare account, so they can call each other. Harmless otherwise. |
+| `dev` off | It is unless you set it. A site with `dev: true` lets anyone sign in with every permission. |
 
-- Once a site accepts a move, the stored org wins over the unchanged `VIBE_ORG` value, so you can update the variable at your next deploy.
-- Changing `VIBE_ORG` to a different value puts the variable back in charge, as does `VIBE_ORG_RESET=1`.
-- Removing `VIBE_ORG` keeps the stored org, with a warning, rather than leaving the site with no sign-in. Set `VIBE_ORG_RESET=1` without `VIBE_ORG` to sign the site out of its org.
-- `VIBE_ORG` may also be a URL (`https://admin.my-agency.com`): the hub is then that address, with no DNS lookup. That suits local setups, but the address can't change without redeploying sites.
+With a `wrangler.jsonc`:
 
-Each site keeps a copy of its hub's public keys in its database, so it keeps checking tokens, and moves, when the DNS record or the old hub is already gone. Its org history (set, move requested, cancelled, moved) is at `GET /_vibe/api/org` for users who can change the site's settings.
+```jsonc
+{
+  "main": "src/worker.ts",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": { "directory": "dist/client", "binding": "ASSETS", "not_found_handling": "none" },
+  "d1_databases": [{ "binding": "DB", "database_name": "my-site", "database_id": "…" }],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "my-site-media" }],
+  "triggers": { "crons": ["* * * * *"] }
+}
+```
 
-## Environments
+Create the resources first: `bunx wrangler d1 create my-site` and `bunx wrangler r2 bucket create my-site-media`, then put the database ID and bucket name in the config.
 
-`dev` must be false in production, and is unless you set it: it defaults to `import.meta.env.DEV`, which Vite sets only for `vite dev`. A site with `dev: true` lets anyone sign in with every permission.
+With Alchemy (`examples/blog`), declare the same things in `alchemy.run.ts`; Alchemy creates the resources and writes `wrangler.jsonc`:
+
+```ts
+export const site = await Website("site", {
+  compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
+  bindings: { DB: db, MEDIA: media },
+  crons: ["* * * * *"]
+  // …
+});
+```
+
+Build and deploy:
+
+| Setup | Build | Deploy |
+|---|---|---|
+| Alchemy | included | `bun run deploy` |
+| Vite + `@cloudflare/vite-plugin` | `vite build` | `wrangler deploy` |
+| Astro + `@astrojs/cloudflare` | `astro build` | `wrangler deploy` |
+| Wrangler only | `vibe-cms build-admin --out <assets dir>/_vibe/admin` | `wrangler deploy` |
+
+Check that the client output contains `_vibe/admin/index.html` before deploying. Note the site's address when it's done.
+
+## 3. Connect the site to the panel
+
+Either set the site's org when you deploy it, or deploy without and attach it afterwards. Attaching is the easiest, because you never type the org.
+
+### Attach it with a claim link
+
+A site deployed without `VIBE_ORG` prints a one-time **claim link** to its logs the first time it gets a request: `https://<site>/_vibe/admin/#claim=…`. Hand it to the panel in any of these ways:
+
+- Paste it into the panel's **Add a site** box.
+- Run `bunx vibe-cms admin attach "<link>" --hub <org or panel address>`.
+- Skip the link and give the CLI the site's address. It asks the site for its link and reads it for you through your `wrangler` login:
+
+  ```sh
+  bunx vibe-cms admin attach https://<site> --hub <org or panel address>
+  ```
+
+  To only print the link, run `bunx vibe-cms admin claim-link https://<site>`.
+
+The panel tells the site which org it belongs to and adds it, and you become its owner. The site first checks that the org's panel is reachable and serving keys, so with a DNS-based org the `_vibe-hub` record has to exist. A refused claim leaves the link working: fix the problem and try again.
+
+### Or set the org when you deploy
+
+Put the org on the site (`"vars": { "VIBE_ORG": "my-agency.com" }`, or the panel's address if that's your org), deploy it, and add it to the panel by its address (**Add a site**, then the URL). The panel checks the site names its org and makes you the owner.
+
+### After it's added
+
+Choose a role template when you add a site if you have one (the panel's default otherwise). Give people roles on the site under **People and roles**. The site's editor opens from the panel. Agents connect to the panel's `/mcp` address, not to each site (`vibe-cms docs agents`).
+
+## 4. Move your content
+
+To bring content you made locally onto the deployed site, export it and import it:
+
+```sh
+bunx vibe-cms export --site http://localhost:1337
+bunx vibe-cms login <org or panel address>
+bunx vibe-cms import <file>.vibe --site https://<site> --dry-run
+bunx vibe-cms import <file>.vibe --site https://<site>
+```
+
+- `export` writes a `.vibe` file (content, versions and media) into the current folder. Run it with the local dev server up, using its address and port.
+- `login` signs the CLI in through the panel in your browser. A login belongs to the project folder it's run in (the nearest folder with a `vibe-cms.config.*`).
+- `--dry-run` lists what would change, table by table, and changes nothing.
+- `import` replaces the site's content and media with the file's. It asks you to confirm, saves the site as it was to a `-before-import` file next to the file you imported, then uploads (several files at once) and verifies. Each step reports how long it took.
+- The warning "The snapshot is of another site" is expected when importing a local export: the deployed site keeps its own identity, its place in the panel, and everyone's sign-in.
+- You need `backups` permission on the site. The person who attached it is its owner, which has every permission.
+- An import that stops part-way can be run again, and it resumes.
+
+For copies kept outside Cloudflare on a schedule, use the panel's backups (`vibe-cms docs backups`).
+
+## Reference
+
+### Custom domains
+
+A custom domain for the panel or a site is a setting, not a change to how they work. A panel's domain is attached by the wizard when its zone is in the same account; otherwise it deploys to `workers.dev`, and you attach the domain in Cloudflare (**Workers → Settings → Domains & Routes**) or add a CNAME at your DNS host, then run the wizard again. For a site, add a Workers custom domain in the same place, or a `routes` entry with `custom_domain: true` in `wrangler.jsonc`. A site on its own domain doesn't need `global_fetch_strictly_public`.
+
+### Orgs
+
+An org is the name a site and its panel agree on. A **domain** (like `my-agency.com`) is found through a DNS record, so the panel can move without redeploying sites:
+
+```
+_vibe-hub.my-agency.com   TXT   "https://admin.my-agency.com"
+```
+
+The wizard adds it when the domain's zone is in the account. An org can also be a **URL** (the panel's own address): sites then use that address directly, with no DNS record, and it can't change without moving sites to a new org.
+
+To **move the panel to another address** (with a domain org): register the new redirect URI at your identity provider, deploy the panel there, and change the TXT record. Sites look the record up again within its TTL (a minute to an hour); nothing is redeployed.
+
+To **rename the org** (say `my-agency.com` → `new-agency.com`): add `_vibe-hub.new-agency.com`, then run the wizard, choose **Change settings**, and enter the new org. The panel remembers its previous orgs and asks each site to move, signed with its key. A site waits **72 hours** (`VIBE_ORG_MOVE_DELAY`, in seconds, changes it) before it trusts the new org. Meanwhile its editor shows a banner, anyone who can change the site's settings can cancel the move, and the panel keeps signing for the old org so nobody is locked out.
+
+Also good to know:
+
+- A site stores its org in its database. Once it has one, removing `VIBE_ORG` keeps it (with a warning), and changing `VIBE_ORG` to a different value replaces it. `VIBE_ORG_RESET=1` makes the variable the authority again, or with no `VIBE_ORG` signs the site out of its org.
+- Each site keeps a copy of its panel's public keys, so it keeps working when the DNS record or the old panel is already gone.
+- A site's org history (set, claimed, move requested, cancelled, moved) is at `GET /_vibe/api/org` for users who can change the site's settings.
+
+### Environments
+
+`dev` must be false in production. It defaults to `import.meta.env.DEV`, which Vite sets only for `vite dev`. Without Vite, set it from a variable that you never set in production (`vibe-cms docs wrangler`).
+
+### The site's own descriptor
+
+`https://<site>/.well-known/vibe-cms` describes the site to panels: its id, name, accent, icon, its org and the panel's address, a pending org move, and the editor's URL. The editor only opens inside the panel; `https://<site>/_vibe/admin/` on its own links to the site's page there.
+
+## When something goes wrong
+
+| You see | What to do |
+|---|---|
+| The identity provider says the redirect URI doesn't match | Register `https://<panel address>/auth/callback` on the provider's application, exactly (scheme, host and path). |
+| "This panel has no owner yet" | Open the setup link. If you've lost it, run `bunx vibe-cms admin deploy` again for a new one. |
+| "Your account isn't allowed to use this panel" | The provider's account doesn't match **who may sign in**. A domain rule needs a verified email: if the provider doesn't say, trust its emails in the wizard. |
+| People are asked to sign in again after about an hour | The provider isn't giving refresh tokens. Enable `offline_access` on its application (the wizard warns when a provider doesn't offer it). |
+| Adding a site says Cloudflare won't let one Worker call another | Add `global_fetch_strictly_public` to both the panel and the site, and deploy both again. |
+| The claim link isn't in the logs | Run `bunx vibe-cms admin claim-link https://<site>`. A site deployed before claim links existed needs redeploying first. |
+| Attaching says the org's record or keys can't be found | Add the `_vibe-hub` TXT record (or use the panel's own address as the org), then try the same link again. |
+| The site says it already belongs to an org, or has its own owners | It's already attached, or someone claimed it with its setup link. Add it by its address instead. |
+| `import` fails the check | The file has content types the site doesn't define: deploy the site code that defines them first (`vibe-cms docs schema-changes`). |

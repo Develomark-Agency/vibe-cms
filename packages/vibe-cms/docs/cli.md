@@ -71,41 +71,28 @@ Site logins belong to the site, not the project, and also live in the keychain. 
 
 ## Attaching a site
 
-A site deployed without `VIBE_ORG` doesn't belong to an org yet. When the editor first calls it, it logs a one-time claim link beside its setup link (`wrangler tail`, or the dashboard's logs):
-
-```
-https://client.com/_vibe/admin/#claim=…
-```
-
-Give that link to the panel and the panel tells the site which org it belongs to, then adds it and makes you its owner:
+`vibe-cms admin attach <claim link or site address>` gives a newly deployed site (one without `VIBE_ORG`) to your org's panel: the panel tells the site its org, adds it, and makes you its owner. `vibe-cms admin claim-link <site address>` only prints the link. The walkthrough is in `vibe-cms docs deploy`; the details are here.
 
 ```sh
 bunx vibe-cms admin attach "https://client.com/_vibe/admin/#claim=…"
-bunx vibe-cms admin attach "…" --hub my-agency.com   # logs in to the panel first, for a project with no login
+bunx vibe-cms admin attach https://client.com --hub my-agency.com   # fetches the link first, logs in to the panel if needed
+bunx vibe-cms admin claim-link https://client.com
 ```
 
-**Missed the link?** A new site prints its links to its logs on the first request it gets, and again whenever something asks it to (`POST /_vibe/api/org/announce`, at most once a second; the reply says whether it printed, never what the links are). You don't have to watch the logs: give the command the site's address and it fetches the link for you.
-
-```sh
-bunx vibe-cms admin claim-link https://client.com         # print the link
-bunx vibe-cms admin attach https://client.com --hub my-agency.com   # or fetch it and attach in one go
-```
-
-It asks the site to make its claim token, finds the site's database through your `wrangler` login (a `workers.dev` address names the Worker, a custom domain is looked up among the account's), and reads the token from it. `--worker <name>` says which Worker if the address doesn't tell, and `--binding <name>` which D1 binding the CMS uses when the Worker has several and none is called `DB`. It needs `wrangler` logged in to the account that owns the site, and a site new enough to have the announce route: redeploy older ones.
-
-`--template <id|none>` picks the site's starting roles (the panel's default otherwise) and `--headless` logs in without a browser. You need to be allowed to add sites on the panel. The same thing is in the panel's **Add a site** box (paste the link instead of the address), the panel's `POST /api/sites/attach` (signed in) and `POST /site-attach` (an OAuth access token, as the CLI sends), and the `sites_attach` MCP tool for agents (not offered to read-only connections).
-
-The site checks the link's token, and that the org's `_vibe-hub` DNS record points at a hub serving keys, before it accepts the org. A refused claim (a typo, a DNS record not added yet) leaves the link working. The link stops working once it succeeds, or once someone becomes the site's own owner with its setup link. A site that has a `VIBE_ORG` needs no claim: add it by its address.
+- A claim link ends in `#claim=…`. A site prints it to its logs on its first request, and again whenever `POST /_vibe/api/org/announce` is called (at most once a second; the reply says whether it printed, never what the link is).
+- Given a plain address, the CLI asks the site to make its claim token, finds the site's database through your `wrangler` login (a `workers.dev` address names the Worker, a custom domain is looked up among the account's), and reads the token from it. `--worker <name>` says which Worker when the address doesn't tell, and `--binding <name>` which D1 binding the CMS uses when the Worker has several and none is called `DB`. It needs `wrangler` logged in to the account that owns the site.
+- `--hub <org or panel address>` logs the project in to the panel first when it has no login. `--template <id|none>` picks the site's starting roles (the panel's default otherwise). `--headless` logs in without a browser.
+- You need permission to add sites on the panel. The same thing is the panel's **Add a site** box (paste the link instead of the address), `POST /api/sites/attach` (signed in), `POST /site-attach` (an OAuth access token, as the CLI sends), and the `sites_attach` MCP tool for agents (not offered to read-only connections).
+- The site checks the link's token, and that the org's panel is reachable and serves keys, before it accepts the org. A refused claim leaves the link working. The link stops working once it succeeds, or once someone becomes the site's own owner with its setup link. A site that has a `VIBE_ORG` needs no claim: add it by its address.
 
 ## Deploying the panel
 
-`bunx vibe-cms admin deploy` runs from any directory, with no project. It uses your `wrangler` login, asks all its questions first, then shows the plan (including the `wrangler` commands that create the database and bucket) and creates nothing until you confirm it at the end.
+`bunx vibe-cms admin deploy` is a wizard that sets up, redeploys, reconfigures or finds a panel on Cloudflare. It runs from any directory, uses your `wrangler` login, asks all its questions first, and creates nothing until you confirm the plan. The walkthrough, with what it asks and prints, is in `vibe-cms docs deploy`; the details are here.
 
-1. It starts from who `wrangler` is logged in as (offering `wrangler login` if nobody is) and which account to use.
-2. It lists the panels it knows on this machine and offers to set up a new one, or to search the account's Workers for one. Panels the wizard deploys carry a `VIBE_PANEL` variable, which is how the search finds them; a search recovers their variables and bindings, but not their secrets, which Cloudflare never returns.
-3. A new panel asks for the Worker name, a D1 database, an optional R2 bucket for backups, your org's domain (optional: leave it empty and the panel's own address is the org, with no DNS record), the OIDC issuer (checked against the provider's discovery document before anything is deployed, with advice for Clerk and Cloudflare Access), client ID, who may sign in (optional), whether to trust the provider's emails when it doesn't say they're verified, and the OIDC client secret. Any OpenID Connect provider works; `apps/panel/README.md` lists the variables and the Clerk and Access setups. Resources that already exist can be reused; new ones are only named here. A custom hostname is optional: answer no and the panel uses its `workers.dev` address (the org's DNS record points there, and you can add a domain later). If you do give one, it is attached as a Worker custom domain when its zone is on the account; otherwise the wizard deploys to `workers.dev` and says what to add at your DNS host.
-4. After you confirm the plan it creates the missing resources, then deploys the panel bundled in the package, uploading the secrets (the client secret, a new signing key, a one-time setup token) with the deploy, then prints the OIDC redirect URI to register, offers to add the org's `_vibe-hub` TXT record when its zone is on the account (an existing record is never overwritten), and prints the setup link that makes you the panel's owner.
-
-Each panel's settings are kept, without secrets, in `~/.config/vibe-cms/panels/<account id>/<worker name>/` (`$XDG_CONFIG_HOME`, or `$VIBE_CMS_HOME` for the whole thing): `hub.json`, and the `wrangler.jsonc` written from it on every run. Run the wizard again to redeploy after upgrading `vibe-cms`, change settings, replace the signing key or the client secret, or forget a panel on this machine. The wizard needs a terminal, and reads the account's resources through `wrangler`'s own login; if that login can't read them, it says so and skips the checks.
+- It lists the panels saved on this machine and can search the account's Workers for others. Panels it deploys carry a `VIBE_PANEL` variable, which is how a search finds them. A search recovers their variables and bindings, but not their secrets, which Cloudflare never returns.
+- A panel's settings are kept, without secrets, in `~/.config/vibe-cms/panels/<account id>/<worker name>/` (`$XDG_CONFIG_HOME`, or `$VIBE_CMS_HOME` for the whole thing): `hub.json`, and the `wrangler.jsonc` written from it on every run. The panel code is bundled in the `vibe-cms` package, so updating the package and running the wizard again upgrades the panel.
+- From the menu you can redeploy, change settings, replace the signing key or the OIDC client secret, or forget a panel on this machine.
+- Any OpenID Connect provider works; `apps/panel/README.md` lists the variables and has setups for Clerk and Cloudflare Access.
+- The wizard needs a terminal. It reads the account's resources through `wrangler`'s own login; if that login can't read them, it says so and skips the checks.
 
 Running a hub by hand: `bunx vibe-cms hub keygen` prints a new signing key for its `HUB_SIGNING_KEY` secret (`bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY`). For agents working on deployed sites, use the hub's MCP server instead (`vibe-cms docs agents`).
