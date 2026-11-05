@@ -151,6 +151,20 @@ describe("attaching a site", () => {
     expect(await descriptor(origin)).toMatchObject({ org: null });
   });
 
+  test("an org that is the panel's own address works with no DNS record at all", async () => {
+    const { origin, link } = await deployUnclaimed();
+    env.VIBE_ORG = HUB;
+    delete txt["_vibe-hub.agency.test"];
+    clearOrgCache();
+    const response = await attach({ link });
+    expect(response.status).toBe(201);
+    const added = await response.json() as { id: string };
+    expect(await descriptor(origin)).toMatchObject({ org: HUB });
+    const code = await (await panel(`/api/sites/${added.id}/code`, { method: "POST" })).json() as { code: string };
+    const exchange = await sites[origin]!(new Request(`${origin}/_vibe/api/session`, { method: "POST", body: JSON.stringify({ code: code.code }) }));
+    expect(exchange.status).toBe(200);
+  });
+
   test("a site that already trusts another org isn't claimed", async () => {
     const response = await attach({ link: "https://site-b.test/_vibe/admin/#claim=whatever" });
     expect(response.status).toBe(422);

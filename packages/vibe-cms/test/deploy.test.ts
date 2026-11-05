@@ -305,6 +305,31 @@ describe("admin deploy", () => {
     expect(ui.left()).toEqual([]);
   });
 
+  test("an org domain isn't required: the panel's own address is the org, and no DNS record is offered", async () => {
+    const root = await tmpRoot();
+    const wrangler = fakeWrangler();
+    const { api, txt } = fakeApi();
+    const ui = script([
+      [/No panels found/, "new"],
+      [/Worker name/, "vibe-panel"],
+      [/D1 database name/, "vibe-panel"],
+      [/Keep daily backups/, false],
+      [/org's domain/, ""],
+      [/OIDC issuer/, "https://idp.test"],
+      [/OIDC client ID/, "client"],
+      [/Who may sign in/, "agency.test"],
+      [/Serve the panel from your own domain/, false],
+      [/OIDC client secret/, "s3cret"],
+      [/deploy now/i, true]
+    ]);
+    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
+    const saved = (await readHub(root, "acc1", "vibe-panel"))!;
+    expect(saved.vars.VIBE_ORG).toBe("https://vibe-panel.agency.workers.dev");
+    expect(txt).toEqual([]);
+    expect(ui.log.join("\n")).toContain("no DNS record is needed");
+    expect(ui.left()).toEqual([]);
+  });
+
   test("an unreachable domain deploys to workers.dev and says what to do", async () => {
     const root = await tmpRoot();
     const wrangler = fakeWrangler();

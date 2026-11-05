@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { normalizeOrg } from "../../org/index.ts";
 import { generateHubKey } from "../hub.ts";
 import { authHeaders, CloudflareApi, findPanels, show, whoami, type Account, type Exec } from "./cloudflare.ts";
 import { Cancelled, type Prompts } from "./prompts.ts";
@@ -248,20 +249,21 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
 
   // The org and sign-in.
   vars.VIBE_ORG = (await p.text({
-    message: "Your org's domain (a domain you own, like my-agency.com)",
+    message: "Your org's domain, a domain you own like my-agency.com (empty: the panel's own address is the org)",
     initial: vars.VIBE_ORG,
-    validate: v => HOSTNAME.test(v.trim()) ? undefined : "Enter a domain like my-agency.com"
-  })).trim().toLowerCase();
+    validate: v => !v.trim() || normalizeOrg(v) ? undefined : "Enter a domain like my-agency.com, or leave it empty"
+  })).trim();
+  vars.VIBE_ORG = vars.VIBE_ORG ? normalizeOrg(vars.VIBE_ORG)! : "";
   p.note("Register an OIDC client with your identity provider (Google, Okta, Entra…) with this redirect URI, once the panel's address is known. It's shown again at the end.", "Sign-in");
   vars.OIDC_ISSUER = (await p.text({ message: "OIDC issuer URL", initial: vars.OIDC_ISSUER ?? "https://accounts.google.com", validate: v => URL.canParse(v) ? undefined : "Enter a URL" })).trim();
   vars.OIDC_CLIENT_ID = (await p.text({ message: "OIDC client ID", initial: vars.OIDC_CLIENT_ID, validate: required("The client ID") })).trim();
-  vars.PANEL_ALLOW = (await p.text({ message: "Who may sign in: email domains or group names, comma-separated", initial: vars.PANEL_ALLOW ?? vars.VIBE_ORG, validate: required("This") })).trim();
+  vars.PANEL_ALLOW = (await p.text({ message: "Who may sign in: email domains or group names, comma-separated", initial: vars.PANEL_ALLOW ?? (vars.VIBE_ORG.includes("://") ? undefined : vars.VIBE_ORG || undefined), validate: required("This") })).trim();
 
   // The address: the Worker's own, or a custom domain.
   let domain = current?.domain ?? null;
   const wantsDomain = await p.confirm({ message: domain ? `Keep serving the panel from ${domain}?` : "Serve the panel from your own domain (like admin.my-agency.com)? No keeps its workers.dev address; you can add a domain later", initial: Boolean(domain) });
   if(wantsDomain) {
-    domain = (await p.text({ message: "Panel hostname", initial: domain ?? `admin.${vars.VIBE_ORG}`, validate: v => HOSTNAME.test(v.trim()) ? undefined : "Enter a hostname like admin.my-agency.com" })).trim().toLowerCase();
+    domain = (await p.text({ message: "Panel hostname", initial: domain ?? (vars.VIBE_ORG && !vars.VIBE_ORG.includes("://") ? `admin.${vars.VIBE_ORG}` : undefined), validate: v => HOSTNAME.test(v.trim()) ? undefined : "Enter a hostname like admin.my-agency.com" })).trim().toLowerCase();
     const zone = api ? await api.zoneFor(account.id, domain).catch(() => null) : null;
     if(zone) p.info(`${zone.name} is on this Cloudflare account, so deploying attaches ${domain} as a Worker custom domain: Cloudflare adds the DNS record and certificate.`);
     else {
@@ -277,6 +279,15 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
     domain = null;
   }
   if(domain) delete vars.PANEL_URL;
+
+  // No org domain: the panel's own address is the org. Sites trust that address directly, with no DNS record.
+  if(!vars.VIBE_ORG) {
+    const sub = domain || !api ? null : await api.subdomain(account.id).catch(() => null);
+    const address = domain ? `https://${domain}` : sub ? `https://${name}.${sub}.workers.dev` : null;
+    if(!address) throw new Error("Without an org domain the panel's own address is the org, and that address isn't known yet (this account has no workers.dev subdomain, or it couldn't be read). Give an org domain, or enable workers.dev for the account first.");
+    vars.VIBE_ORG = address;
+    p.info(`The org is the panel's address, ${address}. Sites trust it directly, so there's no DNS record to add. Moving to a domain later means moving sites to the new org.`);
+  }
 
   return { record: { version: 1, accountId: account.id, accountName: account.name, name, database, backups, vars, domain, url: current?.url, secrets: current?.secrets }, create };
 }
@@ -390,10 +401,11 @@ async function finish(deps: WizardDeps, record: HubRecord, url: string | undefin
   p.note(`Register this at your identity provider if you haven't (the same issuer and client ID you entered):\n\n  ${base}/auth/callback`, "Redirect URI");
 
   const org = record.vars.VIBE_ORG!;
+  const orgIsAddress = org.includes("://");
   const txtName = `_vibe-hub.${org}`;
   const txtValue = base;
-  let dnsDone = false;
-  if(api) {
+  let dnsDone = orgIsAddress;
+  if(api && !orgIsAddress) {
     const zone = await api.zoneFor(record.accountId, org).catch(() => null);
     if(zone) {
       const records = await api.txtRecords(zone.id, txtName).catch(() => []);
@@ -410,7 +422,8 @@ async function finish(deps: WizardDeps, record: HubRecord, url: string | undefin
       }
     }
   }
-  if(!dnsDone) p.note(`${txtName}   TXT   "${txtValue}"`, "Add this DNS record so sites can find the panel");
+  if(orgIsAddress) p.success("The org is the panel's own address, so no DNS record is needed.");
+  else if(!dnsDone) p.note(`${txtName}   TXT   "${txtValue}"`, "Add this DNS record so sites can find the panel");
 
   p.note("Sites join with the same org: deploy them with VIBE_ORG set to it, or deploy without and attach each from the claim link it logs (`vibe-cms admin attach`, or the panel's \"Add a site\" box).", "Adding sites");
   if(token) {
