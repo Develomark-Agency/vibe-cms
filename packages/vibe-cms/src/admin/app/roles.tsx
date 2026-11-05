@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDownIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, MoreHorizontalIcon, PlusIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { RoleRules } from "../../config.ts";
 import { describeRules, validRoleName } from "../../roles.ts";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog.tsx";
 import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
@@ -88,7 +89,8 @@ export function RolesPage() {
       </header>
 
       <div className="grid gap-6 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] md:items-start">
-        <nav className="flex flex-col gap-1 rounded-[16px] elevated p-1.5" aria-label="Roles">
+        {/* Stays in view beside a long role, scrolling on its own when there are many roles. */}
+        <nav className="flex flex-col gap-1 rounded-[16px] elevated p-1.5 md:sticky md:top-4 md:max-h-[calc(100dvh-8rem)] md:overflow-y-auto" aria-label="Roles">
           <RoleListItem active={showOwner} title="Owner" description="Everything, plus users and roles" badge="Built in" onClick={() => setSelected("owner")} />
           <div className="mx-3 my-1 border-t" />
           {list.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">No roles yet. {canEdit ? "Start from a preset." : ""}</p>}
@@ -170,6 +172,7 @@ function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boo
   const dirty = JSON.stringify(rules) !== JSON.stringify(editableRules(role.rules));
   const locales = [...(config.locales ?? [])];
   const readOnly = !canEdit;
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const save = useMutation({
     mutationFn: async (next: RoleRules) => read(await siteApi(info.prefix).roles[":name"].$put({ param: { name: role.name }, json: { rules: next } })),
@@ -182,6 +185,7 @@ function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boo
   const remove = useMutation({
     mutationFn: async () => read(await siteApi(info.prefix).roles[":name"].$delete({ param: { name: role.name } })),
     async onSuccess() {
+      setConfirmDelete(false);
       await queryClient.invalidateQueries({ queryKey: ["roles"] });
       onDeleted();
       toast.success(`Deleted ${role.name}`);
@@ -193,9 +197,30 @@ function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boo
 
   return (
     <section className="flex flex-col rounded-[16px] elevated">
-      <div className="flex items-center justify-between gap-3 border-b px-5 py-4">
-        <h2 className="truncate text-lg font-medium">{role.name}</h2>
-        {readOnly && <Badge variant="secondary">Read only</Badge>}
+      {/* The role's actions stay in reach on a long role, and say when there's something to save. */}
+      {/* The name keeps at least 12rem; when it and the actions don't fit on one line, the actions wrap under it. */}
+      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-t-[16px] border-b bg-card/90 px-5 py-3 backdrop-blur-md">
+        <div className="flex min-w-0 grow basis-48 items-center gap-2">
+          <h2 className="min-w-0 truncate text-lg font-medium" title={role.name}>{role.name}</h2>
+          {readOnly && <Badge variant="secondary">Read only</Badge>}
+        </div>
+        {canEdit && (
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {dirty && (
+              <span className="mr-1 flex items-center gap-1.5 text-sm whitespace-nowrap text-amber-700 dark:text-amber-400" role="status">
+                <span className="size-1.5 rounded-full bg-current" /> Unsaved changes
+              </span>
+            )}
+            {dirty && <Button variant="ghost" size="sm" onClick={() => setRules(editableRules(role.rules))}>Discard</Button>}
+            <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate(rules)}>{save.isPending && <Spinner />} Save changes</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="More actions for this role"><MoreHorizontalIcon /></Button>} />
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem variant="destructive" onClick={() => setConfirmDelete(true)}><Trash2Icon /> Delete role…</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
       </div>
 
       {role.stale.length > 0 && (
@@ -212,20 +237,28 @@ function RoleEditor({ role, canEdit, onDeleted }: { role: RoleView, canEdit: boo
 
       <RoleRulesEditor rules={rules} onChange={setRules} types={types} locales={locales} readOnly={readOnly} />
 
-      <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">
-          {role.updatedBy ? `Edited by ${role.updatedBy === "config" ? "the site's config" : role.updatedBy}, ${relative(role.updatedAt)}` : ""}
+      {role.updatedBy && (
+        <p className="border-t px-5 py-4 text-sm text-muted-foreground">
+          Edited by {role.updatedBy === "config" ? "the site's config" : role.updatedBy}, {relative(role.updatedAt)}
         </p>
-        {canEdit && (
-          <div className="flex gap-2">
-            <Button variant="outline" disabled={remove.isPending} onClick={() => {
-              if(confirm(`Delete ${role.name}? People with only this role lose access to the site.`)) remove.mutate();
-            }}>Delete role</Button>
-            {dirty && <Button variant="ghost" onClick={() => setRules(editableRules(role.rules))}>Discard</Button>}
-            <Button disabled={!dirty || save.isPending} onClick={() => save.mutate(rules)}>{save.isPending && <Spinner />} Save changes</Button>
-          </div>
-        )}
-      </div>
+      )}
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {role.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              People whose only role is {role.name} lose access to the site. Anyone given it by {info.signIn === "hub" ? "your org's panel" : "the Users page"} keeps the name, but it gives them nothing until a role with that name exists again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={remove.isPending} onClick={() => remove.mutate()}>
+              {remove.isPending && <Spinner />} Delete role
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }
