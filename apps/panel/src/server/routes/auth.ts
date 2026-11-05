@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
-import { exchangeCode, isAllowed, randomString, verifyIdToken } from "../oidc.ts";
+import { completeClaims, exchangeCode, identityOf, isAllowed, randomString, verifyIdToken } from "../oidc.ts";
 import { completeAuthorization } from "../oauth.ts";
 import { admitSignIn } from "../access.ts";
 import * as t from "../schema.ts";
@@ -34,28 +34,24 @@ async function callback(c: AppContext) {
   let tokens;
   try {
     tokens = await exchangeCode(config, { code, redirectUri: `${url.origin}/auth/callback`, verifier: pending.verifier });
-    claims = await verifyIdToken(config, tokens.id_token, pending.nonce);
+    claims = await completeClaims(config, await verifyIdToken(config, tokens.id_token, pending.nonce), tokens);
   } catch (error) {
     return fail(`Sign-in failed: ${(error as Error).message}`);
   }
-  if(!isAllowed(env.PANEL_ALLOW, claims)) return fail("Your account isn't allowed to use this panel.");
+  if(!isAllowed(env.PANEL_ALLOW, claims, config)) return fail("Your account isn't allowed to use this panel.");
+  const identity = identityOf(config, claims);
   const returnUrl = pending.return_to.startsWith("oauth:") ? null : new URL(pending.return_to, url.origin);
   const setup = returnUrl?.searchParams.get("setup") ?? null;
   returnUrl?.searchParams.delete("setup");
-  const refused = await admitSignIn(env, {
-    sub: `${claims.iss}|${claims.sub}`,
-    email: typeof claims.email === "string" ? claims.email : undefined,
-    emailVerified: claims.email_verified === true,
-    name: typeof claims.name === "string" ? claims.name : undefined
-  }, setup);
+  const refused = await admitSignIn(env, { sub: `${claims.iss}|${claims.sub}`, ...identity }, setup);
   if(refused) return fail(refused);
   if(pending.return_to.startsWith("oauth:")) return completeAuthorization(env, url, pending.return_to.slice(6), claims, tokens);
   const id = randomString();
   await db(env).insert(t.sessions).values({
     id,
     sub: `${claims.iss}|${claims.sub}`,
-    email: typeof claims.email === "string" ? claims.email : null,
-    name: typeof claims.name === "string" ? claims.name : null,
+    email: identity.email ?? null,
+    name: identity.name ?? null,
     id_token: tokens.id_token,
     refresh_token: tokens.refresh_token ?? null,
     expires_at: Date.now() + SESSION_TTL

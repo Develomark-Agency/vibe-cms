@@ -2,10 +2,10 @@ import type { JWTPayload } from "jose";
 import { normalizeBranding } from "vibe-cms/panel";
 import { OAuthServer, type GrantRow } from "vibe-cms/oauth";
 import type { Tokens } from "./oidc.ts";
-import { randomString } from "./oidc.ts";
+import { identityOf, randomString } from "./oidc.ts";
 import { eq } from "drizzle-orm";
 import * as t from "./schema.ts";
-import { beginLogin, currentSession, db, LOGIN_COOKIE, setCookie, type Env } from "./shared.ts";
+import { beginLogin, currentSession, db, LOGIN_COOKIE, oidcConfig, setCookie, type Env } from "./shared.ts";
 
 export { codePage, corsPreflight, SCOPE_READ, SCOPE_WRITE, type GrantRow } from "vibe-cms/oauth";
 
@@ -151,6 +151,7 @@ export async function decide(request: Request, env: Env, url: URL): Promise<Resp
 export async function completeAuthorization(env: Env, url: URL, requestId: string, claims: JWTPayload, tokens: Tokens): Promise<Response> {
   const clearLogin = setCookie(url, LOGIN_COOKIE, "", 0);
   const user = `${claims.iss}|${claims.sub}`;
+  const identity = identityOf(oidcConfig(env), claims);
   const pending = await oauth(env).pending(requestId);
   if(!pending) return withCookie(page(env, "Expired", "<h1>This request expired</h1><p>Start connecting the agent again.</p>", 400), clearLogin);
   // Whoever approved must be whoever signed in for the agent; the core refuses anyone else.
@@ -160,8 +161,8 @@ export async function completeAuthorization(env: Env, url: URL, requestId: strin
     await db(env).insert(t.sessions).values({
       id: sessionId,
       sub: user,
-      email: typeof claims.email === "string" ? claims.email : null,
-      name: typeof claims.name === "string" ? claims.name : null,
+      email: identity.email ?? null,
+      name: identity.name ?? null,
       id_token: tokens.id_token,
       refresh_token: tokens.refresh_token ?? null,
       expires_at: Date.now() + AGENT_SESSION_TTL

@@ -29,10 +29,18 @@ const keys = await generateKeyPair("RS256");
 const jwk = { ...(await exportJWK(keys.publicKey)), kid: "k1", alg: "RS256" };
 
 /** Which user the mock provider "signs in" next, and the nonce from the last authorize URL. */
-export const idp = { email: "jane@agency.test", sub: "u-jane", nonce: "" };
+export const idp: { email: string, sub: string, nonce: string, claims: Record<string, unknown>, refresh: "id_token" | "none" } = {
+  email: "jane@agency.test",
+  sub: "u-jane",
+  nonce: "",
+  /** Overrides of the ID token's claims; `undefined` leaves one out (some providers send no `email_verified`). */
+  claims: {},
+  /** What a refresh returns: a new ID token, or only a new refresh token. */
+  refresh: "id_token"
+};
 
 export async function idToken(claims: Record<string, unknown> = {}) {
-  return new SignJWT({ email: idp.email, email_verified: true, name: "Jane", nonce: idp.nonce, ...claims })
+  return new SignJWT({ email: idp.email, email_verified: true, name: "Jane", nonce: idp.nonce, ...claims, ...idp.claims })
     .setProtectedHeader({ alg: "RS256", kid: "k1" })
     .setIssuer(ISSUER)
     .setAudience(CLIENT_ID)
@@ -87,6 +95,9 @@ export function installMock() {
       if(url.pathname === "/jwks") return Response.json({ keys: [jwk] });
       if(url.pathname === "/token") {
         const body = new URLSearchParams(await request.text());
+        if(body.get("grant_type") === "refresh_token") {
+          return Response.json(idp.refresh === "none" ? { access_token: "at-2", refresh_token: "r2" } : { id_token: await idToken(), refresh_token: "r2" });
+        }
         if(body.get("code") !== "good-code") return Response.json({ error: "invalid_grant" }, { status: 400 });
         expect(body.get("code_verifier")).toBeTruthy();
         return Response.json({ id_token: await idToken(), refresh_token: "r1" });

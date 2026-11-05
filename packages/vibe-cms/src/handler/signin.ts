@@ -9,7 +9,7 @@ import {
 } from "@simplewebauthn/server";
 import { HttpError } from "../config.ts";
 import type { EmailSender } from "./email.ts";
-import { authorizationUrl, exchangeCode, isAllowed, randomString, verifyIdToken, type OidcConfig } from "../oidc/index.ts";
+import { authorizationUrl, completeClaims, exchangeCode, identityOf, isAllowed, randomString, verifyIdToken, type OidcConfig } from "../oidc/index.ts";
 import type { Session } from "../server/index.ts";
 import { identitySession, OWNER } from "./auth.ts";
 import { fullRoleManager, outOfReach } from "./roles.ts";
@@ -39,6 +39,8 @@ export interface SignInEnv {
   OIDC_CLIENT_ID?: string,
   OIDC_CLIENT_SECRET?: string,
   OIDC_SCOPES?: string,
+  /** Any value but "" or "0": trust the emails the identity provider sends, for providers that don't say whether they're verified. */
+  OIDC_TRUST_EMAIL?: string,
   /** Identity provider claim whose values count as roles, e.g. `groups`. */
   OIDC_ROLES_CLAIM?: string,
   /** Who may sign in with the identity provider: email domains or group claim values. Empty allows anyone with a role. */
@@ -46,7 +48,7 @@ export interface SignInEnv {
 }
 
 export interface SignInConfig {
-  oidc: (OidcConfig & { rolesClaim?: string, allow?: string }) | null,
+  oidc: (OidcConfig & { allow?: string }) | null,
   email: EmailSender | undefined
 }
 
@@ -58,7 +60,7 @@ export function signInConfig(env: SignInEnv, email: EmailSender | undefined): Si
   }
   return {
     oidc: issuer && clientId && clientSecret
-      ? { issuer, clientId, clientSecret, scopes: env.OIDC_SCOPES ?? "openid email profile", rolesClaim: env.OIDC_ROLES_CLAIM, allow: env.VIBE_ALLOW }
+      ? { issuer, clientId, clientSecret, scopes: env.OIDC_SCOPES, trustEmail: Boolean(env.OIDC_TRUST_EMAIL && env.OIDC_TRUST_EMAIL !== "0"), rolesClaim: env.OIDC_ROLES_CLAIM, allow: env.VIBE_ALLOW }
       : null,
     email
   };
@@ -521,14 +523,12 @@ export async function oidcCallback(state: State, url: URL, loginCookie: string |
   let claims;
   try {
     const tokens = await exchangeCode(config, { code, redirectUri: `${url.origin}${state.prefix}/api/auth/oidc/callback`, verifier: pending.verifier });
-    claims = await verifyIdToken(config, tokens.id_token, pending.nonce);
+    claims = await completeClaims(config, await verifyIdToken(config, tokens.id_token, pending.nonce), tokens);
   } catch (error) {
     return back({}, `Sign-in failed: ${(error as Error).message}`);
   }
-  if(!isAllowed(config.allow, claims)) return back({}, "Your account isn't allowed to sign in to this site.");
-  const email = typeof claims.email === "string" ? claims.email : undefined;
-  const emailVerified = claims.email_verified === true;
-  const name = typeof claims.name === "string" ? claims.name : undefined;
+  if(!isAllowed(config.allow, claims, config)) return back({}, "Your account isn't allowed to sign in to this site.");
+  const { email, emailVerified, name } = identityOf(config, claims);
   if(pending.setup) {
     if(!email || !emailVerified) return back({}, "The setup link needs an account with a verified email address.");
     try {

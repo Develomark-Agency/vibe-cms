@@ -1,9 +1,11 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { normalizeIssuer } from "../../oidc/index.ts";
 import { normalizeOrg } from "../../org/index.ts";
 import { generateHubKey } from "../hub.ts";
 import { authHeaders, CloudflareApi, findPanels, show, whoami, type Account, type Exec } from "./cloudflare.ts";
+import { checkProvider, providerHint, type OidcCheck } from "./oidc-check.ts";
 import { Cancelled, type Prompts } from "./prompts.ts";
 import { configRoot, listHubs, readHub, removeHub, writeHub, type Bundle, type HubRecord } from "./state.ts";
 
@@ -27,6 +29,8 @@ export interface WizardDeps {
   root?: string,
   /** Reads Cloudflare's API with wrangler's session; null when that isn't possible. Replaceable for tests. */
   api?: (exec: Exec) => Promise<CloudflareApi | null>,
+  /** Reads an identity provider's discovery document and says what will work. Replaceable for tests. */
+  checkOidc?: (issuer: string) => Promise<OidcCheck>,
   /** Asks a panel whether it still needs its first owner. Replaceable for tests. */
   needsOwner?: (url: string) => Promise<boolean | null>,
   /** Points wrangler at an account when the person has several. */
@@ -254,10 +258,27 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
     validate: v => !v.trim() || normalizeOrg(v) ? undefined : "Enter a domain like my-agency.com, or leave it empty"
   })).trim();
   vars.VIBE_ORG = vars.VIBE_ORG ? normalizeOrg(vars.VIBE_ORG)! : "";
-  p.note("Register an OIDC client with your identity provider (Google, Okta, Entra…) with this redirect URI, once the panel's address is known. It's shown again at the end.", "Sign-in");
-  vars.OIDC_ISSUER = (await p.text({ message: "OIDC issuer URL", initial: vars.OIDC_ISSUER ?? "https://accounts.google.com", validate: v => URL.canParse(v) ? undefined : "Enter a URL" })).trim();
+  p.note("Register an OIDC client with your identity provider (Google, Okta, Entra, Clerk, Cloudflare Access…) with this redirect URI, once the panel's address is known. It's shown again at the end.", "Sign-in");
+  const check = await chooseProvider(deps, vars.OIDC_ISSUER, current?.vars.OIDC_ISSUER);
+  vars.OIDC_ISSUER = check.issuer;
   vars.OIDC_CLIENT_ID = (await p.text({ message: "OIDC client ID", initial: vars.OIDC_CLIENT_ID, validate: required("The client ID") })).trim();
-  vars.PANEL_ALLOW = (await p.text({ message: "Who may sign in: email domains or group names, comma-separated", initial: vars.PANEL_ALLOW ?? (vars.VIBE_ORG.includes("://") ? undefined : vars.VIBE_ORG || undefined), validate: required("This") })).trim();
+  const allow = (await p.text({
+    message: "Who may sign in: email domains or group names, comma-separated (empty: whoever the provider lets in)",
+    initial: vars.PANEL_ALLOW ?? (check.provider === "access" || vars.VIBE_ORG.includes("://") ? undefined : vars.VIBE_ORG || undefined)
+  })).trim();
+  if(allow) vars.PANEL_ALLOW = allow;
+  else delete vars.PANEL_ALLOW;
+  if(check.asksAboutEmail) {
+    const trusted = check.provider === "access" || check.provider === "clerk";
+    const trust = await p.confirm({
+      message: `This provider doesn't say whether emails are verified. Trust the emails it sends? Only say yes if it verifies them itself${trusted ? " (Cloudflare Access and Clerk do, unless your Clerk instance lets people skip verification)" : ""}`,
+      initial: vars.OIDC_TRUST_EMAIL ? true : trusted
+    });
+    if(trust) vars.OIDC_TRUST_EMAIL = "1";
+    else delete vars.OIDC_TRUST_EMAIL;
+  } else {
+    delete vars.OIDC_TRUST_EMAIL;
+  }
 
   // The address: the Worker's own, or a custom domain.
   let domain = current?.domain ?? null;
@@ -290,6 +311,38 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
   }
 
   return { record: { version: 1, accountId: account.id, accountName: account.name, name, database, backups, vars, domain, url: current?.url, secrets: current?.secrets }, create };
+}
+
+/**
+ * Asks for the identity provider's issuer and checks it before going on: a provider that can't work is
+ * said so, and what's useful to know about the ones that can is shown. Changing the issuer of an existing
+ * panel is confirmed, since everyone's identity is tied to it.
+ */
+async function chooseProvider(deps: WizardDeps, initial: string | undefined, current: string | undefined): Promise<OidcCheck> {
+  const { prompts: p } = deps;
+  for(;;) {
+    const entered = await p.text({ message: "OIDC issuer URL (or the provider's discovery URL)", initial: initial ?? "https://accounts.google.com", validate: v => URL.canParse(v.trim()) ? undefined : "Enter a URL" });
+    p.info("Checking the provider…");
+    const check = await (deps.checkOidc ?? checkProvider)(entered);
+    for(const error of check.errors) p.warn(error);
+    if(check.errors.length) {
+      if(await p.confirm({ message: "Use it anyway?", initial: false })) return check;
+      initial = entered;
+      continue;
+    }
+    for(const note of check.notes) p.info(note);
+    for(const warning of check.warnings) p.warn(warning);
+    const hint = providerHint(check.provider);
+    if(hint) p.note(hint, "This provider");
+    if(current && normalizeIssuer(current) !== check.issuer) {
+      p.warn("Changing the issuer gives every member a new identity: roles, site access and ownership are tied to the old one and won't carry over. Members invited by email who haven't signed in yet will link to the new one.");
+      if(!await p.confirm({ message: "Change the issuer anyway?", initial: false })) {
+        initial = current;
+        continue;
+      }
+    }
+    return check;
+  }
 }
 
 /** Asks for a resource's name. An existing one comes back with its id (and can be reused); a new one has none yet. */

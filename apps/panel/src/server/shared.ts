@@ -32,6 +32,8 @@ export interface Env {
   HUB_SIGNING_KEY?: string,
   /** Identity provider claim whose values sites receive as `roles`, e.g. `groups`. */
   OIDC_ROLES_CLAIM?: string,
+  /** Any value but "" or "0": trust the emails the identity provider sends, for providers that don't say whether they're verified. */
+  OIDC_TRUST_EMAIL?: string,
   /** Secret: a one-time setup token chosen by `vibe-cms admin deploy`, so the setup link can be shown at deploy time. */
   PANEL_SETUP_TOKEN?: string,
   /** Marks a Worker as a vibe-cms panel, so `vibe-cms admin deploy` can find it on Cloudflare. */
@@ -80,7 +82,10 @@ export function oidcConfig(env: Env): OidcConfig {
     issuer: env.OIDC_ISSUER,
     clientId: env.OIDC_CLIENT_ID,
     clientSecret: env.OIDC_CLIENT_SECRET,
-    scopes: env.OIDC_SCOPES ?? "openid email profile"
+    // Unset: openid email profile, and offline_access where the provider offers it.
+    scopes: env.OIDC_SCOPES,
+    trustEmail: Boolean(env.OIDC_TRUST_EMAIL && env.OIDC_TRUST_EMAIL !== "0"),
+    rolesClaim: env.OIDC_ROLES_CLAIM
   };
 }
 
@@ -118,6 +123,11 @@ export async function freshIdToken(env: Env, session: SessionRow): Promise<strin
   const tokens = await refresh(config, session.refresh_token).catch(() => {
     throw new PanelError(401, "Your sign-in expired. Sign in again.");
   });
+  // The refresh worked, so the provider still vouches for them. Some providers send no new ID token; the old one's claims stand.
+  if(!tokens.id_token) {
+    if(tokens.refresh_token) await db(env).update(sessions).set({ refresh_token: tokens.refresh_token }).where(eq(sessions.id, session.id));
+    return session.id_token;
+  }
   await verifyIdToken(config, tokens.id_token);
   await db(env).update(sessions)
     .set({ id_token: tokens.id_token, refresh_token: tokens.refresh_token ?? session.refresh_token })

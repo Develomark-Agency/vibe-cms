@@ -27,6 +27,22 @@ A site deployed without `VIBE_ORG` logs a one-time claim link instead (`https://
 
 The panel signs each signed-in user a short-lived token for one site at a time, issued by the org, with the identity provider's claims (email, name, …) passed through. Sites check it against the panel's keys at `/.well-known/jwks.json` and resolve the role names against their own stored roles. Site editors only open inside the panel; the panel's own URLs (`/s/<site id>/…`) are the links to bookmark.
 
+## Identity providers
+
+Any OpenID Connect provider works. The panel reads the provider's discovery document (`<issuer>/.well-known/openid-configuration`; pasting the discovery URL as the issuer is fine) and adapts to it: it authenticates at the token endpoint the way the provider lists (HTTP Basic or in the body), asks for `offline_access` when the provider offers it so sign-ins can be renewed, and accepts a refresh that returns no new ID token. `vibe-cms admin deploy` checks the provider before deploying and says what won't work.
+
+| Variable | What |
+|---|---|
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | The provider and the client registered with it. Redirect URI: `https://<panel>/auth/callback`. |
+| `PANEL_ALLOW` | Email domains or group names allowed in. Empty: whoever the provider lets in (nobody sees a site without a role on it). |
+| `OIDC_TRUST_EMAIL` | `1` to count the provider's emails as verified when it doesn't say. Domain rules in `PANEL_ALLOW` and invites by email need a verified email. |
+| `OIDC_SCOPES` | Overrides the default `openid email profile` (plus `offline_access` where offered). |
+| `OIDC_ROLES_CLAIM` | The claim with group or role values: for `PANEL_ALLOW` group rules, and passed to sites as roles. A full name like `https://app/roles`, or a dotted path into nested claims, works. |
+
+- **Clerk:** add an OAuth application (Dashboard → OAuth applications) with scopes `openid email profile offline_access`, and copy its client secret when it's shown. The issuer is your Clerk frontend URL (`https://<name>.clerk.accounts.dev`, or `https://clerk.<your domain>`). Clerk's tokens don't list `email_verified`, so set `OIDC_TRUST_EMAIL=1` (the wizard asks) if your instance verifies emails.
+- **Cloudflare Access:** add a SaaS application of type OIDC (Zero Trust → Access controls → Applications) with the scopes `openid`, `email`, `profile` and, if group names should decide who signs in, `groups`; the issuer is `https://<team>.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client id>`. Access policies decide who can sign in, so `PANEL_ALLOW` can stay empty. If the application issues no refresh tokens, people sign in again when their ID token expires. Set `OIDC_TRUST_EMAIL=1` (the wizard asks).
+- **Changing the issuer** gives every member a new identity (it's `<issuer>|<subject>`), so roles, site access and ownership don't carry over.
+
 ## People, site access and templates
 
 `PANEL_ALLOW` decides who may sign in; the panel decides what they see.

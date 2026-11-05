@@ -3,8 +3,10 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CloudflareApi, findPanels, type Binding, type Exec } from "../src/cli/deploy/cloudflare.ts";
+import { checkProvider, providerOf } from "../src/cli/deploy/oidc-check.ts";
 import { Cancelled, type Prompts } from "../src/cli/deploy/prompts.ts";
 import { configRoot, listHubs, readHub, renderWrangler, writeHub, type Bundle, type HubRecord } from "../src/cli/deploy/state.ts";
+import type { OidcCheck } from "../src/cli/deploy/oidc-check.ts";
 import { runWizard } from "../src/cli/deploy/wizard.ts";
 
 const bundle: Bundle = {
@@ -21,6 +23,11 @@ const record: HubRecord = {
   vars: { VIBE_ORG: "agency.test", OIDC_ISSUER: "https://idp.test", OIDC_CLIENT_ID: "client", PANEL_ALLOW: "agency.test" },
   domain: null
 };
+
+/** A provider that checks out, so the wizard doesn't reach for the network. */
+async function fineProvider(issuer: string): Promise<OidcCheck> {
+  return { issuer: issuer.replace(/\/+$/, ""), provider: null, errors: [], warnings: [], notes: [], asksAboutEmail: false };
+}
 
 /** Answers the wizard's questions in order, each matched by a pattern in the question, and records what was said. */
 function script(answers: Array<[RegExp, unknown]>) {
@@ -167,7 +174,7 @@ describe("admin deploy", () => {
       [/deploy now/i, true],
       [/Add the DNS record/, true]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
 
     const commands = wrangler.calls.map(c => c.args.slice(0, 4).join(" "));
     expect(commands.slice(0, 3)).toEqual(["whoami --json", "d1 create vibe-panel", "r2 bucket create vibe-panel-backups"]);
@@ -208,7 +215,7 @@ describe("admin deploy", () => {
       [/OIDC client secret/, "s3cret"],
       [/Create these and deploy now/, false]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => api, needsOwner: async () => null });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => api, needsOwner: async () => null });
     expect(wrangler.calls.map(c => c.args[0])).toEqual(["whoami"]);
     const out = ui.log.join("\n");
     expect(out).toContain("$ wrangler d1 create vibe-panel");
@@ -227,7 +234,7 @@ describe("admin deploy", () => {
       [/deploy now/i, true],
       [/Add the DNS record/, false]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
     const deployed = wrangler.calls.find(c => c.args[0] === "deploy")!;
     expect(deployed.args).not.toContain("--secrets-file");
     expect(ui.log.join("\n")).not.toContain("#setup=");
@@ -245,7 +252,7 @@ describe("admin deploy", () => {
       [/deploy now/i, true],
       [/Add the DNS record/, false]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
     expect(Object.keys(wrangler.calls.find(c => c.args[0] === "deploy")!.secrets!)).toEqual(["HUB_SIGNING_KEY"]);
   });
 
@@ -272,7 +279,7 @@ describe("admin deploy", () => {
       [/deploy now/i, true],
       [/Add the DNS record/, false]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
     expect((await readHub(root, "acc1", "found-panel"))?.vars.VIBE_ORG).toBe("agency.test");
     expect(wrangler.calls.find(c => c.args[0] === "deploy")!.args).not.toContain("--secrets-file");
   });
@@ -295,7 +302,7 @@ describe("admin deploy", () => {
       [/deploy now/i, true],
       [/Add the DNS record/, true]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
     const saved = (await readHub(root, "acc1", "vibe-panel"))!;
     expect(saved.domain).toBeNull();
     expect(saved.url).toBe("https://vibe-panel.agency.workers.dev");
@@ -322,7 +329,7 @@ describe("admin deploy", () => {
       [/OIDC client secret/, "s3cret"],
       [/deploy now/i, true]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
     const saved = (await readHub(root, "acc1", "vibe-panel"))!;
     expect(saved.vars.VIBE_ORG).toBe("https://vibe-panel.agency.workers.dev");
     expect(txt).toEqual([]);
@@ -349,7 +356,7 @@ describe("admin deploy", () => {
       [/OIDC client secret/, "x"],
       [/deploy now/i, true]
     ]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
     const saved = (await readHub(root, "acc1", "p"))!;
     expect(saved.domain).toBeNull();
     expect(saved.url).toBe("https://p.agency.workers.dev");
@@ -362,7 +369,7 @@ describe("admin deploy", () => {
     const wrangler = fakeWrangler();
     const { api, txt } = fakeApi({ txtRecords: async () => [{ id: "r", content: "https://old-hub.test" }] });
     const ui = script([[/Which panel/, "hub:acc1:vibe-panel"], [/what next/, "redeploy"], [/deploy now/i, true]]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
     expect(txt).toEqual([]);
     expect(ui.log.join("\n")).toContain("already exists");
   });
@@ -370,7 +377,7 @@ describe("admin deploy", () => {
   test("offers to log in when wrangler isn't, and stops if declined", async () => {
     const wrangler = fakeWrangler({ loggedIn: false });
     const ui = script([[/wrangler login/, false]]);
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => null });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => null });
     expect(wrangler.calls.map(c => c.args[0])).toEqual(["whoami"]);
   });
 
@@ -378,7 +385,141 @@ describe("admin deploy", () => {
     const wrangler = fakeWrangler();
     const ui = script([]);
     ui.prompts.select = async () => { throw new Cancelled(); };
-    await runWizard({ exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => null });
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => null });
     expect(ui.log.at(-1)).toContain("Cancelled");
+  });
+});
+
+function discovery(doc: Record<string, unknown>, status = 200): typeof fetch {
+  const base = { issuer: "https://idp.test", authorization_endpoint: "https://idp.test/a", token_endpoint: "https://idp.test/t", jwks_uri: "https://idp.test/j" };
+  return (async () => Response.json({ ...base, ...doc }, { status })) as unknown as typeof fetch;
+}
+
+describe("checking an identity provider before deploying", () => {
+  test("Clerk: offline_access offered, and email_verified isn't listed, so the wizard will ask", async () => {
+    const check = await checkProvider("https://well-hagfish-71.clerk.accounts.dev/", discovery({
+      scopes_supported: ["openid", "profile", "email", "offline_access"],
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
+      code_challenge_methods_supported: ["S256"],
+      claims_supported: ["sub", "iss", "aud", "email", "name"]
+    }));
+    expect(check).toMatchObject({ issuer: "https://well-hagfish-71.clerk.accounts.dev", provider: "clerk", errors: [], warnings: [], asksAboutEmail: true });
+    expect(check.notes.join(" ")).toContain("refresh tokens");
+  });
+
+  test("Cloudflare Access: no offline_access gets a warning, and the discovery URL is accepted as the issuer", async () => {
+    const check = await checkProvider("https://team.cloudflareaccess.com/cdn-cgi/access/sso/oidc/abc/.well-known/openid-configuration", discovery({ scopes_supported: ["openid", "email", "profile", "groups"] }));
+    expect(check.issuer).toBe("https://team.cloudflareaccess.com/cdn-cgi/access/sso/oidc/abc");
+    expect(check.provider).toBe("access");
+    expect(check.errors).toEqual([]);
+    expect(check.warnings.join(" ")).toContain("offline_access");
+  });
+
+  test("a provider that lists email_verified isn't asked about", async () => {
+    const check = await checkProvider("https://idp.test", discovery({ scopes_supported: ["openid", "offline_access"], claims_supported: ["sub", "email", "email_verified"] }));
+    expect(check.asksAboutEmail).toBe(false);
+  });
+
+  test("says why a provider can't work", async () => {
+    expect((await checkProvider("https://idp.test", discovery({}, 404))).errors.join(" ")).toContain("404");
+    expect((await checkProvider("https://idp.test", discovery({ code_challenge_methods_supported: ["plain"] }))).errors.join(" ")).toContain("PKCE");
+    expect((await checkProvider("https://idp.test", discovery({ token_endpoint_auth_methods_supported: ["private_key_jwt"] }))).errors.join(" ")).toContain("private_key_jwt");
+    expect((await checkProvider("https://idp.test", discovery({ token_endpoint: undefined }))).errors.join(" ")).toContain("token_endpoint");
+    const unreachable = (async () => { throw new Error("getaddrinfo ENOTFOUND"); }) as unknown as typeof fetch;
+    expect((await checkProvider("https://nope.test", unreachable)).errors.join(" ")).toContain("ENOTFOUND");
+  });
+
+  test("recognizes the providers it has advice for", () => {
+    expect(providerOf("https://team.cloudflareaccess.com/x")).toBe("access");
+    expect(providerOf("https://clerk.agency.com")).toBe("clerk");
+    expect(providerOf("https://accounts.google.com")).toBe("google");
+    expect(providerOf("https://login.example.com")).toBeNull();
+  });
+});
+
+describe("identity provider questions in the wizard", () => {
+  async function clerk(): Promise<OidcCheck> {
+    return { issuer: "https://x.clerk.accounts.dev", provider: "clerk", errors: [], warnings: [], notes: [], asksAboutEmail: true };
+  }
+
+  function setup(extra: Array<[RegExp, unknown]>) {
+    return script([
+      [/No panels found/, "new"],
+      [/Worker name/, "vibe-panel"],
+      [/D1 database name/, "vibe-panel"],
+      [/Keep daily backups/, false],
+      [/org's domain/, ""],
+      ...extra,
+      [/Serve the panel from your own domain/, false],
+      [/OIDC client secret/, "s3cret"],
+      [/deploy now/i, true]
+    ]);
+  }
+
+  test("Clerk: trusting its emails is asked, saved, and who may sign in can be left empty", async () => {
+    const root = await tmpRoot();
+    const ui = setup([
+      [/OIDC issuer/, "https://x.clerk.accounts.dev"],
+      [/OIDC client ID/, "client"],
+      [/Who may sign in/, ""],
+      [/Trust the emails/, true]
+    ]);
+    await runWizard({ checkOidc: clerk, exec: fakeWrangler().exec, prompts: ui.prompts, bundle, root, api: async () => fakeApi().api, needsOwner: async () => null });
+    const saved = (await readHub(root, "acc1", "vibe-panel"))!;
+    expect(saved.vars).toMatchObject({ OIDC_ISSUER: "https://x.clerk.accounts.dev", OIDC_TRUST_EMAIL: "1" });
+    expect(saved.vars.PANEL_ALLOW).toBeUndefined();
+    expect(ui.log.join("\n")).toContain("offline_access");
+    expect(ui.left()).toEqual([]);
+  });
+
+  test("a provider that can't work is explained, and the issuer is asked again", async () => {
+    const calls: string[] = [];
+    async function checks(issuer: string): Promise<OidcCheck> {
+      calls.push(issuer);
+      return issuer.includes("typo")
+        ? { issuer, provider: null, errors: ["answered 404"], warnings: [], notes: [], asksAboutEmail: false }
+        : fineProvider(issuer);
+    }
+    const ui = script([
+      [/No panels found/, "new"],
+      [/Worker name/, "vibe-panel"],
+      [/D1 database name/, "vibe-panel"],
+      [/Keep daily backups/, false],
+      [/org's domain/, ""],
+      [/OIDC issuer/, "https://typo.test"],
+      [/Use it anyway/, false],
+      [/OIDC issuer/, "https://idp.test"],
+      [/OIDC client ID/, "client"],
+      [/Who may sign in/, "agency.test"],
+      [/Serve the panel from your own domain/, false],
+      [/OIDC client secret/, "s3cret"],
+      [/deploy now/i, true]
+    ]);
+    await runWizard({ checkOidc: checks, exec: fakeWrangler().exec, prompts: ui.prompts, bundle, root: await tmpRoot(), api: async () => fakeApi().api, needsOwner: async () => null });
+    expect(calls).toEqual(["https://typo.test", "https://idp.test"]);
+    expect(ui.log.join("\n")).toContain("warn: answered 404");
+    expect(ui.left()).toEqual([]);
+  });
+
+  test("changing an existing panel's issuer is confirmed first, because identities are tied to it", async () => {
+    const root = await tmpRoot();
+    await writeHub(root, { ...record, secrets: ["OIDC_CLIENT_SECRET", "HUB_SIGNING_KEY"] }, bundle);
+    const ui = script([
+      [/Which panel/, "hub:acc1:vibe-panel"],
+      [/what next/, "settings"],
+      [/Backups go to/, false],
+      [/org's domain/, "agency.test"],
+      [/OIDC issuer/, "https://new-idp.test"],
+      [/Change the issuer anyway/, true],
+      [/OIDC client ID/, "client"],
+      [/Who may sign in/, "agency.test"],
+      [/Keep serving|Serve the panel from your own domain/, false],
+      [/deploy now/i, true],
+      [/Add the DNS record/, false]
+    ]);
+    await runWizard({ checkOidc: fineProvider, exec: fakeWrangler().exec, prompts: ui.prompts, bundle, root, api: async () => fakeApi().api, needsOwner: async () => false });
+    expect(ui.log.join("\n")).toContain("new identity");
+    expect((await readHub(root, "acc1", "vibe-panel"))!.vars.OIDC_ISSUER).toBe("https://new-idp.test");
+    expect(ui.left()).toEqual([]);
   });
 });

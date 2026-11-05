@@ -2,7 +2,8 @@ import { eq, isNull, ne, or } from "drizzle-orm";
 import { decodeJwt, importJWK, SignJWT, type JWK } from "jose";
 import { fetchDescriptor, PanelError, type PanelSite } from "vibe-cms/panel";
 import { normalizeOrg, ORG_MOVE_SCOPE, ORG_MOVE_TOKEN_TTL } from "vibe-cms/org";
-import { freshIdToken, db, json, type Env, type SessionRow } from "./shared.ts";
+import { emailVerified } from "./oidc.ts";
+import { freshIdToken, db, json, oidcConfig, type Env, type SessionRow } from "./shared.ts";
 import * as t from "./schema.ts";
 import { siteClaims } from "./access.ts";
 
@@ -154,6 +155,12 @@ export async function userToken(env: Env, session: SessionRow, siteId: string): 
   const sub = `${claims.iss}|${claims.sub}`;
   // The hub's own assignments for this site, on top of the identity provider's claim.
   const assigned = await siteClaims(env, sub, siteId);
+  // Whether the email is verified is the hub's call (it may trust a provider that doesn't say), and the token says so to sites.
+  const email = typeof claims.email === "string" && claims.email ? claims.email : session.email ?? undefined;
+  if(email) {
+    passed.email = email;
+    passed.email_verified = emailVerified(oidcConfig(env), claims.email ? claims : { ...claims, email });
+  }
   const roles = [...new Set([...providerRoles(env, claims) ?? [], ...assigned.roles])];
   if(roles.length || env.OIDC_ROLES_CLAIM) passed.roles = roles;
   // Signed by the hub, so no identity provider claim can forge it.
