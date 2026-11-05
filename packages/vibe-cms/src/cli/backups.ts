@@ -21,6 +21,15 @@ function bytes(n: number): string {
   return `${n} B`;
 }
 
+/** How long something took, the way people say it: `850ms`, `8.4s`, `2m 05s`, `1h 03m`. */
+export function formatElapsed(ms: number): string {
+  if(ms < 1000) return `${Math.round(ms)}ms`;
+  if(ms < 60_000 && Math.round(ms / 1000) < 60) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+  const seconds = Math.round(ms / 1000);
+  if(seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(seconds / 3600)}h ${String(Math.floor(seconds % 3600 / 60)).padStart(2, "0")}m`;
+}
+
 function reporter() {
   const tty = process.stderr.isTTY;
   // A transfer that fails once and works the second time is routine on a long run: counted, not shown.
@@ -106,11 +115,12 @@ export const exportCommand = command({
   examples: [{ description: "Export a local site", command: "vibe-cms export --site http://localhost:4321" }],
   async handler(values) {
     const report = reporter();
+    const started = performance.now();
     try {
       const { target, taken, size } = await exportSite(await caller(values), values.file, process.cwd(), report.progress);
       report.done();
       const { manifest } = taken;
-      console.log(`${styleText("green", "✓")} ${styleText("bold", "Exported")} ${styleText("cyan", path.relative(process.cwd(), target) || target)} ${styleText("dim", `(${bytes(size)})`)}`);
+      console.log(`${styleText("green", "✓")} ${styleText("bold", "Exported")} ${styleText("cyan", path.relative(process.cwd(), target) || target)} ${styleText("dim", `(${bytes(size)}, ${formatElapsed(performance.now() - started)})`)}`);
       console.log(styleText("dim", `  ${manifest.tables.documents} documents, ${manifest.tables.versions} versions, ${manifest.files.count} files`));
       for(const warning of taken.warnings) console.log(`  ${styleText("yellow", "!")} ${warning}`);
     } catch (error) {
@@ -161,14 +171,16 @@ export const importCommand = command({
       const status = await call("backups.restoreStatus", {}) as { restore: { from: { siteId: string, takenAt: number } } | null };
       const resuming = status.restore?.from.siteId === plan.snapshot.siteId && status.restore.from.takenAt === plan.snapshot.takenAt;
       if(!values.noSafety && !resuming) {
+        const safetyStarted = performance.now();
         const safety = await exportSite(call, undefined, path.dirname(input), report.progress, "-before-import");
         report.done();
-        console.log(`${styleText("green", "✓")} Exported the site as it was first: ${styleText("cyan", path.relative(process.cwd(), safety.target) || safety.target)}`);
+        console.log(`${styleText("green", "✓")} Exported the site as it was first: ${styleText("cyan", path.relative(process.cwd(), safety.target) || safety.target)} ${styleText("dim", `(${formatElapsed(performance.now() - safetyStarted)})`)}`);
       }
+      const importStarted = performance.now();
       const result = await restoreSnapshot({ call, store, path: snapshot, force: values.force, onProgress: report.progress });
       report.done();
       const verified = await verifyRestore({ call, store, path: snapshot });
-      console.log(`${styleText("green", "✓")} ${styleText("bold", "Imported")}${result.resumed ? " (resumed)" : ""}: ${result.files.uploaded} files uploaded, ${result.files.present} already there`);
+      console.log(`${styleText("green", "✓")} ${styleText("bold", "Imported")}${result.resumed ? " (resumed)" : ""}: ${result.files.uploaded} files uploaded, ${result.files.present} already there ${styleText("dim", `(${formatElapsed(performance.now() - importStarted)})`)}`);
       for(const warning of result.warnings) console.log(`  ${styleText("yellow", "!")} ${warning}`);
       if(!verified.ok) {
         console.log(`${styleText("yellow", "!")} The site doesn't match the file now (someone may have edited since):`);
