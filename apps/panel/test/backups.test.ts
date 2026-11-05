@@ -9,7 +9,7 @@ import { createD1, createR2 } from "../../../packages/vibe-cms/test/helpers.ts";
 import { DEFAULT_POLICY, processBackups, retained } from "../src/server/backups.ts";
 import { backupToken } from "../src/server/hub.ts";
 import { handle } from "../src/server/index.ts";
-import { env, idp, installMock, ORG, panel, removeMock, signIn, sites } from "./mock.ts";
+import { assignRoles, env, idp, installMock, ORG, panel, removeMock, signIn, sites } from "./mock.ts";
 
 /** Enough of an R2 bucket for the archive. */
 function bucket() {
@@ -202,16 +202,20 @@ describe("panel backups", () => {
     expect((await call("backups.manifest", {}, "not-a-token")).status).toBe(401);
   });
 
-  test("restoring needs the backups permission on the site, and brings content back", async () => {
+  test("restoring needs the site's owners, and brings content back", async () => {
     const [snapshot] = (await backups(c)).snapshots;
+    // Someone with only a role on the site can't restore it from the panel.
+    await assignRoles(c, "u-ops", ["ops"]);
+    idp.email = "ops@agency.test";
+    idp.sub = "u-ops";
+    await signIn();
     const refused = await panel(`/api/sites/${c}/backups/restore`, { method: "POST", body: JSON.stringify({ snapshot: snapshot!.id }) });
     expect(refused.status).toBe(403);
-    expect((await refused.json() as { error: string }).error).toContain("backups: true");
 
     await siteC.seed(["Added after the snapshot"]);
     expect(await siteC.titles()).toEqual(["Added after the snapshot", "First", "Second"]);
-    idp.email = "ops@agency.test";
-    idp.sub = "u-ops";
+    idp.email = "jane@agency.test";
+    idp.sub = "u-jane";
     await signIn();
     const accepted = await panel(`/api/sites/${c}/backups/restore`, { method: "POST", body: JSON.stringify({ snapshot: snapshot!.id }) });
     expect(accepted.status).toBe(202);

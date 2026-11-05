@@ -69,7 +69,7 @@ const SIGNIN_TTL = 30 * 24 * 3600 * 1000;
 const CHALLENGE_TTL = 5 * 60 * 1000;
 const INVITE_TTL = 7 * 24 * 3600 * 1000;
 
-type State = Pick<EngineState, "config" | "db" | "org" | "prefix" | "signIn">;
+type State = Pick<EngineState, "config" | "db" | "org" | "prefix" | "signIn" | "roles">;
 
 export async function signInMode(state: State): Promise<SignInMode> {
   if(await state.org.current()) return "hub";
@@ -103,7 +103,7 @@ async function userBy(state: State, where: ReturnType<typeof eq>): Promise<UserR
 export async function standaloneSession(state: State, identity: Identity): Promise<Session> {
   const email = identity.email?.toLowerCase();
   const user = email && identity.emailVerified ? await userBy(state, eq(users.email, email)) : null;
-  return identitySession(state.config, identity.sub, {
+  return identitySession(state, identity.sub, {
     email: identity.email,
     email_verified: identity.emailVerified,
     name: identity.name ?? user?.name ?? undefined,
@@ -159,7 +159,7 @@ function normalizeEmail(value: unknown): string {
 
 function checkRoles(state: State, roles: unknown): string[] {
   if(!Array.isArray(roles) || roles.some(role => typeof role !== "string")) throw new HttpError(400, "Expected roles as a list of role names");
-  const known = new Set([OWNER, ...Object.keys(state.config.permissions?.roles ?? {})]);
+  const known = new Set([OWNER, ...Object.keys(state.roles.map)]);
   const unknown = (roles as string[]).filter(role => !known.has(role));
   if(unknown.length) throw new HttpError(400, `Unknown roles: ${unknown.join(", ")}`);
   return [...new Set(roles as string[])];

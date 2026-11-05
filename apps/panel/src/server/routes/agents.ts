@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { PanelError } from "vibe-cms/panel";
 import { handleMcp, siteToken } from "../mcp.ts";
+import { canSeeSite, hubAccess } from "../access.ts";
 import {
   authorize,
   codePage,
@@ -74,5 +75,6 @@ async function siteTokenRoute(request: Request, env: Env, grant: GrantRow): Prom
   if(!site) throw new PanelError(404, `${target} isn't in this panel. Add it in the panel first.`);
   const [session] = await db(env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
   if(!session) throw new PanelError(401, "This connection's sign-in is gone. Log in again.");
+  if(!await canSeeSite(env, await hubAccess(env, session), site.id)) throw new PanelError(404, `${target} isn't in this panel. Add it in the panel first.`);
   return Response.json({ token: await siteToken(env, grant, session, site), site: { id: site.id, name: site.name, admin: site.admin } }, { headers: { "cache-control": "no-store" } });
 }

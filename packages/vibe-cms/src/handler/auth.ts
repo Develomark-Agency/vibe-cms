@@ -7,6 +7,13 @@ import { createDb } from "../db/client.ts";
 import { codes } from "../db/schema.ts";
 import { getOrCreateMeta, randomToken } from "./db.ts";
 import type { D1 } from "./platform.ts";
+import type { RoleStore } from "./roles.ts";
+
+/** What permission checks read: the config's types and locales, and the site's stored roles. */
+export interface Access {
+  config: AnyConfig,
+  roles: Pick<RoleStore, "map">
+}
 
 const SESSION_TTL = 12 * 60 * 60;
 const CODE_TTL = 30;
@@ -71,7 +78,7 @@ const RESERVED = new Set(["iss", "aud", "exp", "iat", "nbf", "jti", "scope"]);
  * works out here, or with `scope: "backups"` the hub itself, which may only run backup actions and
  * only when the config sets `backups: true`. Null when it isn't one.
  */
-export async function sessionFromHubToken(state: Pick<EngineState, "config" | "org" | "siteId">, token: string): Promise<Session | null> {
+export async function sessionFromHubToken(state: Pick<EngineState, "config" | "org" | "siteId" | "roles">, token: string): Promise<Session | null> {
   const payload = await state.org.verify(token, state.siteId);
   if(!payload) return null;
   if(payload.scope === "backups") {
@@ -80,18 +87,26 @@ export async function sessionFromHubToken(state: Pick<EngineState, "config" | "o
   }
   if(payload.scope !== undefined) return null;
   if(typeof payload.sub !== "string" || !payload.sub) return null;
-  const claims = Object.fromEntries(Object.entries(payload).filter(([key]) => !RESERVED.has(key)));
-  return identitySession(state.config, payload.sub, claims);
+  const { siteAdmin, ...claims } = Object.fromEntries(Object.entries(payload).filter(([key]) => !RESERVED.has(key)));
+  // The hub's signed grant: its owner and admins, and whoever added the site, manage it as owners.
+  // Only ever from a verified hub token, never stored, and gone once the site stops trusting the hub.
+  return identitySession(state, payload.sub, claims, [], siteAdmin === true);
 }
 
-/** Built in, and only given by a site that signs people in itself: every permission, plus managing who may sign in. */
+/**
+ * Built in: every permission, plus managing roles and who may sign in. Given by a site that signs people
+ * in itself, or by the hub's signed `siteAdmin` claim; never by a `roles` claim.
+ */
 export const OWNER = "owner";
 
 /**
  * Maps a provider identity (`<issuer>|<sub>`) and its claims to this site's roles: the `roles` claim
- * (the hub fills it from the identity provider claim in its `OIDC_ROLES_CLAIM`) and `permissions.users`.
+ * (the hub fills it from its own assignments and the identity provider claim in its `OIDC_ROLES_CLAIM`),
+ * the site's own assignments, and, as a fallback for one release, `permissions.users`. Names that aren't
+ * stored roles are dropped.
  */
-export function identitySession(config: AnyConfig, sub: string, claims: Record<string, unknown>, siteRoles: string[] = []): Session {
+export function identitySession(access: Access, sub: string, claims: Record<string, unknown>, siteRoles: string[] = [], siteAdmin = false): Session {
+  const { config } = access;
   const email = typeof claims.email === "string" ? claims.email : undefined;
   const verifiedEmail = email && claims.email_verified === true ? email.toLowerCase() : undefined;
   const roles = new Set<string>();
@@ -99,12 +114,17 @@ export function identitySession(config: AnyConfig, sub: string, claims: Record<s
   // An identity provider group that happens to be called "owner" mustn't make someone owner everywhere.
   for(const role of Array.isArray(claim) ? claim : typeof claim === "string" ? [claim] : []) if(String(role) !== OWNER) roles.add(String(role));
   for(const role of siteRoles) roles.add(role);
-  const users = config.permissions?.users ?? {};
-  for(const key of [sub, verifiedEmail]) {
-    for(const role of (key && users[key]) || []) roles.add(role);
+  if(siteAdmin) roles.add(OWNER);
+  const known = new Set([OWNER, ...Object.keys(access.roles.map)]);
+  let granted = [...roles].filter(role => known.has(role));
+  // Deprecated: honored only when nothing else gives this identity a role.
+  if(granted.length === 0) {
+    const users = config.permissions?.users ?? {};
+    for(const key of [sub, verifiedEmail]) {
+      for(const role of (key && users[key]) || []) if(known.has(role)) granted.push(role);
+    }
+    granted = [...new Set(granted)];
   }
-  const known = new Set([OWNER, ...Object.keys(config.permissions?.roles ?? {})]);
-  const granted = [...roles].filter(role => known.has(role));
   if(granted.length === 0) throw new HttpError(403, "No access to this site");
   return {
     sub,
@@ -142,13 +162,13 @@ export interface Permit {
   scope?: "content" | "media" | "site" | "backups" | "users"
 }
 
-export function can(config: AnyConfig, session: Session | null, permit: Permit): boolean {
+export function can(access: Access, session: Session | null, permit: Permit): boolean {
   if(!session) return false;
   if(session.readOnly && permit.action !== "read") return false;
   if(session.sub === "dev") return true;
   if(session.roles.includes(OWNER)) return true;
   if(permit.scope === "backups" && session.grants?.includes("backups")) return true;
-  const roles = config.permissions?.roles ?? {};
+  const roles = access.roles.map;
   return session.roles.some(name => {
     const rules = roles[name];
     return rules ? allows(rules, permit) : false;
@@ -159,7 +179,8 @@ function allows(rules: RoleRules, { action, type, locale, scope }: Permit): bool
   if(rules.all) return true;
   if(scope === "users") return false;
   if(scope === "site") return rules.siteSettings === true;
-  if(scope === "backups") return rules.backups === true;
+  // Restoring (`write`) needs `true`; taking a snapshot (`read`) also `"take"`.
+  if(scope === "backups") return rules.backups === true || (rules.backups === "take" && action === "read");
   if(scope === "media") {
     if(rules.media) return rules.media.includes(action);
     return action === "read" || hasAnyWrite(rules);
@@ -169,7 +190,9 @@ function allows(rules: RoleRules, { action, type, locale, scope }: Permit): bool
   if(action === "read") return true;
   let allowed: boolean;
   if(action === "publish") {
-    allowed = rules.publish ?? (typeRules.includes("write") || typeRules.includes("publish"));
+    allowed = rules.publish === false ? false
+      : rules.publish === true ? typeRules.includes("write") || typeRules.includes("publish")
+        : typeRules.includes("publish");
   } else if(action === "write") {
     // `write: { locales }` grants writing (translating) any readable type in those locales.
     allowed = typeRules.includes("write") || Boolean(rules.write);
@@ -184,9 +207,9 @@ function hasAnyWrite(rules: RoleRules): boolean {
   return Object.values(rules).some(rule => Array.isArray(rule) && rule.includes("write"));
 }
 
-export function require(config: AnyConfig, session: Session | null, permit: Permit): Session {
+export function require(access: Access, session: Session | null, permit: Permit): Session {
   if(!session) throw new HttpError(401, "Sign in required");
-  if(!can(config, session, permit)) {
+  if(!can(access, session, permit)) {
     if(permit.scope === "backups") throw new HttpError(403, "Not allowed to take or restore backups");
     throw new HttpError(403, `Not allowed to ${permit.action} ${permit.scope === "media" ? "media" : permit.type ?? "content"}`);
   }
@@ -194,26 +217,28 @@ export function require(config: AnyConfig, session: Session | null, permit: Perm
 }
 
 /** What the editor needs to know to show or hide controls. */
-export function permissionSummary(config: AnyConfig, session: Session) {
+export function permissionSummary(access: Access, session: Session) {
+  const { config } = access;
   const types: Record<string, Record<Action, boolean>> = {};
   for(const type of Object.keys(config.schemas)) {
     types[type] = {
-      read: can(config, session, { action: "read", type }),
-      write: can(config, session, { action: "write", type }),
-      publish: can(config, session, { action: "publish", type }),
-      delete: can(config, session, { action: "delete", type })
+      read: can(access, session, { action: "read", type }),
+      write: can(access, session, { action: "write", type }),
+      publish: can(access, session, { action: "publish", type }),
+      delete: can(access, session, { action: "delete", type })
     };
   }
-  const writeLocales = (config.locales ?? []).filter(locale => Object.keys(config.schemas).some(type => can(config, session, { action: "write", type, locale })));
+  const writeLocales = (config.locales ?? []).filter(locale => Object.keys(config.schemas).some(type => can(access, session, { action: "write", type, locale })));
   return {
     types,
     media: {
-      read: can(config, session, { action: "read", scope: "media" }),
-      write: can(config, session, { action: "write", scope: "media" }),
-      delete: can(config, session, { action: "delete", scope: "media" })
+      read: can(access, session, { action: "read", scope: "media" }),
+      write: can(access, session, { action: "write", scope: "media" }),
+      delete: can(access, session, { action: "delete", scope: "media" })
     },
     locales: writeLocales,
-    site: can(config, session, { action: "write", scope: "site" }),
-    users: can(config, session, { action: "write", scope: "users" })
+    site: can(access, session, { action: "write", scope: "site" }),
+    users: can(access, session, { action: "write", scope: "users" }),
+    roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true)
   };
 }

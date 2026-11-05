@@ -16,10 +16,11 @@ import {
   ShieldAlertIcon,
   StarIcon,
   SunIcon,
-  Trash2Icon
+  Trash2Icon,
+  UsersIcon
 } from "lucide-react";
 import { AnimatePresence, LayoutGroup, motion, MotionConfig, useMotionValue, useSpring } from "motion/react";
-import { StrictMode, useEffect, useMemo, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import { StrictMode, useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
@@ -55,31 +56,9 @@ import type { EditorMessage, PanelMessage } from "../admin/app/session.ts";
 import { getTheme, isTheme, setAccent, setFavicon, setTheme, startTheme, subscribeTheme, useTheme, type Theme } from "../admin/app/theme.ts";
 import { Delayed } from "../admin/app/delayed.tsx";
 import { BackupDefaultsDialog, BackupsDialog } from "./backups.tsx";
-import { DEFAULT_BRANDING, fetchDescriptor, PanelError, type PanelBackend, type PanelBranding, type PanelSite } from "./backend.ts";
-
-// --- Location ---------------------------------------------------------------------
-
-const listeners = new Set<() => void>();
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  window.addEventListener("popstate", listener);
-  return () => {
-    listeners.delete(listener);
-    window.removeEventListener("popstate", listener);
-  };
-}
-
-function go(path: string) {
-  history.pushState(null, "", path);
-  listeners.forEach(l => l());
-}
-
-function useRoute(): { siteId: string | null, rest: string } {
-  const path = useSyncExternalStore(subscribe, () => location.pathname + location.search);
-  const match = /^\/s\/([^/?]+)(.*)$/.exec(path);
-  return match ? { siteId: decodeURIComponent(match[1]!), rest: match[2] || "/" } : { siteId: null, rest: "/" };
-}
+import { go, listeners, useRoute } from "./location.ts";
+import { AccessPage, PeoplePage, SetupCard, TemplatePicker, TemplatesPage } from "./access.tsx";
+import { DEFAULT_BRANDING, fetchDescriptor, PanelError, type PanelBackend, type PanelBranding, type PanelSite, type PanelUser } from "./backend.ts";
 
 /**
  * Clicks inside the framed editor never reach this document, so popups can't
@@ -220,12 +199,15 @@ function Panel({ backend }: { backend: PanelBackend }) {
   const branding = useBranding(backend);
   if(me.isLoading) return <Delayed><div className="flex h-full items-center justify-center"><Spinner className="size-5" /></div></Delayed>;
   if(me.isError) return <div className="flex h-full items-center justify-center text-sm text-destructive">{(me.error as Error).message}</div>;
+  const setup = /^#setup=(.+)$/.exec(location.hash)?.[1];
+  if(!me.data && setup && backend.signInUrl) return <SetupCard branding={branding} signInUrl={backend.signInUrl} token={decodeURIComponent(setup)} />;
   if(!me.data) return <SignIn backend={backend} branding={branding} />;
   return <Shell backend={backend} branding={branding} user={me.data} />;
 }
 
 function SignIn({ backend, branding }: { backend: PanelBackend, branding: PanelBranding }) {
   const error = new URLSearchParams(location.search).get("error");
+  const setup = useQuery({ queryKey: ["setup"], queryFn: () => backend.hub!.setup(), enabled: Boolean(backend.hub), retry: false });
   return (
     <div className="flex h-full items-center justify-center bg-sidebar p-6">
       <div className="flex w-full max-w-sm flex-col items-center gap-5 rounded-[24px] elevated px-8 py-10 text-center">
@@ -240,6 +222,9 @@ function SignIn({ backend, branding }: { backend: PanelBackend, branding: PanelB
           <p className="text-sm text-muted-foreground">One sign-in for every site your agency manages.</p>
         </div>
         {error && <p className="w-full rounded-[12px] bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
+        {setup.data?.needsOwner && !error && (
+          <p className="w-full rounded-[12px] well px-3 py-2 text-sm text-muted-foreground">This panel has no owner yet. Open the setup link printed in its logs to claim it.</p>
+        )}
         <Button size="lg" className="w-full" render={<a href={`${backend.signInUrl}?return=${encodeURIComponent(location.pathname)}`} />} nativeButton={false}>
           Continue with your identity provider
         </Button>
@@ -248,9 +233,16 @@ function SignIn({ backend, branding }: { backend: PanelBackend, branding: PanelB
   );
 }
 
-function Shell({ backend, branding, user }: { backend: PanelBackend, branding: PanelBranding, user: { name?: string, email?: string } }) {
+function Shell({ backend, branding, user }: { backend: PanelBackend, branding: PanelBranding, user: PanelUser }) {
   const queryClient = useQueryClient();
-  const { siteId, rest } = useRoute();
+  const { siteId, rest, page, accessId } = useRoute();
+  const hub = backend.hub;
+  const canAdd = !hub || (user.permissions?.includes("addSites") ?? false);
+  const panelPages = hub ? [
+    { key: null, label: "Sites", to: "/" },
+    ...(user.role ? [{ key: "people", label: "People", to: "/people" }] : []),
+    ...(user.permissions?.includes("templates") || user.role ? [{ key: "templates", label: "Templates", to: "/templates" }] : [])
+  ] : [];
   const [addOpen, setAddOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -311,7 +303,25 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
           <span className="hidden sm:inline">{branding.name}</span>
         </button>
         <span className="text-muted-foreground/40">/</span>
-        <SiteSwitcher sites={live ?? []} current={site} onAdd={() => setAddOpen(true)} />
+        <SiteSwitcher sites={live ?? []} current={site} onAdd={canAdd ? () => setAddOpen(true) : undefined} />
+        {site && hub && (
+          <Tooltip>
+            <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Access" onClick={() => go(`/sites/${encodeURIComponent(site.id)}/access`)}><UsersIcon /></Button>} />
+            <TooltipContent>People and roles</TooltipContent>
+          </Tooltip>
+        )}
+        {!site && panelPages.length > 1 && (
+          <nav className="ml-2 hidden items-center gap-1 sm:flex" aria-label="Panel">
+            {panelPages.map(item => {
+              const active = item.key === page && !accessId;
+              return (
+                <Button key={item.to} variant="ghost" size="sm" aria-current={active ? "page" : undefined} className={cn("text-muted-foreground", active && "bg-foreground/[0.06] text-foreground")} onClick={() => go(item.to)}>
+                  {item.label}
+                </Button>
+              );
+            })}
+          </nav>
+        )}
         {site && (
           <>
             <Tooltip>
@@ -377,8 +387,14 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
         </div>
       </header>
       <main className="relative min-h-0 flex-1">
-        {siteId === null ? (
-          <SiteList backend={backend} sites={live} loading={sites.isLoading} onAdd={() => setAddOpen(true)} onBackups={backend.backups ? openBackups : undefined} />
+        {hub && accessId ? (
+          <div className="h-full overflow-y-auto"><AccessPage key={accessId} hub={hub} siteId={accessId} site={live?.find(s => s.id === accessId) ?? null} /></div>
+        ) : hub && page === "people" ? (
+          <div className="h-full overflow-y-auto"><PeoplePage hub={hub} user={user} /></div>
+        ) : hub && page === "templates" ? (
+          <div className="h-full overflow-y-auto"><TemplatesPage hub={hub} user={user} /></div>
+        ) : siteId === null ? (
+          <SiteList backend={backend} sites={live} loading={sites.isLoading} canAdd={canAdd} member={!hub || Boolean(user.role)} onAdd={() => setAddOpen(true)} onBackups={backend.backups ? openBackups : undefined} />
         ) : site ? (
           <SiteFrame key={site.id} backend={backend} branding={branding} site={site} initialPath={rest} onShortcut={() => setPaletteOpen(true)} />
         ) : sites.isLoading ? (
@@ -418,10 +434,18 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
                 setPaletteOpen(false);
                 go("/");
               }}><LayoutGridIcon /> All sites</CommandItem>
-              <CommandItem onSelect={() => {
-                setPaletteOpen(false);
-                setAddOpen(true);
-              }}><PlusIcon /> Add a site</CommandItem>
+              {canAdd && (
+                <CommandItem onSelect={() => {
+                  setPaletteOpen(false);
+                  setAddOpen(true);
+                }}><PlusIcon /> Add a site</CommandItem>
+              )}
+              {panelPages.filter(item => item.key).map(item => (
+                <CommandItem key={item.to} onSelect={() => {
+                  setPaletteOpen(false);
+                  go(item.to);
+                }}><UsersIcon /> {item.label}</CommandItem>
+              ))}
             </CommandGroup>
           </CommandList>
         </Command>
@@ -431,7 +455,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
   );
 }
 
-function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: LiveSite | null, onAdd(): void }) {
+function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: LiveSite | null, onAdd?(): void }) {
   const [open, setOpen] = useState(false);
   useCloseOnFrameFocus(open, () => setOpen(false));
   return (
@@ -466,10 +490,12 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: L
                 setOpen(false);
                 go("/");
               }}><LayoutGridIcon /> All sites</CommandItem>
-              <CommandItem onSelect={() => {
-                setOpen(false);
-                onAdd();
-              }}><PlusIcon /> Add a site…</CommandItem>
+              {onAdd && (
+                <CommandItem onSelect={() => {
+                  setOpen(false);
+                  onAdd();
+                }}><PlusIcon /> Add a site…</CommandItem>
+              )}
             </CommandGroup>
           </CommandList>
         </Command>
@@ -478,10 +504,13 @@ function SiteSwitcher({ sites, current, onAdd }: { sites: LiveSite[], current: L
   );
 }
 
-function SiteList({ backend, sites, loading, onAdd, onBackups }: {
+function SiteList({ backend, sites, loading, canAdd, member, onAdd, onBackups }: {
   backend: PanelBackend,
   sites: LiveSite[] | undefined,
   loading: boolean,
+  /** Whether the user may add sites; members of the hub without it, and people with only site roles, can't. */
+  canAdd: boolean,
+  member: boolean,
   onAdd(): void,
   onBackups?(site: PanelSite): void
 }) {
@@ -514,7 +543,7 @@ function SiteList({ backend, sites, loading, onAdd, onBackups }: {
             <dt className="text-xs text-muted-foreground">Starred</dt>
           </div>
         </dl>
-        <AddSiteForm backend={backend} />
+        {canAdd && <AddSiteForm backend={backend} />}
         <p className="mt-auto text-xs text-muted-foreground">
           {hosted ? "Sites need vibe-cms and must trust this panel's identity provider." : "This list is stored in this browser only."}
         </p>
@@ -532,12 +561,14 @@ function SiteList({ backend, sites, loading, onAdd, onBackups }: {
             <Empty className="rounded-[16px] well">
               <EmptyHeader>
                 <EmptyMedia variant="icon"><GlobeIcon /></EmptyMedia>
-                <EmptyTitle>No sites yet</EmptyTitle>
+                <EmptyTitle>{canAdd ? "No sites yet" : "No sites for you yet"}</EmptyTitle>
                 <EmptyDescription>
-                  {hosted ? "Add a site by its URL. It needs vibe-cms and has to trust the same identity provider as this panel." : "Start a site's dev server, then add its address, like localhost:4321."}
+                  {!canAdd
+                    ? member ? "Sites show up here once someone gives you a role on one." : "You're signed in, but nobody has given you a role on a site yet. Ask whoever runs this panel."
+                    : hosted ? "Add a site by its URL. It needs vibe-cms and has to trust the same identity provider as this panel." : "Start a site's dev server, then add its address, like localhost:4321."}
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent><Button onClick={onAdd}><PlusIcon /> Add your first site</Button></EmptyContent>
+              {canAdd && <EmptyContent><Button onClick={onAdd}><PlusIcon /> Add your first site</Button></EmptyContent>}
             </Empty>
           ) : list.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No sites match “{filter}”.</p>
@@ -719,6 +750,7 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
                   <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
+                    {backend.hub && <DropdownMenuItem onClick={() => go(`/sites/${encodeURIComponent(site.id)}/access`)}><UsersIcon /> People and roles</DropdownMenuItem>}
                     {onBackups && <DropdownMenuItem onClick={() => onBackups(site)}><ArchiveIcon /> Backups</DropdownMenuItem>}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={async () => {
@@ -740,14 +772,18 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
   );
 }
 
-function useAddSite(backend: PanelBackend, url: string, onAdded: () => void) {
+function useAddSite(backend: PanelBackend, url: string, onAdded: () => void, templateId?: string | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => backend.addSite(url.trim()),
+    mutationFn: () => backend.addSite(url.trim(), templateId),
     onSuccess: site => {
       void queryClient.invalidateQueries({ queryKey: ["sites"] });
       onAdded();
-      toast.success(`Added ${site.name}`);
+      const template = site.template;
+      if(template?.state === "pending") toast.warning(`Added ${site.name}. Its starting roles will be written once the site can be reached.`);
+      else if(template?.state === "failed") toast.error(`Added ${site.name}, but its starting roles couldn't be written: ${template.error}`);
+      else if(template?.skipped.length) toast.success(`Added ${site.name}. ${template.skipped.length} ${template.skipped.length === 1 ? "rule" : "rules"} skipped: ${template.skipped.join("; ")}`);
+      else toast.success(`Added ${site.name}`);
       go(`/s/${encodeURIComponent(site.id)}/`);
     }
   });
@@ -781,10 +817,12 @@ function AddSiteForm({ backend }: { backend: PanelBackend }) {
 
 function AddSiteDialog({ backend, open, onOpenChange }: { backend: PanelBackend, open: boolean, onOpenChange(open: boolean): void }) {
   const [url, setUrl] = useState("");
+  const [templateId, setTemplateId] = useState<string | null | undefined>(undefined);
   const add = useAddSite(backend, url, () => {
     onOpenChange(false);
     setUrl("");
-  });
+    setTemplateId(undefined);
+  }, templateId);
   return (
     <Dialog open={open} onOpenChange={next => {
       onOpenChange(next);
@@ -803,6 +841,8 @@ function AddSiteDialog({ backend, open, onOpenChange }: { backend: PanelBackend,
           </DialogHeader>
           <Input autoFocus value={url} onChange={e => setUrl(e.target.value)} placeholder="https://client-site.com" aria-label="Site URL" />
           {add.isError && <p className="text-sm text-destructive">{(add.error as Error).message}</p>}
+          {backend.hub && open && <TemplatePicker hub={backend.hub} value={templateId} onChange={setTemplateId} />}
+          {backend.hub && <p className="text-xs text-muted-foreground">You'll own this site and can change its roles at any time. The panel's admins can too.</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={!url.trim() || add.isPending}>{add.isPending && <Spinner />} Add site</Button>

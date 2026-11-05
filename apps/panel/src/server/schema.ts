@@ -13,7 +13,71 @@ export const sites = sqliteTable("sites", {
   admin: text().notNull(),
   org: text(),
   added_by: text().notNull(),
-  added_at: integer().notNull()
+  added_at: integer().notNull(),
+  /** The template applied when the site was added (or re-applied later), and how that went. */
+  template_id: text(),
+  template_state: text().$type<"applied" | "pending" | "failed">(),
+  /** JSON: rules the site had no type or locale for. */
+  template_skipped: text(),
+  template_error: text(),
+  template_attempts: integer().notNull().default(0),
+  template_by: text()
+});
+
+/**
+ * People who belong to the hub, with a hub role: `owner`, `admin`, `member`, or a custom role in
+ * `hub_roles`. Invited people have an email and no `sub` until they first sign in.
+ */
+export const members = sqliteTable("members", {
+  id: text().primaryKey(),
+  sub: text().unique(),
+  email: text(),
+  name: text(),
+  role: text().notNull(),
+  added_by: text().notNull(),
+  added_at: integer().notNull(),
+  last_seen_at: integer()
+}, t => [index("members_email").on(t.email)]);
+
+/** Custom hub roles: a JSON list of hub permissions. `owner`, `admin` and `member` are built in. */
+export const hubRoles = sqliteTable("hub_roles", {
+  name: text().primaryKey(),
+  permissions: text().notNull(),
+  updated_by: text().notNull(),
+  updated_at: integer().notNull()
+});
+
+/** Who may manage one site's roles and people besides the hub's owner and admins: whoever added it, or was granted it. */
+export const siteGrants = sqliteTable("site_grants", {
+  site_id: text().notNull().references(() => sites.id, { onDelete: "cascade" }),
+  sub: text().notNull(),
+  kind: text().$type<"owner">().notNull(),
+  granted_by: text().notNull(),
+  granted_at: integer().notNull()
+}, t => [primaryKey({ columns: [t.site_id, t.sub] })]);
+
+/**
+ * The hub's people → site roles. `principal` is a `sub`, or `email:<address>` for someone who hasn't
+ * signed in yet; it becomes their `sub` at their first sign-in. Roles are the site's own role names.
+ */
+export const siteAssignments = sqliteTable("site_assignments", {
+  site_id: text().notNull().references(() => sites.id, { onDelete: "cascade" }),
+  principal: text().notNull(),
+  email: text(),
+  name: text(),
+  roles: text().notNull(),
+  assigned_by: text().notNull(),
+  assigned_at: integer().notNull()
+}, t => [primaryKey({ columns: [t.site_id, t.principal] }), index("site_assignments_principal").on(t.principal)]);
+
+/** Named sets of roles, copied onto a site when it's added. Same shape as a site's stored roles: name → rules. */
+export const templates = sqliteTable("templates", {
+  id: text().primaryKey(),
+  name: text().notNull(),
+  roles: text().notNull(),
+  is_default: integer({ mode: "boolean" }).notNull().default(false),
+  updated_by: text().notNull(),
+  updated_at: integer().notNull()
 });
 
 export const favorites = sqliteTable("favorites", {
@@ -103,3 +167,5 @@ export type SessionRow = typeof sessions.$inferSelect;
 export type RunRow = typeof backupRuns.$inferSelect;
 export type SnapshotRow = typeof backupSnapshots.$inferSelect;
 export type SiteRow = typeof sites.$inferSelect;
+export type MemberRow = typeof members.$inferSelect;
+export type TemplateRow = typeof templates.$inferSelect;

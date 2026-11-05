@@ -1,5 +1,5 @@
 import { hc } from "hono/client";
-import { DEFAULT_BRANDING, normalizeBranding, PanelError, type PanelBackend } from "vibe-cms/panel";
+import { DEFAULT_BRANDING, normalizeBranding, PanelError, type PanelBackend, type PanelHub, type RoleTemplate, type SiteAccessInfo, type TemplateResult } from "vibe-cms/panel";
 import type { PanelApi } from "../server/index.ts";
 
 interface Reply<T> {
@@ -45,7 +45,7 @@ export function hostedBackend(base = location.origin, fetch?: typeof globalThis.
       }
     },
     sites: async () => read(await api.sites.$get()),
-    addSite: async url => read(await api.sites.$post({ json: { url } })),
+    addSite: async (url, templateId) => read(await api.sites.$post({ json: { url, templateId } })),
     removeSite: async id => done(await api.sites[":id"].$delete({ param: { id } })),
     setFavorite: async (id, favorite) => {
       const route = api.sites[":id"].favorite;
@@ -62,6 +62,26 @@ export function hostedBackend(base = location.origin, fetch?: typeof globalThis.
       downloadUrl: snapshot => api.backups.download.$url({ query: { snapshot } }).toString(),
       backUp: async id => done(await api.sites[":id"].backups.$post({ param: { id } })),
       restore: async (id, snapshot) => done(await api.sites[":id"].backups.restore.$post({ param: { id }, json: { snapshot } }))
+    },
+    hub: {
+      setup: async () => read(await api.setup.$get()),
+      members: async () => read(await api.members.$get()) as unknown as Awaited<ReturnType<PanelHub["members"]>>,
+      invite: async (email, role) => void await read(await api.members.$post({ json: { email, role } })),
+      setMemberRole: async (id, role) => void await read(await api.members[":id"].$patch({ param: { id }, json: { role } })),
+      removeMember: async id => done(await api.members[":id"].$delete({ param: { id } })),
+      saveHubRole: async (name, permissions) => void await read(await api["hub-roles"][":name"].$put({ param: { name }, json: { permissions } })),
+      deleteHubRole: async name => void await read(await api["hub-roles"][":name"].$delete({ param: { name } })),
+      siteAccess: async id => read(await api.sites[":id"].access.$get({ param: { id } })) as unknown as SiteAccessInfo,
+      assign: async (id, who, roles) => void await read(await api.sites[":id"].assignments.$put({ param: { id }, json: { ...who, roles } })),
+      unassign: async (id, principal) => done(await api.sites[":id"].assignments[":principal"].$delete({ param: { id, principal } })),
+      addOwner: async (id, sub) => done(await api.sites[":id"].owners.$post({ param: { id }, json: { sub } })),
+      removeOwner: async (id, sub) => done(await api.sites[":id"].owners[":sub"].$delete({ param: { id, sub } })),
+      applyTemplate: async (id, templateId, replace) => read(await api.sites[":id"].template.$post({ param: { id }, json: { templateId, replace } })) as Promise<TemplateResult>,
+      templates: async () => (await read(await api.templates.$get())).templates as RoleTemplate[],
+      saveTemplate: async (id, input) => (id
+        ? read(await api.templates[":id"].$put({ param: { id }, json: input }))
+        : read(await api.templates.$post({ json: input }))) as Promise<RoleTemplate>,
+      deleteTemplate: async id => done(await api.templates[":id"].$delete({ param: { id } }))
     },
     signInUrl: auth.login.$url().toString(),
     signOut: async () => done(await auth.logout.$post())

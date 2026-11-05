@@ -4,6 +4,7 @@ import { PanelError } from "vibe-cms/panel";
 import { migrate, type Env } from "./shared.ts";
 import { moveSites } from "./hub.ts";
 import { processBackups } from "./backups.ts";
+import { retryTemplates } from "./access.ts";
 import { agents } from "./routes/agents.ts";
 import { api } from "./routes/api.ts";
 import { auth } from "./routes/auth.ts";
@@ -56,7 +57,8 @@ export async function scheduled(env: Env) {
   await migrate(env.DB);
   await Promise.all([
     moveSites(env).catch(error => console.error("vibe-panel: moving sites to the org failed", error)),
-    processBackups(env)
+    processBackups(env),
+    retryTemplates(env).catch(error => console.error("vibe-panel: retrying templates failed", error))
   ]);
 }
 

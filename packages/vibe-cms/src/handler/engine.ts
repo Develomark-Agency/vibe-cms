@@ -1,5 +1,6 @@
 import { getSchema, HttpError, type AnyConfig } from "../config.ts";
 import type { SiteOrg } from "./org.ts";
+import type { RoleStore } from "./roles.ts";
 import type { SignInConfig } from "./signin.ts";
 import type { SerializedQuery, QueryArgs, WithOptions, DocumentMeta, Order, Condition } from "../query/index.ts";
 import { parseSize } from "../schema/builders.ts";
@@ -49,6 +50,8 @@ export interface EngineState {
   prefix: string,
   /** Random, made on first boot and kept in the database: the site's identity to panels and in session tokens. */
   siteId: string,
+  /** The site's stored roles; `can()` reads them. */
+  roles: RoleStore,
   /** The org whose hub the site trusts (`VIBE_ORG`), and moves to another. */
   org: SiteOrg,
   /** How the site signs people in when it has no org: its identity provider, or passkeys; and its email sender. */
@@ -282,7 +285,7 @@ export class Engine {
 
   private async run(query: SerializedQuery): Promise<unknown> {
     const drafts = Boolean(query.drafts);
-    if(drafts && !this.scope.trusted) require(this.config, this.scope.session, { action: "read", type: query.type });
+    if(drafts && !this.scope.trusted) require(this.state, this.scope.session, { action: "read", type: query.type });
     getSchema(this.config, query.type);
     const args = query.args ?? {};
     switch(query.op) {
@@ -521,7 +524,7 @@ export class Engine {
   /** The full editing state of one document in one locale. */
   async getDocument(type: string, id: string, localeInput?: string): Promise<DocumentState> {
     const locale = this.locale(localeInput);
-    require(this.config, this.scope.session, { action: "read", type });
+    require(this.state, this.scope.session, { action: "read", type });
     const rows = await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.type, type)));
     if(rows.length === 0) throw new HttpError(404, "Document not found");
     const row = rows.find(r => r.locale === locale);
@@ -551,7 +554,7 @@ export class Engine {
    * `all` (the unfiltered count) and an excerpt for each match the title doesn't explain.
    */
   async listDocuments(type: string, args: { locale?: string, search?: string, limit?: number, offset?: number, orderBy?: Order[], status?: string }) {
-    require(this.config, this.scope.session, { action: "read", type });
+    require(this.state, this.scope.session, { action: "read", type });
     const searching = searchWords(args.search ?? "").length > 0;
     const where: Condition = { op: "and", conditions: searching ? [{ op: "fulltext", value: args.search! }] : [] };
     const limit = args.limit ?? 50;
@@ -597,7 +600,7 @@ export class Engine {
   async searchDocuments(args: { query: string, locale?: string, limit?: number }) {
     const locale = this.locale(args.locale);
     if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
-    const types = Object.keys(this.config.schemas).filter(type => (this.scope.trusted && !this.scope.session) || can(this.config, this.scope.session, { action: "read", type }));
+    const types = Object.keys(this.config.schemas).filter(type => (this.scope.trusted && !this.scope.session) || can(this.state, this.scope.session, { action: "read", type }));
     if(!types.length || !searchWords(args.query).length) return { results: [] };
     const rows = await all<{ id: string, type: string, title: string | null, excerpt: string | null }>(this.db,
       `SELECT id, type, title, ${SNIPPET} AS excerpt FROM vibe_search
@@ -655,7 +658,7 @@ export class Engine {
 
   private writer(permit: Parameters<typeof require>[2]): Session | null {
     if(this.scope.trusted && !this.scope.session) return null;
-    return require(this.config, this.scope.session, permit);
+    return require(this.state, this.scope.session, permit);
   }
 
   /** Runs the write pipeline: beforeValidate → validate + integrity → beforeWrite. */
@@ -851,7 +854,7 @@ export class Engine {
 
   async versions(type: string, id: string, localeInput?: string) {
     const locale = this.locale(localeInput);
-    require(this.config, this.scope.session, { action: "read", type });
+    require(this.state, this.scope.session, { action: "read", type });
     const rows = await this.orm
       .select({ ver: versions.ver, author: versions.author, created_at: versions.created_at })
       .from(versions)
@@ -863,7 +866,7 @@ export class Engine {
 
   async version(type: string, id: string, localeInput: string | undefined, ver: number) {
     const locale = this.locale(localeInput);
-    require(this.config, this.scope.session, { action: "read", type });
+    require(this.state, this.scope.session, { action: "read", type });
     const row: VersionRow | undefined = (await this.orm.select().from(versions).where(and(eq(versions.id, id), eq(versions.locale, locale), eq(versions.ver, ver))).limit(1))[0];
     if(!row) throw new HttpError(404, "Version not found");
     return { ver: row.ver, author: row.author, createdAt: iso(row.created_at), data: JSON.parse(row.data) };
@@ -1000,7 +1003,7 @@ export class Engine {
   }
 
   async listAssets(options: { folder?: string, search?: string, accept?: string[], limit?: number, offset?: number }) {
-    require(this.config, this.scope.session, { action: "read", scope: "media" });
+    require(this.state, this.scope.session, { action: "read", scope: "media" });
     const conditions: SQL[] = [];
     if(options.folder !== undefined) conditions.push(options.folder === "" ? isNull(assets.folder) : eq(assets.folder, options.folder));
     if(options.search) conditions.push(like(assets.filename, `%${options.search}%`));
@@ -1024,7 +1027,7 @@ export class Engine {
 
   /** Every folder: stored ones, ones files are in, and all their parents. */
   async listFolders(): Promise<MediaFolder[]> {
-    require(this.config, this.scope.session, { action: "read", scope: "media" });
+    require(this.state, this.scope.session, { action: "read", scope: "media" });
     const [stored, counts] = await Promise.all([
       this.orm.select({ path: folders.path }).from(folders),
       this.orm.select({ folder: assets.folder, n: count() }).from(assets).where(isNotNull(assets.folder)).groupBy(assets.folder)
@@ -1080,7 +1083,7 @@ export class Engine {
   }
 
   async getAsset(id: string) {
-    require(this.config, this.scope.session, { action: "read", scope: "media" });
+    require(this.state, this.scope.session, { action: "read", scope: "media" });
     const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
     const pattern = `%"${id}"%`;
@@ -1162,7 +1165,7 @@ export class Engine {
   /** Whether the session may see, restore and purge this item: the same permission that deleted it. */
   private canTrash(row: Pick<TrashRow, "kind" | "type">): boolean {
     if(this.scope.trusted && !this.scope.session) return true;
-    return can(this.config, this.scope.session, row.kind === "asset" ? { action: "delete", scope: "media" } : { action: "delete", type: row.type ?? undefined });
+    return can(this.state, this.scope.session, row.kind === "asset" ? { action: "delete", scope: "media" } : { action: "delete", type: row.type ?? undefined });
   }
 
   private toTrashItem(row: TrashRow): TrashItem {
@@ -1382,7 +1385,7 @@ export class Engine {
   }
 
   async updateSite(patch: SiteSettingsPatch): Promise<SiteSettings> {
-    if(!this.scope.trusted || this.scope.session) require(this.config, this.scope.session, { action: "write", scope: "site" });
+    if(!this.scope.trusted || this.scope.session) require(this.state, this.scope.session, { action: "write", scope: "site" });
     const next = await this.storedSite();
     if(patch.name !== undefined) {
       const name = patch.name.trim();
@@ -1427,7 +1430,7 @@ export class Engine {
 
   /** Whether the current session may do something; exposed for plugin routes. */
   can(permit: Parameters<typeof can>[2]): boolean {
-    return can(this.config, this.scope.session, permit);
+    return can(this.state, this.scope.session, permit);
   }
 }
 

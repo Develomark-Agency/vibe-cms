@@ -106,6 +106,24 @@ export const users = sqliteTable("vibe_users", {
   last_sign_in_at: integer()
 });
 
+/** The site's roles, besides the built-in owner: edited on the editor's Roles page, or written by the hub from a template. */
+export const roles = sqliteTable("vibe_roles", {
+  name: text().primaryKey(),
+  rules: text().notNull(),
+  updated_by: text(),
+  updated_at: integer().notNull()
+});
+
+/** People the org's hub signed in, with the roles it gave them: shown read only on the Users page of org sites. */
+export const hubUsers = sqliteTable("vibe_hub_users", {
+  sub: text().primaryKey(),
+  email: text(),
+  name: text(),
+  roles: text().notNull(),
+  site_admin: integer({ mode: "boolean" }).notNull().default(false),
+  last_sign_in_at: integer().notNull()
+});
+
 export const passkeys = sqliteTable("vibe_passkeys", {
   id: text().primaryKey(),
   user_id: text().notNull(),

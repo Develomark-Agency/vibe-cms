@@ -46,17 +46,13 @@ bunx vibe-cms documents update --type page --id doc_… --locale fr --data '{"ti
 
 ## Translator roles
 
-`write: { locales }` in a role lets it write (translate) every type it can read, only in those locales:
+`write: { locales }` in a role lets it write (translate) every type it can read, only in those locales. On the editor's **Roles** page that's the Languages row; the Translator preset starts with every locale but the default:
 
 ```ts
 // examples/schemas/src/localization.ts
-  permissions: {
-    roles: {
-      editor: { all: true },
-      // Reads everything, writes (translates) only French.
-      translator: { "*": ["read"], write: { locales: ["fr"] } }
-    }
-  }
+// Roles live in the site's database, edited on the editor's Roles page. This is a translator's
+// rules there: reads everything, writes (translates) only French.
+export const translator: RoleRules = { "*": ["read"], write: { locales: ["fr"] } };
 ```
 
 See `vibe-cms docs permissions` for the rest of the role rules.

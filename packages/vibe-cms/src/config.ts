@@ -24,7 +24,10 @@ export type Action = "read" | "write" | "publish" | "delete";
 export interface RoleRules {
   /** Everything, everywhere. */
   all?: boolean,
-  /** Whether this role may publish and schedule. Defaults to having `write`. */
+  /**
+   * `false` turns publishing (and scheduling) off for every type. Otherwise a type is published only
+   * when its rule lists `publish`; `true` is the old meaning, where `write` implied it.
+   */
   publish?: boolean,
   /** Write (translate) every readable type, only in these locales. Also limits the role's other writes to them. */
   write?: { locales: string[] },
@@ -32,10 +35,13 @@ export interface RoleRules {
   media?: Action[],
   /** Editing the site's name, accent color and icon. */
   siteSettings?: boolean,
-  /** Taking and restoring backups: reads every document, draft and file, and a restore replaces them all. */
-  backups?: boolean,
+  /**
+   * `"take"`: taking snapshots, which reads every document, draft and file. `true`: taking and restoring
+   * them; a restore replaces everything.
+   */
+  backups?: boolean | "take",
   /** Per content type, or `"*"` for every type without its own rule (a type's rule replaces `"*"`). `delete` is never implied. */
-  [type: string]: Action[] | boolean | { locales: string[] } | undefined
+  [type: string]: Action[] | boolean | "take" | { locales: string[] } | undefined
 }
 
 /** Who may do what on a deployed site. Development sessions have every permission. */
@@ -79,7 +85,10 @@ export interface ConfigInput {
   locales?: readonly string[],
   /** The locale reads fall back to. Defaults to the first of `locales`, else `"en"`. */
   defaultLocale?: string,
-  /** Roles and users. See `vibe-cms docs permissions`. */
+  /**
+   * @deprecated Roles are stored on the site and edited on the editor's Roles page; these are copied
+   * there once, on the first request. `users` is honored for one release. See `vibe-cms docs permissions`.
+   */
   permissions?: Permissions,
   /** URL prefix for everything the CMS serves. Defaults to `/_vibe`. */
   prefix?: string,
@@ -161,7 +170,7 @@ type RuleChecks<C extends ConfigInput> = {
   write?: { locales: ReadonlyArray<Locales<C>> },
   media?: readonly Action[],
   siteSettings?: boolean,
-  backups?: boolean
+  backups?: boolean | "take"
 } & { [T in Types<C> | "*"]?: readonly Action[] };
 
 type Placeholders<T> = T extends `${string}{${infer K}}${infer Rest}` ? K | Placeholders<Rest> : never;

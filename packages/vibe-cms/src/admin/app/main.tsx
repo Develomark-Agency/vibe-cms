@@ -1,7 +1,7 @@
 import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon, ShieldIcon } from "lucide-react";
 import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import Fuse from "fuse.js";
@@ -25,6 +25,7 @@ import { Marked, markTitle } from "./marked.tsx";
 import { SiteSettingsPage } from "./settings.tsx";
 import { SignIn } from "./signin.tsx";
 import { UsersPage } from "./users.tsx";
+import { RolesPage } from "./roles.tsx";
 import { ConnectApp, ConnectionsPage, takeConnectRequest } from "./connect.tsx";
 import { TrashPage } from "./trash.tsx";
 import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
@@ -202,8 +203,9 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   const singletons = types.filter(t => collectionSettings(config, t).singleton);
   const collections = types.filter(t => !collectionSettings(config, t).singleton);
   const canTrash = session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete);
-  // Sites in an org leave who may sign in to the hub; in development nobody signs in for real.
-  const canManageUsers = session.permissions.users && info.signIn !== "hub" && !info.dev;
+  // In development nobody signs in for real. Org sites show who the hub signed in, read only.
+  const canManageUsers = session.permissions.users && !info.dev;
+  const canManageRoles = session.permissions.roles;
   // Agents and the CLI connect to the site itself only when it signs people in itself.
   const canConnect = info.signIn !== "hub" && !info.dev;
 
@@ -215,6 +217,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
   else if(path === "/media" && session.permissions.media.read) page = <MediaPage />;
   else if(path === "/settings" && session.permissions.site) page = <SiteSettingsPage />;
   else if(path === "/users" && canManageUsers) page = <UsersPage />;
+  else if(path === "/roles" && canManageRoles) page = <RolesPage />;
   else if(path === "/connections" && canConnect) page = <ConnectionsPage />;
   else if(path === "/trash" && canTrash) page = <TrashPage />;
   else {
@@ -261,6 +264,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
       items: [
         ...(session.permissions.site ? [{ key: "site", to: "/settings", label: "Site", icon: <SlidersHorizontalIcon /> } satisfies NavItem] : []),
         ...(canManageUsers ? [{ key: "users", to: "/users", label: "Users", icon: <UsersIcon /> } satisfies NavItem] : []),
+        ...(canManageRoles ? [{ key: "roles", to: "/roles", label: "Roles", icon: <ShieldIcon /> } satisfies NavItem] : []),
         ...singletons.map((type): NavItem => ({
           key: `content:${type}`,
           to: `/content/${type}`,

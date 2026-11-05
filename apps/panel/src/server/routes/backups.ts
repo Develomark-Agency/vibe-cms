@@ -5,6 +5,7 @@ import { PanelError } from "vibe-cms/panel";
 import { packSnapshot } from "vibe-cms/backups";
 import { bucketStore, canRestore, cleanPolicy, defaultPolicy, enqueue, processBackups, savePolicy, siteBackups } from "../backups.ts";
 import { hubOrg } from "../hub.ts";
+import { hubAccess, requireSiteManager } from "../access.ts";
 import * as t from "../schema.ts";
 import { db, siteById } from "../shared.ts";
 import { waitUntil, type AppContext, type AppEnv } from "../context.ts";
@@ -18,6 +19,7 @@ function kick(c: AppContext, siteId: string) {
 async function backedUpSite(c: AppContext) {
   const site = await siteById(c.env, c.req.param("id")!);
   if(!site) throw new PanelError(404, "Unknown site");
+  await requireSiteManager(c.env, await hubAccess(c.env, c.get("session")), site.id);
   return site;
 }
 
@@ -41,6 +43,7 @@ export const backups = new Hono<AppEnv>()
     const env = c.env;
     const [row] = await db(env).select().from(t.backupSnapshots).where(eq(t.backupSnapshots.id, c.req.query("snapshot") ?? ""));
     if(!row || !env.BACKUPS) throw new PanelError(404, "Unknown snapshot");
+    await requireSiteManager(env, await hubAccess(env, c.get("session")), row.site_id);
     const site = await siteById(env, row.site_id);
     const slug = (site?.name ?? row.site_id).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "site";
     const stamp = new Date(row.taken_at).toISOString().slice(0, 16).replace(/[T:]/g, "-");
@@ -55,6 +58,7 @@ export const backups = new Hono<AppEnv>()
   })
 
   .put("/backups/defaults", policyBody, async c => {
+    if(!(await hubAccess(c.env, c.get("session"))).admin) throw new PanelError(403, "Only the panel's owner and admins can change the backup schedule");
     await savePolicy(c.env, "*", cleanPolicy(c.req.valid("json").policy), c.get("session").sub);
     return c.json({ defaults: await defaultPolicy(c.env) });
   })

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { env, HUB, idp, idToken, installMock, ISSUER, jar, panel, removeMock, signIn, siteId, sites } from "./mock.ts";
+import { assignRoles, env, HUB, idp, idToken, installMock, ISSUER, jar, panel, removeMock, signIn, siteId, sites } from "./mock.ts";
 
 beforeAll(installMock);
 afterAll(removeMock);
@@ -11,7 +11,7 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   const callback = await signIn();
   expect(callback.status).toBe(302);
   expect(callback.headers.get("location")).toBe("https://panel.test/s/site-a/");
-  expect(await (await panel("/api/me")).json()).toEqual({ name: "Jane", email: "jane@agency.test" });
+  expect(await (await panel("/api/me")).json()).toEqual({ name: "Jane", email: "jane@agency.test", role: "owner", admin: true, permissions: ["members", "templates", "addSites", "removeSites"] });
 
   const added = await panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://site-a.test" }) });
   expect(added.status).toBe(201);
@@ -31,7 +31,8 @@ test("sign-in, adding a site, and the one-time code handoff", async () => {
   const siteA = sites["https://site-a.test"]!;
   const exchange = await siteA(new Request("https://site-a.test/_vibe/api/session", { method: "POST", body: JSON.stringify({ code }) }));
   const session = await exchange.json() as { token: string, user: { sub: string, roles: string[] } };
-  expect(session.user).toMatchObject({ sub: `${ISSUER}|u-jane`, roles: ["editor"] });
+  // The hub's owner manages every site: the hub's signed siteAdmin claim makes her an owner there.
+  expect(session.user).toMatchObject({ sub: `${ISSUER}|u-jane`, roles: ["owner"] });
   const me = await siteA(new Request("https://site-a.test/_vibe/api/session", { headers: { authorization: `Bearer ${session.token}` } }));
   expect(me.status).toBe(200);
   const replay = await siteA(new Request("https://site-a.test/_vibe/api/session", { method: "POST", body: JSON.stringify({ code }) }));
@@ -56,20 +57,35 @@ test("hub tokens are addressed to one site and only work there", async () => {
   const token = await userToken(env, session!, a);
   const siteA = sites["https://site-a.test"]!;
   const me = await siteA(new Request("https://site-a.test/_vibe/api/session", { headers: { authorization: `Bearer ${token}` } }));
-  expect(await me.json()).toMatchObject({ user: { sub: `${ISSUER}|u-jane`, email: "jane@agency.test", roles: ["editor"] } });
+  expect(await me.json()).toMatchObject({ user: { sub: `${ISSUER}|u-jane`, email: "jane@agency.test", roles: ["owner"] } });
   // The same token on a site it wasn't addressed to: refused.
   const b = await siteId("https://site-b.test");
   const wrongSite = await userToken(env, session!, b);
   expect((await siteA(new Request("https://site-a.test/_vibe/api/session", { headers: { authorization: `Bearer ${wrongSite}` } }))).status).toBe(401);
 });
 
-test("a site refuses users it gives no role", async () => {
+test("people see only the sites they have a role on, with the roles the hub gave them", async () => {
+  const a = await siteId("https://site-a.test");
+  await assignRoles(a, "u-bob", []);
   idp.email = "bob@agency.test";
   idp.sub = "u-bob";
   await signIn();
-  const response = await panel(`/api/sites/${await siteId("https://site-a.test")}/code`, { method: "POST" });
-  expect(response.status).toBe(403);
-  expect((await response.json() as { error: string }).error).toBe("No access to this site");
+  // Not a member and no role anywhere: no sites, and no way in.
+  expect(await (await panel("/api/sites")).json()).toEqual([]);
+  expect((await panel(`/api/sites/${a}/code`, { method: "POST" })).status).toBe(404);
+  expect((await panel("/api/sites", { method: "POST", body: JSON.stringify({ url: "https://site-a.test" }) })).status).toBe(403);
+
+  // A role the site doesn't have gives nothing there.
+  await assignRoles(a, "u-bob", ["ghost"]);
+  const refused = await panel(`/api/sites/${a}/code`, { method: "POST" });
+  expect(refused.status).toBe(403);
+  expect((await refused.json() as { error: string }).error).toBe("No access to this site");
+
+  await assignRoles(a, "u-bob", ["editor", "owner"]);
+  const { code } = await (await panel(`/api/sites/${a}/code`, { method: "POST" })).json() as { code: string };
+  const exchange = await sites["https://site-a.test"]!(new Request("https://site-a.test/_vibe/api/session", { method: "POST", body: JSON.stringify({ code }) }));
+  // A role claim naming "owner" still counts for nothing; only the signed siteAdmin claim does.
+  expect((await exchange.json() as { user: { roles: string[] } }).user.roles).toEqual(["editor"]);
 });
 
 test("PANEL_ALLOW keeps other accounts out of the panel", async () => {

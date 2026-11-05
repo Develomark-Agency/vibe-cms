@@ -13,7 +13,13 @@ function text(input: Record<string, unknown>, field: string): string {
 }
 
 /** `{ url }`: the address of a site to add. */
-export const siteBody = validator("json", value => ({ url: text(object(value), "url") }));
+export const siteBody = validator("json", value => {
+  const input = object(value);
+  const templateId = input.templateId;
+  if(templateId !== undefined && templateId !== null && typeof templateId !== "string") throw new PanelError(400, "Expected templateId");
+  // Undefined: the default template. Null: no roles.
+  return { url: text(input, "url"), templateId: templateId as string | null | undefined };
+});
 
 /** `{ snapshot }`: the snapshot to restore. */
 export const restoreBody = validator("json", value => ({ snapshot: text(object(value), "snapshot") }));

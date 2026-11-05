@@ -25,5 +25,24 @@ export const migrations: Migration[] = [
       "CREATE TABLE IF NOT EXISTS `sites` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`url` text NOT NULL,\n\t`name` text NOT NULL,\n\t`admin` text NOT NULL,\n\t`org` text,\n\t`added_by` text NOT NULL,\n\t`added_at` integer NOT NULL\n);",
       "CREATE UNIQUE INDEX IF NOT EXISTS `sites_url_unique` ON `sites` (`url`);"
     ]
+  },
+  {
+    tag: "0001_slimy_master_mold",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS `hub_roles` (\n\t`name` text PRIMARY KEY NOT NULL,\n\t`permissions` text NOT NULL,\n\t`updated_by` text NOT NULL,\n\t`updated_at` integer NOT NULL\n);",
+      "CREATE TABLE IF NOT EXISTS `members` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`sub` text,\n\t`email` text,\n\t`name` text,\n\t`role` text NOT NULL,\n\t`added_by` text NOT NULL,\n\t`added_at` integer NOT NULL,\n\t`last_seen_at` integer\n);",
+      "CREATE UNIQUE INDEX IF NOT EXISTS `members_sub_unique` ON `members` (`sub`);",
+      "CREATE INDEX IF NOT EXISTS `members_email` ON `members` (`email`);",
+      "CREATE TABLE IF NOT EXISTS `site_assignments` (\n\t`site_id` text NOT NULL,\n\t`principal` text NOT NULL,\n\t`email` text,\n\t`name` text,\n\t`roles` text NOT NULL,\n\t`assigned_by` text NOT NULL,\n\t`assigned_at` integer NOT NULL,\n\tPRIMARY KEY(`site_id`, `principal`),\n\tFOREIGN KEY (`site_id`) REFERENCES `sites`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+      "CREATE INDEX IF NOT EXISTS `site_assignments_principal` ON `site_assignments` (`principal`);",
+      "CREATE TABLE IF NOT EXISTS `site_grants` (\n\t`site_id` text NOT NULL,\n\t`sub` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`granted_by` text NOT NULL,\n\t`granted_at` integer NOT NULL,\n\tPRIMARY KEY(`site_id`, `sub`),\n\tFOREIGN KEY (`site_id`) REFERENCES `sites`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+      "CREATE TABLE IF NOT EXISTS `templates` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`name` text NOT NULL,\n\t`roles` text NOT NULL,\n\t`is_default` integer DEFAULT false NOT NULL,\n\t`updated_by` text NOT NULL,\n\t`updated_at` integer NOT NULL\n);",
+      "ALTER TABLE `sites` ADD `template_id` text;",
+      "ALTER TABLE `sites` ADD `template_state` text;",
+      "ALTER TABLE `sites` ADD `template_skipped` text;",
+      "ALTER TABLE `sites` ADD `template_error` text;",
+      "ALTER TABLE `sites` ADD `template_attempts` integer DEFAULT 0 NOT NULL;",
+      "ALTER TABLE `sites` ADD `template_by` text;"
+    ]
   }
 ];

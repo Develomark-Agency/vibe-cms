@@ -16,6 +16,7 @@ import {
   signOut
 } from "../signin.ts";
 import { jsonInput, readCookie, type SiteEnv } from "../http.ts";
+import { recordHubUser } from "../roles.ts";
 
 /** Who is signed in, and how people sign in: the editor's session, a site's own passkeys or identity provider. */
 export const auth = new Hono<SiteEnv>()
@@ -26,7 +27,7 @@ export const auth = new Hono<SiteEnv>()
       if(c.req.header("authorization")) throw new HttpError(401, "Session expired");
       return c.json({ user: null });
     }
-    return c.json({ user: session, permissions: permissionSummary(c.env.state.config, session) });
+    return c.json({ user: session, permissions: permissionSummary(c.env.state, session) });
   })
 
   .post("/session", jsonInput<{ code?: string, dev?: boolean, resume?: boolean }>(), async c => {
@@ -51,7 +52,7 @@ export const auth = new Hono<SiteEnv>()
     }
     // Kept in the editor's memory: it only ever runs framed by the hub, or locally in development.
     const { token, expiresAt } = await issueSession(state.db, next, state.siteId, url.origin);
-    return c.json({ token, expiresAt, user: next, permissions: permissionSummary(state.config, next) });
+    return c.json({ token, expiresAt, user: next, permissions: permissionSummary(state, next) });
   })
 
   .delete("/session", async c => {
@@ -66,6 +67,7 @@ export const auth = new Hono<SiteEnv>()
     if(!token) throw new HttpError(400, "Expected token");
     const next = await sessionFromHubToken(state, token);
     if(!next || next.grants) throw new HttpError(401, "Not a sign-in token from this site's hub");
+    await recordHubUser(state.db, next, next.roles.includes("owner")).catch(() => {});
     return c.json({ code: await createCode(state.db, next), expiresIn: 30 });
   })
 

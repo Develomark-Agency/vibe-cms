@@ -22,7 +22,7 @@ export { codePage, corsPreflight } from "../oauth/index.ts";
  * Sites in an org don't serve any of this: their hub does.
  */
 
-type State = Pick<EngineState, "config" | "db" | "org" | "prefix" | "signIn">;
+type State = Pick<EngineState, "config" | "db" | "org" | "prefix" | "signIn" | "roles">;
 
 const servers = new WeakMap<object, OAuthServer>();
 

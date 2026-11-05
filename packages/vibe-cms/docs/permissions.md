@@ -2,37 +2,29 @@
 
 How editors sign in to a deployed site (its org's hub, `VIBE_ORG`), how roles are assigned, and exactly what each role rule allows.
 
+Roles are data, not config: each site stores its own in its database, edits them on the editor's **Roles** page, and checks them on every request. A fresh site has only the built-in `owner`; add roles from a preset or by hand.
+
 ```ts
 // examples/schemas/src/permissions.ts
-// Editors, the CLI and agents sign in through the org's hub (panel): deploy the site with
-// VIBE_ORG=my-agency.com. Sign-in is the org's choice, so nothing about it lives in this file.
-// Development sites don't need it.
-export default defineConfig({
-  permissions: {
-    roles: {
-      admin: { all: true },
-      editor: {
-        "*": ["read"],
-        post: ["read", "write", "publish", "delete"],
-        page: ["read", "write"],
-        media: ["read", "write"],
-        siteSettings: true
-      },
-      // Writes posts but can't publish them.
-      contributor: { post: ["read", "write"], media: ["read", "write"], publish: false }
-    },
-    // Roles by verified email (or `<issuer>|<sub>`), on top of any the hub passes on from the
-    // identity provider (its OIDC_ROLES_CLAIM, e.g. "groups").
-    users: {
-      "ada@agency.example": ["admin"],
-      "sam@client.example": ["editor"]
-    }
+// What the Roles page stores for each role, and what `PUT /_vibe/api/roles/:name` and hub
+// templates take: rules by content type, plus a few switches.
+export const roles: Record<string, RoleRules> = {
+  admin: { all: true },
+  editor: {
+    "*": ["read"],
+    post: ["read", "write", "publish", "delete"],
+    page: ["read", "write"],
+    media: ["read", "write"],
+    siteSettings: true
   },
+  // Writes posts but can't publish them.
+  contributor: { post: ["read", "write"], media: ["read", "write"], publish: false }
+};
 ```
 
 ## Signing in
 
-- **Development** (`dev`, which defaults to Vite's `import.meta.env.DEV`): the editor, the CLI and local agents sign in as a local developer with every permission. No `VIBE_ORG` or `permissions` needed.
+- **Development** (`dev`, which defaults to Vite's `import.meta.env.DEV`): the editor, the CLI and local agents sign in as a local developer with every permission. No `VIBE_ORG` or roles needed.
 - **Deployed**: the site belongs to the org in its `VIBE_ORG` environment variable, and everyone signs in to that org's hub (the agency panel), which signs them in with its identity provider. Sign-in is the same for every site in the org, so it's deploy configuration, not part of the config file. For each site, the hub signs a short-lived token addressed to that site alone, issued by the org and carrying the provider identity (`<issuer>|<sub>`) and claims. The site finds the hub through the org's DNS record, checks the token against the hub's keys at `<hub>/.well-known/jwks.json`, works out roles itself, and creates its own session, valid for 12 hours. Sites have no secrets to configure; the session signing key is generated and stored in D1. See `vibe-cms docs deploy` for orgs.
 - The editor of a deployed site only opens inside the hub, which hands it a one-time code; on its own it links to the site's page in the hub (`<hub>/s/<site id>/`). The CLI logs in to the hub with `vibe-cms login` (`vibe-cms docs cli`), and agents connect to the hub's `/mcp` (`vibe-cms docs agents`).
 - **Deployed without an org**: a site without `VIBE_ORG` signs people in itself (below).
@@ -67,17 +59,27 @@ createHandler(config, {
 });
 ```
 
-`owner` is a built-in role: every permission, plus managing users. Only the site gives it (the setup link, the Users page, or `permissions.users`); an identity provider claim or hub token naming `owner` is ignored. Owners and roles with `all: true` can manage users. A signed-in browser keeps an httpOnly cookie for 30 days, which the editor trades for a 12-hour session; signing out, or being removed, ends it. Agents and the CLI sign in to a site without an org the same way: the site's editor asks the signed-in user to approve them (`vibe-cms docs agents`, `vibe-cms docs cli`).
+`owner` is a built-in role: every permission, plus managing roles and users. On a site without an org only the site gives it (the setup link or the Users page); on an org site, the hub's signed `siteAdmin` claim does (below). A `roles` claim naming `owner`, from an identity provider or the hub, is always ignored. Owners and roles with `all: true` can manage roles and users. A signed-in browser keeps an httpOnly cookie for 30 days, which the editor trades for a 12-hour session; signing out, or being removed, ends it. Agents and the CLI sign in to a site without an org the same way: the site's editor asks the signed-in user to approve them (`vibe-cms docs agents`, `vibe-cms docs cli`).
 
 ## Roles
 
+Roles live in the site's database (`vibe_roles`), so dev, staging and production each have their own. Owners and roles with `all: true` edit them on the editor's **Roles** page: a rule builder per content type, languages, media, site settings and backups. Everyone else can't open it.
+
+- **Presets.** "Add from preset" copies one of the packaged presets (Admin, Editor, Contributor, Translator) into the site's roles, with no link back. They're also exported from `vibe-cms/roles` as `PRESETS`.
+- **Saving checks rules** against the site: keys must be content types it has (or the switches below), actions must be `read`, `write`, `publish` or `delete`, and locales must be the site's. A role that names a type the site no longer has keeps working; the rule is ignored, and the Roles page flags it.
+- **Guardrails.** A change that would leave nobody able to manage the site is refused.
+- **API** (under `/_vibe/api`, owners and `all` roles for writes): `GET /roles`, `PUT /roles/:name` (`{ rules }`), `DELETE /roles/:name`, `POST /roles/apply` (`{ roles: { name: rules }, replace? }`, what the hub's templates use; rules for missing types are skipped and reported), `GET /roles/presets`, `GET /roles/schema` (content types and locales).
+
 A signed-in user's roles are the union of:
 
-- the `roles` the hub passes on: the values of the identity provider claim named by the hub's `OIDC_ROLES_CLAIM` (for example `groups`), if it sets one, and
-- `permissions.users` entries matching their verified email (lowercased) or `<issuer>|<sub>`, and
+- on an org site, the `roles` the hub passes on: the roles the hub assigned them on this site, and the values of the identity provider claim named by the hub's `OIDC_ROLES_CLAIM` (for example `groups`), if it sets one;
 - on a site without an org, the roles given on the editor's **Users** page.
 
-Only roles defined in `permissions.roles`, and the built-in `owner`, count. A user with none gets "No access to this site".
+Only the site's stored roles and the built-in `owner` count; other names are ignored and never widen access. A user with none gets "No access to this site".
+
+**Site admins from the hub.** The hub's owner and admins, and whoever added the site to the hub (or was made its owner there), manage the site. The hub says so with a `siteAdmin: true` claim it signs into the token, and the site makes them `owner` for that session. It's never stored on the site, can't be removed there, and lasts only while the site trusts that hub. On org sites the **Users** page shows who the hub signed in, read only: assignments are edited in the hub, on the site's **People and roles** page.
+
+**Upgrading.** A config that still has `permissions.roles` has them copied into the database once, on the first request (names already stored are skipped), with a warning in the logs to remove the key. `permissions.users` is honored for one more release, only for people nothing else gives a role. Remove `permissions` from your config once the roles are on the site.
 
 ## Role rules
 
@@ -88,18 +90,19 @@ A role is an object of rules; a user may do anything any of their roles allows.
 | `all: true` | Everything, including media and site settings |
 | `"<type>": [...]` | Actions on that content type: `"read"`, `"write"`, `"publish"`, `"delete"` |
 | `"*": [...]` | The same, for every type without its own rule. A type's own rule replaces `"*"` rather than adding to it. |
-| `publish: boolean` | Overrides publishing (and scheduling) for the role's types. Without it, any type the role may `write` (or `publish`) it may publish. |
+| `publish: false` | Turns publishing (and scheduling) off for every type. Otherwise a type is published only when its rule lists `"publish"`. (`publish: true` keeps the old meaning, where `write` implied publishing; config roles are rewritten in today's terms when they're copied onto the site.) |
 | `write: { locales: [...] }` | Writing every type the role can read, but only in these locales: a translator. Also limits the role's other writes to these locales. |
 | `media: [...]` | The media library. Without it: read always, upload (`write`) if the role may write any type, delete never. |
 | `siteSettings: true` | Changing the site's name, accent and icon (`vibe-cms docs config`). Not implied by anything but `all`. |
-| `backups: true` | Taking and restoring snapshots (`vibe-cms docs backups`). Reads every draft and file, and a restore replaces them all. Not implied by anything but `all`. |
+| `backups: "take"` | Taking snapshots (`vibe-cms docs backups`), which reads every draft and file. Not implied by anything but `all`. |
+| `backups: true` | Taking and restoring them. A restore replaces everything. |
 
 Details that matter:
 
-- Listing any action for a type also allows reading it.
+- Listing any action for a type also allows reading it. The Roles page shows each type (and the media library) as a level that includes the ones before it, No access › Read › Write › Publish (or Upload for media), with Delete as its own checkbox.
 - `delete` is never implied; list it explicitly.
 - Rules are checked on the site for every request, whether it comes from the editor, the CLI, MCP or the panel's agents.
-- `defineConfig` type-checks rule keys against your content types and locales, and `users` role names against `roles`.
+- Rules naming content types the site doesn't have are ignored at runtime and refused when saving.
 
 ## Checking access from code
 

@@ -232,9 +232,8 @@ describe("restores", () => {
 
 describe("access", () => {
   test("backups need their own permission", () => {
-    expect(can(config, { sub: "x", roles: ["editor"] }, { action: "read", scope: "backups" })).toBe(false);
-    const withBackups = { ...config, permissions: { roles: { ops: { backups: true } } } };
-    expect(can(withBackups, { sub: "x", roles: ["ops"] }, { action: "write", scope: "backups" })).toBe(true);
+    expect(can({ config, roles: { map: config.permissions?.roles ?? {} } }, { sub: "x", roles: ["editor"] }, { action: "read", scope: "backups" })).toBe(false);
+    expect(can({ config, roles: { map: { ops: { backups: true } } } }, { sub: "x", roles: ["ops"] }, { action: "write", scope: "backups" })).toBe(true);
   });
 
   test("transfer links are signed and expire", async () => {

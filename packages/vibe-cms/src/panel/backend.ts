@@ -1,3 +1,5 @@
+import type { RoleRules } from "../config.ts";
+
 /** A site as the panel knows it: from its `/.well-known/vibe-cms` descriptor. */
 export interface PanelSite {
   id: string,
@@ -34,7 +36,94 @@ export function normalizeBranding(input: Partial<Record<keyof PanelBranding, unk
 
 export interface PanelUser {
   name?: string,
-  email?: string
+  email?: string,
+  /** The user's hub role (`owner`, `admin`, `member` or a custom one); null when they aren't a member. Hosted panels only. */
+  role?: string | null,
+  permissions?: HubPermission[],
+  /** The hub's owner or an admin: sees and manages every site. */
+  admin?: boolean
+}
+
+export type HubPermission = "members" | "templates" | "addSites" | "removeSites";
+
+/** One role's rules, as a site stores them. */
+export type PanelRoleRules = RoleRules;
+
+export interface HubMember {
+  id: string,
+  sub: string | null,
+  email: string | null,
+  name: string | null,
+  role: string,
+  invited: boolean,
+  addedAt: number,
+  lastSeenAt: number | null,
+  managedSites: number,
+  assignedSites: string[]
+}
+
+export interface HubRole {
+  name: string,
+  permissions: HubPermission[],
+  builtIn: boolean
+}
+
+export interface SiteRoleInfo {
+  name: string,
+  rules: PanelRoleRules,
+  updatedBy: string | null,
+  updatedAt: number | null,
+  stale: string[]
+}
+
+export interface SiteAccessInfo {
+  site: PanelSite & { addedBy: string | null, addedAt: number | null },
+  canManage: boolean,
+  me: { admin: boolean },
+  owners: Array<{ sub: string, email: string | null, name: string | null, kind: "owner" | "admin" | "grant", grantedAt: number | null, adder: boolean }>,
+  people: Array<{ principal: string, email: string | null, name: string | null, invited: boolean, roles: string[] }>,
+  /** The site's own roles; null when the user can't manage it or the site couldn't be reached (`rolesError`). */
+  roles: SiteRoleInfo[] | null,
+  rolesError: string | null,
+  template: { id: string | null, name: string | null, state: "applied" | "pending" | "failed", skipped: string[], error: string | null, attempts: number } | null
+}
+
+export interface RoleTemplate {
+  id: string,
+  name: string,
+  roles: Record<string, PanelRoleRules>,
+  isDefault: boolean,
+  updatedBy: string,
+  updatedAt: number,
+  usedBy: number,
+  /** One line per role describing what it may do. */
+  summary: Record<string, string>
+}
+
+export interface TemplateResult {
+  state: "applied" | "pending" | "failed",
+  skipped: string[],
+  error?: string
+}
+
+/** Who administers what on a hosted panel: members, site access, templates. */
+export interface PanelHub {
+  setup(): Promise<{ needsOwner: boolean }>,
+  members(): Promise<{ members: HubMember[], roles: HubRole[], sites: number, permissions: HubPermission[], me: { sub: string, role: string | null, permissions: HubPermission[] } }>,
+  invite(email: string, role: string): Promise<void>,
+  setMemberRole(id: string, role: string): Promise<void>,
+  removeMember(id: string): Promise<void>,
+  saveHubRole(name: string, permissions: HubPermission[]): Promise<void>,
+  deleteHubRole(name: string): Promise<void>,
+  siteAccess(siteId: string): Promise<SiteAccessInfo>,
+  assign(siteId: string, who: { email?: string, sub?: string }, roles: string[]): Promise<void>,
+  unassign(siteId: string, principal: string): Promise<void>,
+  addOwner(siteId: string, sub: string): Promise<void>,
+  removeOwner(siteId: string, sub: string): Promise<void>,
+  applyTemplate(siteId: string, templateId: string, replace: boolean): Promise<TemplateResult>,
+  templates(): Promise<RoleTemplate[]>,
+  saveTemplate(id: string | null, input: { name?: string, roles?: Record<string, PanelRoleRules>, isDefault?: boolean }): Promise<RoleTemplate>,
+  deleteTemplate(id: string): Promise<void>
 }
 
 /** An agent (MCP client) the user connected to the panel. */
@@ -144,7 +233,8 @@ export interface PanelBackend {
   branding(): Promise<PanelBranding>,
   me(): Promise<PanelUser | null>,
   sites(): Promise<PanelSite[]>,
-  addSite(url: string): Promise<PanelSite>,
+  /** `templateId`: undefined for the panel's default template, null for none. Hosted panels only. */
+  addSite(url: string, templateId?: string | null): Promise<PanelSite & { template?: TemplateResult | null }>,
   removeSite(id: string): Promise<void>,
   setFavorite(id: string, favorite: boolean): Promise<void>,
   /** A one-time code for the framed site. `null` when the site signs in by itself (development). */
@@ -155,7 +245,9 @@ export interface PanelBackend {
   agents?(): Promise<{ mcpUrl: string, agents: PanelAgent[] }>,
   disconnectAgent?(id: string): Promise<void>,
   /** Scheduled backups. Hosted panels only. */
-  backups?: PanelBackups
+  backups?: PanelBackups,
+  /** Members, site access and templates. Hosted panels only. */
+  hub?: PanelHub
 }
 
 export class PanelError extends Error {

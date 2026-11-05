@@ -101,7 +101,7 @@ function staging(name: BackupTable): string {
 
 function guard(engine: Engine, action: "read" | "write") {
   if(engine.scope.trusted && !engine.scope.session) return;
-  require(engine.config, engine.scope.session, { action, scope: "backups" });
+  require(engine.state, engine.scope.session, { action, scope: "backups" });
 }
 
 function typeHashes(engine: Engine): Promise<Record<string, string>> {

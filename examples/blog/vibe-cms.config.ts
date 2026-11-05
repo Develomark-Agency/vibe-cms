@@ -11,15 +11,6 @@ export default defineConfig({
   locales: ["en", "fr"],
   defaultLocale: "en",
   plugins: [ViewsPlugin({ types: ["post"] })],
-  permissions: {
-    roles: {
-      "agency-staff": { all: true },
-      "client-editor": { post: ["read", "write"], author: ["read"], homepage: ["read", "write"], page: ["read", "write"], publish: false, siteSettings: true }
-    },
-    users: {
-      "jane@my-agency.com": ["agency-staff"]
-    }
-  },
   collections: {
     post: { icon: "newspaper", preview: "/posts/{slug}" },
     author: { icon: "user-round" },

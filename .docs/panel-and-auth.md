@@ -55,7 +55,7 @@ The org, not the hub's address, is the `iss` of every hub token. Moving the hub 
 
 Every site trusts **exactly one** org. Only the hub talks to the identity provider, so changing providers is a hub setting, not a change to every site.
 
-Every way in goes through the hub: the editor, the CLI (`vibe-cms login my-agency.com`), agents (`/mcp`) and scheduled backups. The hub signs a short-lived token (ES256, five minutes) for **one site at a time**, `aud` set to that site's ID. A user's token carries the provider identity as `sub` (`<issuer>|<sub>`), the provider's other claims (email, `email_verified`, name) passed through, and `roles`: the values of the provider claim named in the hub's `OIDC_ROLES_CLAIM`, if set. The site verifies the token itself, without calling the hub, then works out roles from its own config.
+Every way in goes through the hub: the editor, the CLI (`vibe-cms login my-agency.com`), agents (`/mcp`) and scheduled backups. The hub signs a short-lived token (ES256, five minutes) for **one site at a time**, `aud` set to that site's ID. A user's token carries the provider identity as `sub` (`<issuer>|<sub>`), the provider's other claims (email, `email_verified`, name) passed through, `roles`: the roles the hub assigned the user on this site plus the values of the provider claim named in the hub's `OIDC_ROLES_CLAIM`, if set, and `siteAdmin: true` when the user manages the site (the hub's owner and admins, or a `site_grants` row). The site verifies the token itself, without calling the hub, then resolves the role names against its own stored roles; `siteAdmin` makes the user `owner` for that session. The hub strips any provider claim called `roles` or `siteAdmin`, so neither can be forged by the identity provider.
 
 ```ts
 // a hub token for one site
@@ -65,7 +65,8 @@ Every way in goes through the hub: the editor, the CLI (`vibe-cms login my-agenc
   "sub": "https://accounts.google.com|10498…",
   "email": "jane@my-agency.com",
   "email_verified": true,
-  "roles": ["agency-staff"],
+  "roles": ["client-editor"],
+  "siteAdmin": true,
   "exp": 1793000300
 }
 ```
@@ -74,36 +75,17 @@ The hub's signing key is a Worker secret, `HUB_SIGNING_KEY` (`bunx vibe-cms hub 
 
 ## Permissions live on the site
 
-Anyone allowed into the panel sees every site in the shared list. Whether they can do anything on a site is decided by that site alone.
+Roles are data owned by each site: a `vibe_roles` table in its D1, edited on the editor's Roles page (or written by the hub from a template through `POST /_vibe/api/roles/apply`), enforced on every request with no dependency on the hub being reachable. A fresh site has only the built-in `owner`; the package ships presets (Admin, Editor, Contributor, Translator) that are copied in, not linked. Nothing about roles lives in the config any more: an old `permissions.roles` is copied into the database once, and `permissions.users` is a fallback for one release. See `vibe-cms docs permissions`.
 
-```ts
-// vibe-cms.config.ts (site)
-export default defineConfig({
-  permissions: {
-    roles: {
-      "agency-staff": { all: true },
-      "client-editor": {
-        post: ["read", "write"],
-        page: ["read", "write"],
-        publish: false,
-      },
-      "translator-fr": {
-        "*": ["read"],
-        write: { locales: ["fr"] },
-      },
-    },
-    users: {
-      // keyed by verified email or `<issuer>|<sub>`
-      "jane@my-agency.com": ["agency-staff"],
-      "https://accounts.google.com|10498…": ["client-editor"],
-    },
-  },
-});
-```
+The hub decides **who has which role where** (`site_assignments`: a `sub`, or a verified email until that person first signs in, and the site's role names) and **who manages each site** (its owner and admins, plus `site_grants`: whoever added the site, or was made its owner). Neither the hub nor the identity provider can define what a role means; unknown role names are ignored.
 
-- Roles come from the identity provider's claims (the hub's `OIDC_ROLES_CLAIM=groups` for Okta, Entra, Keycloak, …, passed on as `roles`), from `permissions.users`, or both.
-- Users keyed by email require the `email_verified` claim.
-- Site permissions and version history key on stable provider identity, never on anything panel-specific, so they survive the panel being recreated.
+- Roles come from the hub's assignments and the identity provider's claims (the hub's `OIDC_ROLES_CLAIM=groups` for Okta, Entra, Keycloak, …), both passed on as `roles`.
+- Assignments by email require the `email_verified` claim.
+- Site roles and version history key on stable provider identity, never on anything panel-specific.
+
+### The hub's own members
+
+The hub has members (`members`: `owner`, `admin`, `member` or a custom hub role from `hub_roles`), with four hub permissions: `members`, `templates`, `addSites`, `removeSites`. The first owner comes from a one-time setup link the hub prints to its logs (`https://<hub>/#setup=…`) while it has no owner; until it's claimed nobody can sign in. Passing `PANEL_ALLOW` without a member row lets someone sign in and see only the sites they hold a role on.
 
 ## Signing in
 
@@ -228,7 +210,7 @@ PANEL_ICON=https://…/logo.png    #   and logo
 
 ### The shared site list and favorites
 
-When you first log in, there are no sites. Sites are added by URL, and the list is **shared by everyone using that panel**: one panel deployment is effectively one agency. Each user can favorite sites on top of that.
+When you first log in, there are no sites. Sites are added by URL by members with `addSites`, and the list is shared within the panel: owners and admins see every site, everyone else the sites they manage or hold a role on. Each user can favorite sites on top of that.
 
 Sketch of the tables; the real definitions are Drizzle tables in `apps/panel/src/server/schema.ts` (see `storage.md`).
 
@@ -248,7 +230,7 @@ CREATE TABLE favorites (
 );
 ```
 
-Seeing a site in the list grants nothing. Sites where the handoff is refused show as "no access."
+Seeing a site in the list grants nothing by itself; the site still decides. Adding a site can apply a template (`templates`), written through the site's role API with a short-lived `siteAdmin` token; an unreachable site leaves it `pending` for the cron to retry.
 
 ### Add site by URL
 
@@ -297,7 +279,7 @@ The panel holds no content and no identities.
 | Content | Never held by the panel |
 | Users and logins | Held by the identity provider; unaffected. Editors, CLIs and agents sign in again |
 | Signing key | A Worker secret: set the same one again, or a new one, which sites fetch from the same address |
-| Site permissions | Held by sites, keyed by provider identity; unaffected |
+| Site roles | Held by sites; unaffected. Assignments, members and templates are the hub's and go with it |
 | Shared site list | Lost; re-add sites by URL |
 | Favorites | Lost |
 
@@ -381,5 +363,5 @@ In the monorepo, the panel backend and its frontend are **one package**, `apps/p
 - **Session details:** site session lifetime and refresh, and the exact request and response shapes of the code endpoints.
 - **Who can remove sites** from the shared list (any panel user, or only whoever added it).
 - **Exporting and importing** the site list, so recreating a panel doesn't mean re-adding every site.
-- **The permissions overhaul:** who assigns roles (config, a site's Users page, the hub) is due a redesign; the hub doesn't manage roles yet.
+- **Keeping environments in sync:** with no roles in code, dev, staging and production each hold their own. Export/import of roles may be needed; hub templates cover the agency case. See `permissions-overhaul.md`.
 - **Simplifying agent sessions:** sites accept hub tokens as `Authorization: Bearer` directly, so the hub could send those instead of trading each for a cached site session (`agent_site_tokens`).

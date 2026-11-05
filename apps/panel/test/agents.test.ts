@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { handle } from "../src/server/index.ts";
 import { pkceChallenge, randomString } from "../src/server/oidc.ts";
-import { env, idp, installMock, ISSUER, panel, removeMock, signIn, siteId } from "./mock.ts";
+import { assignRoles, env, idp, installMock, ISSUER, panel, removeMock, signIn, siteId } from "./mock.ts";
 
 beforeAll(installMock);
 afterAll(removeMock);
@@ -128,9 +128,6 @@ describe("connecting an agent", () => {
     // Recorded against the user, as if they'd edited it themselves.
     expect(doc.structuredContent.updatedBy).toBe(`${ISSUER}|u-jane`);
 
-    // The site's own rules still apply: editors here can't touch site settings.
-    const settings = await call(token, "site_update", { site: a, name: "Renamed" });
-    expect(settings.content[0].text).toStartWith("[FORBIDDEN]");
     expect((await call(token, "documents_list", { site: "nope", type: "post" })).content[0].text).toStartWith("[NOT_FOUND]");
   });
 
@@ -158,13 +155,23 @@ describe("connecting an agent", () => {
     expect(refused.content[0].text).toStartWith("[FORBIDDEN]");
   });
 
-  test("a user the site gives no role gets FORBIDDEN from the site", async () => {
+  test("an agent only sees the user's sites, and the site's own rules apply", async () => {
     idp.email = "bob@agency.test";
     idp.sub = "u-bob";
     await signIn();
     const { access_token: token } = await connectWithTokens();
-    const result = await call(token, "documents_list", { site: a, type: "post" });
-    expect(result.content[0].text).toBe("[FORBIDDEN] No access to this site");
+    expect((await call(token, "sites_list")).structuredContent.sites).toEqual([]);
+    expect((await call(token, "documents_list", { site: a, type: "post" })).content[0].text).toStartWith("[NOT_FOUND]");
+
+    await assignRoles(a, "u-bob", ["ghost"]);
+    expect((await call(token, "documents_list", { site: a, type: "post" })).content[0].text).toBe("[FORBIDDEN] No access to this site");
+
+    // Editors there can't touch site settings.
+    await assignRoles(a, "u-bob", ["editor"]);
+    expect((await call(token, "documents_list", { site: a, type: "post" })).isError).toBeUndefined();
+    expect((await call(token, "site_update", { site: a, name: "Renamed" })).content[0].text).toStartWith("[FORBIDDEN]");
+    idp.email = "jane@agency.test";
+    idp.sub = "u-jane";
   });
 
   test("refresh tokens rotate", async () => {
@@ -246,7 +253,7 @@ describe("the CLI: site tokens and revocation", () => {
       const { status, body } = await siteTokenFor(token, site);
       expect(status).toBe(200);
       const me = await fetch("https://site-a.test/_vibe/api/session", { headers: { authorization: `Bearer ${body.token}` } });
-      expect(await me.json()).toMatchObject({ user: { sub: `${ISSUER}|u-jane`, roles: ["editor"] } });
+      expect(await me.json()).toMatchObject({ user: { sub: `${ISSUER}|u-jane`, roles: ["owner"] } });
     }
     expect((await siteTokenFor(token, "https://not-in-panel.test")).status).toBe(404);
     expect((await siteTokenFor("vpa_nope", a)).status).toBe(401);

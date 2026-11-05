@@ -1,4 +1,4 @@
-import { defineConfig } from "vibe-cms";
+import { defineConfig, type RoleRules } from "vibe-cms";
 import v from "vibe-cms/schema";
 
 // Every document can have a translation per locale. Queries in another locale fall back
@@ -12,12 +12,9 @@ export default defineConfig({
       path: v.text({ format: "path", unique: true }),
       body: v.text({ multiline: true })
     })
-  },
-  permissions: {
-    roles: {
-      editor: { all: true },
-      // Reads everything, writes (translates) only French.
-      translator: { "*": ["read"], write: { locales: ["fr"] } }
-    }
   }
 });
+
+// Roles live in the site's database, edited on the editor's Roles page. This is a translator's
+// rules there: reads everything, writes (translates) only French.
+export const translator: RoleRules = { "*": ["read"], write: { locales: ["fr"] } };

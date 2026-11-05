@@ -18,6 +18,7 @@ import { plugins } from "./routes/plugins.ts";
 import { previewApi, previewPages } from "./routes/preview.ts";
 import { discovery, info } from "./routes/site.ts";
 import { users } from "./routes/users.ts";
+import { roles } from "./routes/roles.ts";
 
 /**
  * The JSON API under `{prefix}/api`, as one chain so `hc<SiteApi>` (the editor's client) can read its types.
@@ -38,6 +39,7 @@ export const apiRoutes = new Hono<SiteEnv>()
   .route("/", auth)
   .route("/", connections)
   .route("/", users)
+  .route("/", roles)
   .route("/", previewApi);
 
 apiRoutes.all("*", c => {

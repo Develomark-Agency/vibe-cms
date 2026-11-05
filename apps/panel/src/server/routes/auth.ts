@@ -2,14 +2,19 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { exchangeCode, isAllowed, randomString, verifyIdToken } from "../oidc.ts";
 import { completeAuthorization } from "../oauth.ts";
+import { admitSignIn } from "../access.ts";
 import * as t from "../schema.ts";
 import { beginLogin, cookie, db, LOGIN_COOKIE, oidcConfig, SESSION_COOKIE, SESSION_TTL, setCookie } from "../shared.ts";
 import type { AppContext, AppEnv } from "../context.ts";
 
 async function login(c: AppContext) {
   const url = new URL(c.req.url);
-  const returnTo = url.searchParams.get("return") ?? "/";
-  return beginLogin(c.env, url, returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/");
+  let returnTo = url.searchParams.get("return") ?? "/";
+  if(!returnTo.startsWith("/") || returnTo.startsWith("//")) returnTo = "/";
+  // The hub's one-time setup link: carried through the sign-in, checked at the callback.
+  const setup = url.searchParams.get("setup");
+  if(setup) returnTo += `${returnTo.includes("?") ? "&" : "?"}setup=${encodeURIComponent(setup)}`;
+  return beginLogin(c.env, url, returnTo);
 }
 
 async function callback(c: AppContext) {
@@ -34,6 +39,16 @@ async function callback(c: AppContext) {
     return fail(`Sign-in failed: ${(error as Error).message}`);
   }
   if(!isAllowed(env.PANEL_ALLOW, claims)) return fail("Your account isn't allowed to use this panel.");
+  const returnUrl = pending.return_to.startsWith("oauth:") ? null : new URL(pending.return_to, url.origin);
+  const setup = returnUrl?.searchParams.get("setup") ?? null;
+  returnUrl?.searchParams.delete("setup");
+  const refused = await admitSignIn(env, {
+    sub: `${claims.iss}|${claims.sub}`,
+    email: typeof claims.email === "string" ? claims.email : undefined,
+    emailVerified: claims.email_verified === true,
+    name: typeof claims.name === "string" ? claims.name : undefined
+  }, setup);
+  if(refused) return fail(refused);
   if(pending.return_to.startsWith("oauth:")) return completeAuthorization(env, url, pending.return_to.slice(6), claims, tokens);
   const id = randomString();
   await db(env).insert(t.sessions).values({
@@ -45,7 +60,7 @@ async function callback(c: AppContext) {
     refresh_token: tokens.refresh_token ?? null,
     expires_at: Date.now() + SESSION_TTL
   });
-  const headers = new Headers({ location: `${url.origin}${pending.return_to}` });
+  const headers = new Headers({ location: `${url.origin}${returnUrl!.pathname}${returnUrl!.search}` });
   headers.append("set-cookie", setCookie(url, SESSION_COOKIE, id, SESSION_TTL / 1000));
   headers.append("set-cookie", setCookie(url, LOGIN_COOKIE, "", 0));
   return new Response(null, { status: 302, headers });

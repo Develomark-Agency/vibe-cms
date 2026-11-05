@@ -5,7 +5,7 @@ import { createHandler } from "vibe-cms/handler";
 import { clearOrgCache, ORG_MOVE_SCOPE } from "vibe-cms/org";
 import v from "vibe-cms/schema";
 import { createD1 } from "../../../packages/vibe-cms/test/helpers.ts";
-import { env, HUB, hubOrigins, idp, installMock, ORG, panel, removeMock, signIn, sites, txt } from "./mock.ts";
+import { assignRoles, env, HUB, hubOrigins, idp, installMock, ORG, panel, removeMock, signIn, sites, txt } from "./mock.ts";
 
 /** A site whose database survives redeploys (new handlers over the same D1), with an admin and an editor. */
 function orgSite(origin: string, siteEnv: Record<string, string> = {}) {
@@ -128,6 +128,7 @@ describe("orgs", () => {
     expect(again.sites.find(s => s.id === id)).toMatchObject({ state: "pending", effectiveAt: status.effectiveAt });
 
     // An editor can't cancel it; someone who can change the site's settings can.
+    await assignRoles(id, "u-bob", ["editor"]);
     idp.email = "bob@agency.test";
     idp.sub = "u-bob";
     await signIn();

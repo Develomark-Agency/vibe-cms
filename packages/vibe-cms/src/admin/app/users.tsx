@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, CopyIcon, MailIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Input } from "../components/ui/input.tsx";
@@ -55,6 +56,7 @@ export function UsersPage() {
   if(!users.data) return <div className="flex justify-center p-12"><Spinner className="size-5" /></div>;
   const { roles, mode } = users.data;
   const passkeys = mode === "passkey";
+  if(mode === "hub") return <HubUsers users={users.data.hubUsers} />;
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6 md:px-8">
@@ -92,6 +94,38 @@ export function UsersPage() {
               <Button variant="ghost" size="icon-sm" aria-label={`Remove ${user.email}`} onClick={() => {
                 if(confirm(`Remove ${user.email}? They won't be able to sign in any more.`)) remove.mutate(user.id);
               }}><Trash2Icon /></Button>
+            </div>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+/** Org sites: the hub decides who has which role here. The site only shows who it has seen. */
+function HubUsers({ users }: { users: Array<{ sub: string, email: string | null, name: string | null, roles: string[], siteAdmin: boolean, lastSignInAt: number }> }) {
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6 md:px-8">
+      <header className="space-y-2 pt-6">
+        <h1 className="text-3xl font-medium tracking-[-0.03em]">Users</h1>
+        <p className="text-sm text-muted-foreground">
+          Your org's panel decides who can sign in here and with which roles. These are the people it has signed in. To change someone's roles, use the panel's Access tab for this site.
+        </p>
+      </header>
+      <section className="flex flex-col divide-y rounded-[16px] elevated">
+        {users.length === 0 && <p className="p-4 text-sm text-muted-foreground">Nobody has signed in through the panel yet.</p>}
+        {users.map(user => (
+          <div key={user.sub} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{user.name ?? user.email ?? user.sub}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {user.name && user.email && `${user.email} · `}Last signed in {new Date(user.lastSignInAt).toLocaleDateString()}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {user.siteAdmin && <Badge>Owner</Badge>}
+              {user.roles.map(role => <Badge key={role} variant="secondary">{role}</Badge>)}
+              {!user.siteAdmin && user.roles.length === 0 && <span className="text-xs text-muted-foreground">No roles</span>}
             </div>
           </div>
         ))}

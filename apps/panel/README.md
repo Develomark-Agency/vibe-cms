@@ -12,6 +12,7 @@ The agency's hub: sign in once, pick a site, edit it. Sites trust your org (a do
 6. For backups, create the archive with `bunx wrangler r2 bucket create vibe-panel-backups`. The bucket binding and the cron trigger are already in `wrangler.jsonc`; remove them to run without backups.
 7. Optionally white-label it with `PANEL_NAME`, `PANEL_ACCENT` (`#rrggbb`) and `PANEL_ICON` (an image URL).
 8. `bun run deploy`.
+9. **Claim it.** Until the panel has an owner, nobody can sign in. It prints a one-time setup link to its logs (`bunx wrangler tail`): `https://<panel host>/#setup=…`. Open it and sign in: you become the panel's owner, and the link stops working.
 
 Sites that should appear in this panel are deployed with the same org:
 
@@ -20,7 +21,18 @@ Sites that should appear in this panel are deployed with the same org:
 "vars": { "VIBE_ORG": "my-agency.com" }
 ```
 
-The panel signs each signed-in user a short-lived token for one site at a time, issued by the org, with the identity provider's claims (email, name, …) passed through. Sites check it against the panel's keys at `/.well-known/jwks.json` and work out roles themselves. Site editors only open inside the panel; the panel's own URLs (`/s/<site id>/…`) are the links to bookmark.
+The panel signs each signed-in user a short-lived token for one site at a time, issued by the org, with the identity provider's claims (email, name, …) passed through. Sites check it against the panel's keys at `/.well-known/jwks.json` and resolve the role names against their own stored roles. Site editors only open inside the panel; the panel's own URLs (`/s/<site id>/…`) are the links to bookmark.
+
+## People, site access and templates
+
+`PANEL_ALLOW` decides who may sign in; the panel decides what they see.
+
+- **People** (the top bar): members and their hub role. `owner` (one, from the setup link) and `admin` see and manage every site; `member` sees only sites they're given. Custom hub roles (the **Hub roles** tab) pick from four permissions: managing people, managing templates, adding sites and removing sites. Invite people by email with a role; it becomes theirs when they first sign in with that verified email. Nobody but the owner can change or remove the owner, or hand the panel over.
+- **Who manages a site:** the panel's owner and admins, whoever added it, and members an admin makes its owner. The panel tells the site so with a signed `siteAdmin` claim, and the site makes them owners there. Someone signed in without a member row sees only sites they have a role on.
+- **People and roles** (in a site's menu, or the people icon next to an open site): give people the site's own roles, by email before they've signed in. The pickers list the roles the site has; the site keeps defining them, on its Roles page. Roles assigned here reach the site in the token's `roles` claim, along with `OIDC_ROLES_CLAIM` values.
+- **Templates:** named sets of roles. Adding a site offers them (the default preselected, or "No roles") and writes the chosen one onto the site through its role API; rules for content types the site lacks are skipped and reported. If the site can't be reached, the apply stays pending and the cron retries it. **Re-apply a template…** on a site shows what it would add, overwrite or remove, and asks first. Editing a template never changes sites that already used it.
+
+Existing panels have no owner after upgrading: the setup link is printed until someone claims it, and nobody else can sign in meanwhile.
 
 ## Moving the panel, renaming the org
 
@@ -30,7 +42,7 @@ The panel signs each signed-in user a short-lived token for one site at a time, 
 
 ## Backups
 
-Sites that add `backups: true` to their config are backed up every day into the `BACKUPS` bucket. Set the schedule and how many snapshots to keep under the account menu's **Backup schedule**, and override them for one site in its **Backups** (in the site's menu). Restores run from there too, for users whose role on that site has `backups: true`. See `vibe-cms docs backups`.
+Sites that add `backups: true` to their config are backed up every day into the `BACKUPS` bucket. Set the schedule and how many snapshots to keep under the account menu's **Backup schedule**, and override them for one site in its **Backups** (in the site's menu). Restores run from there too, for the site's owners on the panel (whose role on the site is `owner`). See `vibe-cms docs backups`.
 
 ## AI agents
 

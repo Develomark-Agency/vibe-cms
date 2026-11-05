@@ -5,6 +5,7 @@ import { apiBase, codeFor } from "./hub.ts";
 import { and, eq } from "drizzle-orm";
 import * as t from "./schema.ts";
 import { db, siteById, type Env, type SessionRow } from "./shared.ts";
+import { hubAccess, visibleSiteIds } from "./access.ts";
 
 /**
  * The panel's MCP server: the same tools as a site's own, plus `sites_list`, with
@@ -79,6 +80,13 @@ async function forward(env: Env, grant: GrantRow, session: SessionRow, site: Pan
   return errorResult({ code: "UNAUTHORIZED", message: "The site keeps refusing this user's session" });
 }
 
+/** The sites the connected user sees on the panel. */
+async function visibleForGrant(env: Env, grant: GrantRow): Promise<Set<string> | "all"> {
+  const [session] = await db(env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
+  if(!session) return new Set();
+  return visibleSiteIds(env, await hubAccess(env, session));
+}
+
 export async function handleMcp(request: Request, env: Env, grant: GrantRow, version: string): Promise<Response> {
   const readOnly = grant.scope === SCOPE_READ;
   return serveMcp(request, {
@@ -89,7 +97,8 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
     async call(name, args) {
       if(name === sitesList.name) {
         const results = await db(env).select({ id: t.sites.id, name: t.sites.name, url: t.sites.url }).from(t.sites).orderBy(t.sites.name);
-        return textResult({ sites: results });
+        const visible = await visibleForGrant(env, grant);
+        return textResult({ sites: results.filter(site => visible === "all" || visible.has(site.id)) });
       }
       const action = actions.get(name);
       if(!action) return null;
@@ -99,6 +108,8 @@ export async function handleMcp(request: Request, env: Env, grant: GrantRow, ver
       const { site: siteId, ...input } = args;
       if(typeof siteId !== "string" || !siteId) return errorResult({ code: "BAD_REQUEST", message: "site: pass a site's id from sites_list" });
       const site = await siteById(env, siteId);
+      const visible = await visibleForGrant(env, grant);
+      if(site && visible !== "all" && !visible.has(site.id)) return errorResult({ code: "NOT_FOUND", message: `No site "${siteId}" in this panel. sites_list lists them.` });
       if(!site) return errorResult({ code: "NOT_FOUND", message: `No site "${siteId}" in this panel. sites_list lists them.` });
       const [session] = await db(env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
       if(!session) return errorResult({ code: "UNAUTHORIZED", message: "This connection's sign-in is gone. Reconnect the agent." });

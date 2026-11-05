@@ -9,6 +9,7 @@ import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { SiteOrg, type OrgEnv } from "./org.ts";
 import { wellKnownPaths } from "./oauth.ts";
+import { importConfigRoles, RoleStore } from "./roles.ts";
 import { signInConfig, type SignInEnv } from "./signin.ts";
 import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
@@ -160,12 +161,16 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     const bindings = options.bindings(env) as Bindings<C> & Record<string, unknown>;
     checkBindings(config, bindings);
     await migrate(bindings.db, config);
+    await importConfigRoles(bindings.db, config);
+    const roles = new RoleStore(bindings.db);
+    await roles.refresh(true);
     const partial = {
       config,
       db: bindings.db,
       storage: bindings.storage,
       schemaHash: await schemaHash,
       prefix,
+      roles,
       siteId: await getOrCreateMeta(bindings.db, "site_id", () => newId("site")),
       org: await SiteOrg.load(bindings.db, (env ?? {}) as OrgEnv),
       signIn: signInConfig((env ?? {}) as SignInEnv, bindings.email),
@@ -212,7 +217,9 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   async function handle(request: Request, env: E, ctx: ExecutionContext): Promise<Response> {
     const bindings = options.bindings(env) as CoreBindings;
     const assets = bindings.assets ?? (env as { ASSETS?: Fetcher } | undefined)?.ASSETS;
-    return Promise.resolve(router.fetch(request, { state: await state(env), dev, assets, ctx }));
+    const s = await state(env);
+    await s.roles.refresh();
+    return Promise.resolve(router.fetch(request, { state: s, dev, assets, ctx }));
   }
 
   async function scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void> {
@@ -246,7 +253,7 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       const engine = new Engine(await state(env), { origin: "", session: null, trusted: true });
       const preview = previewScope.getStore();
       if(!preview) return engine.execute(queries);
-      const results = await engine.execute(queries.map(query => (can(config, preview.session, { action: "read", type: query.type }) ? { ...query, drafts: true } : query)));
+      const results = await engine.execute(queries.map(query => (can(engine.state, preview.session, { action: "read", type: query.type }) ? { ...query, drafts: true } : query)));
       recordSources(schemas, preview.sources, queries.map(query => query.type), results);
       return results;
     });
@@ -256,7 +263,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   async function previewSession(request: Request, env: E): Promise<(PreviewScope & { token: string }) | null> {
     const token = readCookie(request, PREVIEW_COOKIE);
     if(!token || !wantsPreview(request)) return null;
-    const { db, siteId } = await state(env);
+    const { db, siteId, roles } = await state(env);
+    await roles.refresh();
     const session = await verifySession(db, token, siteId);
     if(!session) return null;
     return { session, token, sources: new WeakMap(), ...(request.headers.get(PICK_HEADER) === "1" ? { pick: true } : {}) };

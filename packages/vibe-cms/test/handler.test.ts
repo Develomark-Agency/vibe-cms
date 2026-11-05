@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { permissionSummary } from "../src/handler/auth.ts";
+import { can, permissionSummary } from "../src/handler/auth.ts";
+import { normalizeLegacyRules } from "../src/roles.ts";
 import { createHandler } from "../src/handler/index.ts";
 import { previewScope } from "../src/handler/preview.ts";
 import { field } from "../src/preview/index.ts";
@@ -689,7 +690,7 @@ describe("site settings", () => {
     t.setToken("");
     expect((await t.api("/api/site", { method: "PATCH", json: { name: "Nope" } })).status).toBe(401);
     // Writing content doesn't imply changing the site's branding.
-    expect(permissionSummary(config, { sub: "x", roles: ["editor"] }).site).toBe(false);
+    expect(permissionSummary({ config, roles: { map: config.permissions.roles } }, { sub: "x", roles: ["editor"] }).site).toBe(false);
   });
 });
 
@@ -960,5 +961,68 @@ describe("mcp", () => {
     );
     expect(anonymous.status).toBe(401);
     expect(anonymous.headers.get("www-authenticate")).toBe("Bearer");
+  });
+});
+
+describe("roles", () => {
+  test("config roles are imported once, then edited as data", async () => {
+    const listed = await t.api("/api/roles");
+    expect(listed.body.roles.map((role: { name: string }) => role.name)).toEqual(["editor", "translator"]);
+    expect(listed.body.canEdit).toBe(true);
+
+    const saved = await t.api("/api/roles/client", { method: "PUT", json: { rules: { post: ["read", "write"], publish: false } } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.role.rules).toEqual({ post: ["read", "write"], publish: false });
+    expect((await t.api("/api/roles")).body.roles).toHaveLength(3);
+
+    expect((await t.api("/api/roles/client")).status).toBe(404);
+    expect((await t.api("/api/roles/client", { method: "DELETE" })).status).toBe(200);
+    expect((await t.api("/api/roles/client", { method: "DELETE" })).status).toBe(404);
+  });
+
+  test("rules are checked against the site's types and locales", async () => {
+    const badType = await t.api("/api/roles/x", { method: "PUT", json: { rules: { homepage: ["read"] } } });
+    expect(badType.status).toBe(400);
+    expect(badType.body.error).toContain("homepage");
+    expect((await t.api("/api/roles/x", { method: "PUT", json: { rules: { write: { locales: ["de"] } } } })).status).toBe(400);
+    expect((await t.api("/api/roles/x", { method: "PUT", json: { rules: { post: ["fly"] } } })).status).toBe(400);
+    expect((await t.api("/api/roles/owner", { method: "PUT", json: { rules: { all: true } } })).status).toBe(400);
+  });
+
+  test("presets and templates are trimmed to what the site has", async () => {
+    const { body } = await t.api("/api/roles/presets");
+    const translator = body.presets.find((preset: { name: string }) => preset.name === "translator");
+    expect(translator.rules.write).toEqual({ locales: ["fr"] });
+
+    const applied = await t.api("/api/roles/apply", { method: "POST", json: { roles: { client: { post: ["read", "write"], homepage: ["read"] } } } });
+    expect(applied.status).toBe(200);
+    expect(applied.body.skipped).toEqual(["client: homepage doesn't exist on this site"]);
+    const schema = await t.api("/api/roles/schema");
+    expect(schema.body.locales).toEqual(["en", "fr"]);
+  });
+
+  test("publishing is listed, not implied; backups can be taken without restoring", () => {
+    const access = { config, roles: { map: {
+      writer: { post: ["read" as const, "write" as const] },
+      publisher: { post: ["read" as const, "write" as const, "publish" as const] },
+      legacy: { post: ["read" as const, "write" as const], publish: true },
+      taker: { backups: "take" as const }
+    } } };
+    expect(can(access, { sub: "x", roles: ["writer"] }, { action: "publish", type: "post" })).toBe(false);
+    expect(can(access, { sub: "x", roles: ["publisher"] }, { action: "publish", type: "post" })).toBe(true);
+    expect(can(access, { sub: "x", roles: ["legacy"] }, { action: "publish", type: "post" })).toBe(true);
+    expect(can(access, { sub: "x", roles: ["taker"] }, { action: "read", scope: "backups" })).toBe(true);
+    expect(can(access, { sub: "x", roles: ["taker"] }, { action: "write", scope: "backups" })).toBe(false);
+  });
+
+  test("config roles are copied in today's terms: write used to imply publish", () => {
+    expect(normalizeLegacyRules({ post: ["read", "write"], author: ["read"] })).toEqual({ post: ["read", "write", "publish"], author: ["read"] });
+    expect(normalizeLegacyRules({ post: ["read", "write", "publish"], publish: false })).toEqual({ post: ["read", "write"] });
+  });
+
+  test("permission checks read stored roles", async () => {
+    const access = { config, roles: { map: { reader: { post: ["read" as const] } } } };
+    expect(permissionSummary(access, { sub: "x", roles: ["reader"] }).types.post).toMatchObject({ read: true, write: false });
+    expect(permissionSummary(access, { sub: "x", roles: ["editor"] }).types.post?.read).toBe(false);
   });
 });

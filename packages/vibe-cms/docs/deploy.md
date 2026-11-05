@@ -24,7 +24,7 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
    "vars": { "VIBE_ORG": "my-agency.com" }
    ```
 
-   The site finds the hub through the org's DNS record (see [Orgs](#orgs)) and accepts tokens issued by the org for this site, checked against the hub's keys at `/.well-known/jwks.json`. Who may do what is the config's `permissions` (`vibe-cms docs permissions`).
+   The site finds the hub through the org's DNS record (see [Orgs](#orgs)) and accepts tokens issued by the org for this site, checked against the hub's keys at `/.well-known/jwks.json`. Who may do what is the site's own roles, edited on its Roles page; the hub assigns them to people per site (`vibe-cms docs permissions`).
 
 5. **Build and deploy.**
 
@@ -40,7 +40,7 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 
 - `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, its org and hub, a pending org move, and the editor's URL.
 - The editor only opens inside the hub. `https://<site>/_vibe/admin/` on its own links to the site's page in the hub.
-- Add the site to the hub by its URL; the hub checks the site belongs to its org. Running a hub (`apps/panel` in the vibe-cms repository) needs its own D1 database, OIDC client and signing key; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
+- Add the site to the hub by its URL; the hub checks the site belongs to its org, makes you the site's owner, and writes its starting roles from a template if you pick one. Then give people roles on it under **People and roles**. Running a hub (`apps/panel` in the vibe-cms repository) needs its own D1 database, OIDC client and signing key; for local work, `bunx vibe-cms admin` runs a panel without an identity provider.
 - Agents connect to the panel's `/mcp`, not to each site (`vibe-cms docs agents`).
 - To move content you made locally onto the deployed site, export it and import it there: `vibe-cms export --site http://localhost:4321`, then `vibe-cms login <org>` and `vibe-cms import <file>.vibe --site https://…`. For copies kept outside Cloudflare on a schedule, use the panel's backups. Both are in `vibe-cms docs backups`.
 

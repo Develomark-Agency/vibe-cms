@@ -8,6 +8,13 @@
       "when": 1793811479985,
       "tag": "0000_calm_tomas",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793898824553,
+      "tag": "0001_strange_tattoo",
+      "breakpoints": true
     }
   ]
 }

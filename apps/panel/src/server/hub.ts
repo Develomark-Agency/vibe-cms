@@ -4,6 +4,7 @@ import { fetchDescriptor, PanelError, type PanelSite } from "vibe-cms/panel";
 import { normalizeOrg, ORG_MOVE_SCOPE, ORG_MOVE_TOKEN_TTL } from "vibe-cms/org";
 import { freshIdToken, db, json, type Env, type SessionRow } from "./shared.ts";
 import * as t from "./schema.ts";
+import { siteClaims } from "./access.ts";
 
 /**
  * The panel as the hub of an org. Sites trust the org (`VIBE_ORG`), find this hub through the
@@ -18,7 +19,7 @@ import * as t from "./schema.ts";
 const TOKEN_TTL = "5m";
 
 /** Provider claims that only mean something to the hub, not passed on to sites. `roles` is the hub's to fill. */
-const PROVIDER_ONLY = new Set(["iss", "sub", "aud", "exp", "iat", "nbf", "jti", "nonce", "at_hash", "c_hash", "azp", "auth_time", "acr", "amr", "sid", "scope", "roles"]);
+const PROVIDER_ONLY = new Set(["iss", "sub", "aud", "exp", "iat", "nbf", "jti", "nonce", "at_hash", "c_hash", "azp", "auth_time", "acr", "amr", "sid", "scope", "roles", "siteAdmin"]);
 
 async function meta(env: Env, key: string): Promise<string | null> {
   const [row] = await db(env).select({ value: t.panelMeta.value }).from(t.panelMeta).where(eq(t.panelMeta.key, key));
@@ -150,9 +151,19 @@ function providerRoles(env: Env, claims: Record<string, unknown>): string[] | un
 export async function userToken(env: Env, session: SessionRow, siteId: string): Promise<string> {
   const claims = decodeJwt(await freshIdToken(env, session));
   const passed: Record<string, unknown> = Object.fromEntries(Object.entries(claims).filter(([key]) => !PROVIDER_ONLY.has(key)));
-  const roles = providerRoles(env, claims);
-  if(roles) passed.roles = roles;
-  return sign(env, passed, `${claims.iss}|${claims.sub}`, siteId, TOKEN_TTL);
+  const sub = `${claims.iss}|${claims.sub}`;
+  // The hub's own assignments for this site, on top of the identity provider's claim.
+  const assigned = await siteClaims(env, sub, siteId);
+  const roles = [...new Set([...providerRoles(env, claims) ?? [], ...assigned.roles])];
+  if(roles.length || env.OIDC_ROLES_CLAIM) passed.roles = roles;
+  // Signed by the hub, so no identity provider claim can forge it.
+  if(assigned.siteAdmin) passed.siteAdmin = true;
+  return sign(env, passed, sub, siteId, TOKEN_TTL);
+}
+
+/** The hub acting on a site for one of its site admins: applying templates, reading the site's roles. */
+export function adminToken(env: Env, sub: string, siteId: string): Promise<string> {
+  return sign(env, { siteAdmin: true }, sub, siteId, TOKEN_TTL);
 }
 
 /** Lets the hub itself run backup actions on one site, and nothing else. Sites opt in with `backups: true`. */

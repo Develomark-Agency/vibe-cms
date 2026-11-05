@@ -7,7 +7,7 @@ import { jsonInput, type SiteEnv } from "../http.ts";
 export const org = new Hono<SiteEnv>()
   .get("/org", async c => {
     const { state } = c.env;
-    require(state.config, c.get("session"), { action: "write", scope: "site" });
+    require(state, c.get("session"), { action: "write", scope: "site" });
     return c.json({ ...await state.org.status(), history: await state.org.history() });
   })
 
@@ -21,6 +21,6 @@ export const org = new Hono<SiteEnv>()
 
   .delete("/org/move", async c => {
     const { state } = c.env;
-    const user = require(state.config, c.get("session"), { action: "write", scope: "site" });
+    const user = require(state, c.get("session"), { action: "write", scope: "site" });
     return c.json(await state.org.cancelMove(user.email ?? user.sub));
   });

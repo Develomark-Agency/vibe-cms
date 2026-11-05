@@ -31,5 +31,12 @@ export const migrations: Migration[] = [
       "CREATE UNIQUE INDEX IF NOT EXISTS `vibe_users_email_unique` ON `vibe_users` (`email`);",
       "CREATE TABLE IF NOT EXISTS `vibe_versions` (\n\t`id` text NOT NULL,\n\t`locale` text NOT NULL,\n\t`ver` integer NOT NULL,\n\t`data` text NOT NULL,\n\t`author` text NOT NULL,\n\t`created_at` integer NOT NULL,\n\tPRIMARY KEY(`id`, `locale`, `ver`)\n);"
     ]
+  },
+  {
+    tag: "0001_strange_tattoo",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS `vibe_hub_users` (\n\t`sub` text PRIMARY KEY NOT NULL,\n\t`email` text,\n\t`name` text,\n\t`roles` text NOT NULL,\n\t`site_admin` integer DEFAULT false NOT NULL,\n\t`last_sign_in_at` integer NOT NULL\n);",
+      "CREATE TABLE IF NOT EXISTS `vibe_roles` (\n\t`name` text PRIMARY KEY NOT NULL,\n\t`rules` text NOT NULL,\n\t`updated_by` text,\n\t`updated_at` integer NOT NULL\n);"
+    ]
   }
 ];

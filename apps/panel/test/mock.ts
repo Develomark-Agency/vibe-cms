@@ -132,12 +132,42 @@ export async function panel(path: string, init: RequestInit = {}) {
   return response;
 }
 
-export async function signIn(code = "good-code") {
+/** The hub's setup token while it has no owner: what the printed link carries. */
+export async function setupToken(): Promise<string | null> {
+  const row = await (env.DB as unknown as ReturnType<typeof createD1>).prepare("SELECT value FROM panel_meta WHERE key = 'setup_token'").first() as { value: string } | null;
+  return row?.value ?? null;
+}
+
+/**
+ * Signs in through the mock provider. A hub with no owner is claimed by Jane first, with the setup
+ * link, so tests start from a panel that has one (`setup: false` tries without the link).
+ */
+export async function signIn(code = "good-code", options: { setup?: boolean } = {}) {
   jar.clear();
-  const login = await panel("/auth/login?return=/s/site-a/");
+  // Makes the setup token, as the first request to an unowned hub does.
+  await panel("/api/setup");
+  const token = options.setup === false ? null : await setupToken();
+  // Jane owns the hub in every test, whoever signs in first.
+  if(token && idp.sub !== "u-jane") {
+    const who = { email: idp.email, sub: idp.sub };
+    Object.assign(idp, { email: "jane@agency.test", sub: "u-jane" });
+    await signIn(code);
+    Object.assign(idp, who);
+    jar.clear();
+  }
+  const login = await panel(`/auth/login?return=/s/site-a/${token && idp.sub === "u-jane" ? `&setup=${token}` : ""}`);
   const authorize = new URL(login.headers.get("location")!);
   expect(authorize.origin).toBe(ISSUER);
   expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
   idp.nonce = authorize.searchParams.get("nonce")!;
   return panel(`/auth/callback?code=${code}&state=${authorize.searchParams.get("state")}`);
+}
+
+/** Gives someone roles on a site from the hub, as an admin would on the site's Access tab. */
+export async function assignRoles(siteId: string, sub: string, roles: string[]) {
+  const d1 = env.DB as unknown as ReturnType<typeof createD1>;
+  if(!roles.length) return void await d1.prepare("DELETE FROM site_assignments WHERE site_id = ? AND principal = ?").bind(siteId, `${ISSUER}|${sub}`).run();
+  await (env.DB as unknown as ReturnType<typeof createD1>)
+    .prepare("INSERT OR REPLACE INTO site_assignments (site_id, principal, roles, assigned_by, assigned_at) VALUES (?, ?, ?, 'test', 0)")
+    .bind(siteId, `${ISSUER}|${sub}`, JSON.stringify(roles)).run();
 }

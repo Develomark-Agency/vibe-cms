@@ -38,7 +38,9 @@ export interface Permissions {
   /** May change the site's name, accent and icon. */
   site: boolean,
   /** May invite people and change their roles (sites that sign people in themselves). */
-  users: boolean
+  users: boolean,
+  /** May edit the site's roles: owners and roles with `all`. */
+  roles: boolean
 }
 
 export interface SessionState {
