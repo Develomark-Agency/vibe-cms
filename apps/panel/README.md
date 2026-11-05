@@ -23,6 +23,8 @@ Sites that should appear in this panel are deployed with the same org:
 "vars": { "VIBE_ORG": "my-agency.com" }
 ```
 
+If the panel and a site are both on `workers.dev` in one Cloudflare account, both Workers need the `global_fetch_strictly_public` compatibility flag, or Cloudflare blocks them from calling each other (error 1042; `vibe-cms docs deploy` has the details). This panel's `wrangler.jsonc` has it.
+
 A site deployed without `VIBE_ORG` logs a one-time claim link instead (`https://<site>/_vibe/admin/#claim=…`). Paste it in the panel's **Add a site** box, or run `vibe-cms admin attach "<link>"`: the panel tells the site its org (the site checks the `_vibe-hub` record and the hub's keys first) and adds it. Over HTTP that is `POST /api/sites/attach` (signed in) or `POST /site-attach` (OAuth bearer, not for read-only connections) with `{ "link", "templateId"? }`; agents use the `sites_attach` MCP tool.
 
 The panel signs each signed-in user a short-lived token for one site at a time, issued by the org, with the identity provider's claims (email, name, …) passed through. Sites check it against the panel's keys at `/.well-known/jwks.json` and resolve the role names against their own stored roles. Site editors only open inside the panel; the panel's own URLs (`/s/<site id>/…`) are the links to bookmark.

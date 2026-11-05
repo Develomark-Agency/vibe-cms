@@ -30,6 +30,22 @@ export function normalizeOrg(value: string | null | undefined): string | null {
   return domain;
 }
 
+/** The compatibility flag that lets a Worker call another Worker's workers.dev address in the same account. */
+export const SAME_ZONE_FETCH_FLAG = "global_fetch_strictly_public";
+
+/**
+ * Cloudflare's reply (error code 1042) when a Worker calls another Worker on the same zone, which includes
+ * any workers.dev address in the same account, without `global_fetch_strictly_public`.
+ */
+export function isSameZoneBlock(body: string): boolean {
+  return /error code: 1042/i.test(body);
+}
+
+/** What to do about error 1042, for whoever reads the message. */
+export function sameZoneAdvice(target: string): string {
+  return `Cloudflare won't let this Worker call ${target}: it's another Worker in the same account on workers.dev (or its workers.dev address is off). Add the ${SAME_ZONE_FETCH_FLAG} compatibility flag to both the panel and the site and deploy them again; custom domains and service bindings avoid it too.`;
+}
+
 /** The DNS name that holds an org's hub address. */
 export function hubRecordName(org: string): string {
   return `_vibe-hub.${org}`;

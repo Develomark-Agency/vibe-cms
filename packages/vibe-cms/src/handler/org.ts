@@ -1,6 +1,6 @@
 import { calculateJwkThumbprint, createLocalJWKSet, decodeProtectedHeader, jwtVerify, type JSONWebKeySet, type JWK, type JWTPayload } from "jose";
 import { HttpError } from "../config.ts";
-import { normalizeOrg, ORG_MOVE_DELAY_SECONDS, ORG_MOVE_SCOPE, OrgLookupError, resolveHub, type OrgStatus } from "../org/index.ts";
+import { isSameZoneBlock, normalizeOrg, ORG_MOVE_DELAY_SECONDS, ORG_MOVE_SCOPE, OrgLookupError, resolveHub, sameZoneAdvice, type OrgStatus } from "../org/index.ts";
 import { eq } from "drizzle-orm";
 import { createDb } from "../db/client.ts";
 import { meta } from "../db/schema.ts";
@@ -298,7 +298,10 @@ async function includesKey(set: JSONWebKeySet, key: JWK): Promise<boolean> {
 async function fetchKeys(org: string, fresh = false): Promise<{ hub: string, keys: JSONWebKeySet }> {
   const hub = await resolveHub(org, { fresh });
   const response = await fetch(`${hub}/.well-known/jwks.json`);
-  if(!response.ok) throw new OrgLookupError(`${hub} didn't serve its keys (${response.status})`);
+  if(!response.ok) {
+    if(isSameZoneBlock(await response.text().catch(() => ""))) throw new OrgLookupError(sameZoneAdvice(hub));
+    throw new OrgLookupError(`${hub} didn't serve its keys (${response.status})`);
+  }
   const keys = await response.json() as JSONWebKeySet;
   if(!Array.isArray(keys?.keys)) throw new OrgLookupError(`${hub} didn't serve a key set`);
   return { hub, keys };

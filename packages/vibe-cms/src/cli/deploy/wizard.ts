@@ -479,7 +479,7 @@ async function finish(deps: WizardDeps, record: HubRecord, url: string | undefin
   if(orgIsAddress) p.success("The org is the panel's own address, so no DNS record is needed.");
   else if(!dnsDone) p.note(`${txtName}   TXT   "${txtValue}"`, "Add this DNS record so sites can find the panel");
 
-  p.note("Sites join with the same org: deploy them with VIBE_ORG set to it, or deploy without and attach each from the claim link it logs (`vibe-cms admin attach`, or the panel's \"Add a site\" box).", "Adding sites");
+  p.note("Sites join with the same org: deploy them with VIBE_ORG set to it, or deploy without and attach each from the claim link it logs (`vibe-cms admin attach`, or the panel's \"Add a site\" box).\n\nSites on workers.dev in this same Cloudflare account need the compatibility flag global_fetch_strictly_public (this panel has it), or Cloudflare blocks them and the panel from calling each other.", "Adding sites");
   if(token) {
     p.note(`${base}/#setup=${token}\n\nOpen it and sign in: you become the panel's owner, and the link stops working. Until then nobody can sign in. Keep it to yourself.`, "Claim the panel");
     p.outro("Panel deployed.");

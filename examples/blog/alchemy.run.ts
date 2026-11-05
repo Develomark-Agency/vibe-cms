@@ -20,7 +20,8 @@ export const site = await Website("site", {
   assets: "dist/client",
   // Server-rendered: unknown paths go to the Worker, not to an index.html.
   spa: false,
-  compatibilityFlags: ["nodejs_compat"],
+  // global_fetch_strictly_public: lets the site and a panel on workers.dev in the same account call each other.
+  compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
   bindings: { DB: db, MEDIA: media, VIEW_COUNTERS: viewCounters },
   // Runs scheduled publishing.
   crons: ["* * * * *"],

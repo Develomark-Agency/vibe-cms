@@ -1,4 +1,5 @@
 import type { RoleRules } from "../config.ts";
+import { isSameZoneBlock, sameZoneAdvice } from "../org/index.ts";
 
 /** A site as the panel knows it: from its `/.well-known/vibe-cms` descriptor. */
 export interface PanelSite {
@@ -295,7 +296,10 @@ export async function fetchDescriptor(url: string): Promise<SiteDescriptor> {
   } catch {
     throw new PanelError(502, `Couldn't reach ${origin}`);
   }
-  if(!response.ok) throw new PanelError(422, `${origin} isn't a vibe-cms site (no /.well-known/vibe-cms)`);
+  if(!response.ok) {
+    if(isSameZoneBlock(await response.text().catch(() => ""))) throw new PanelError(502, sameZoneAdvice(origin));
+    throw new PanelError(422, `${origin} isn't a vibe-cms site (no /.well-known/vibe-cms)`);
+  }
   const descriptor = await response.json() as SiteDescriptor;
   if(descriptor.protocol !== 1 || !descriptor.id || !descriptor.admin) throw new PanelError(422, "Unsupported site descriptor");
   return { ...descriptor, org: descriptor.org ?? null, hub: descriptor.hub ?? null, orgMove: descriptor.orgMove ?? null };

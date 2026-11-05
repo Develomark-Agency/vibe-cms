@@ -38,6 +38,17 @@ Put a vibe-cms site on Cloudflare: create the D1 database and R2 bucket, keep th
 
    The Vite builds write `.wrangler/deploy/config.json`, which points `wrangler deploy` at the generated `dist/…/wrangler.json`. Check that the client output contains `_vibe/admin/index.html` before deploying.
 
+## Panel and site on workers.dev
+
+Cloudflare doesn't let one Worker call another Worker's `workers.dev` address in the same account, and the panel and its sites call each other (the panel reads the site's descriptor and signs people in to it; the site fetches the panel's keys). Without help, adding a site fails with Cloudflare's error 1042, and the panel says so. Add the `global_fetch_strictly_public` compatibility flag to **both** the panel and the site and deploy them again:
+
+```jsonc
+// wrangler.jsonc (Alchemy: compatibilityFlags)
+"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"]
+```
+
+`vibe-cms admin deploy` sets it on the panel. Custom domains (not routes) and service bindings avoid the limit too, so a site on its own domain doesn't need it.
+
 ## After deploying
 
 - `https://<site>/.well-known/vibe-cms` describes the site to panels: id, name, accent, icon, its org and hub, a pending org move, and the editor's URL.

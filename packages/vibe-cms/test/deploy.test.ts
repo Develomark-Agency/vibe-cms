@@ -98,6 +98,8 @@ describe("hub state", () => {
   test("renders a Worker config that points at the bundle and marks the panel", () => {
     const config = JSON.parse(renderWrangler({ ...record, domain: "admin.agency.test" }, bundle).replace(/^\/\/.*\n/, ""));
     expect(config.main).toBe("/pkg/panel-dist/index.js");
+    // Without this, a panel and a site on workers.dev in one account can't call each other.
+    expect(config.compatibility_flags).toContain("global_fetch_strictly_public");
     expect(config.assets.directory).toBe("/pkg/panel-dist/client");
     expect(config.vars).toMatchObject({ VIBE_PANEL: "1", VIBE_ORG: "agency.test" });
     expect(config.routes).toEqual([{ pattern: "admin.agency.test", custom_domain: true }]);

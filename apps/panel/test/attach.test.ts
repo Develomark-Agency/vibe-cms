@@ -165,6 +165,25 @@ describe("attaching a site", () => {
     expect(exchange.status).toBe(200);
   });
 
+  test("Cloudflare's same-account Worker block is explained, whichever way it hits", async () => {
+    const blocked = async () => new Response("error code: 1042", { status: 404 });
+
+    // The panel can't call the site.
+    sites["https://blocked-site.test"] = blocked;
+    const site = await attach({ link: "https://blocked-site.test/_vibe/admin/#claim=abc" });
+    expect(site.status).toBe(502);
+    expect((await site.json() as { error: string }).error).toContain("global_fetch_strictly_public");
+
+    // The site can't call the panel for its keys.
+    const { link } = await deployUnclaimed();
+    sites["https://blocked-hub.test"] = blocked;
+    env.VIBE_ORG = "https://blocked-hub.test";
+    clearOrgCache();
+    const hub = await attach({ link });
+    expect(hub.status).toBe(422);
+    expect((await hub.json() as { error: string }).error).toContain("global_fetch_strictly_public");
+  });
+
   test("a site that already trusts another org isn't claimed", async () => {
     const response = await attach({ link: "https://site-b.test/_vibe/admin/#claim=whatever" });
     expect(response.status).toBe(422);

@@ -2,6 +2,8 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { SAME_ZONE_FETCH_FLAG } from "../../org/index.ts";
+
 /** Set on every panel Worker the wizard deploys, so it can be found again on Cloudflare. */
 export const PANEL_MARKER = "VIBE_PANEL";
 
@@ -93,7 +95,8 @@ export function renderWrangler(record: HubRecord, bundle: Bundle): string {
     main: path.join(bundle.dir, "index.js"),
     no_bundle: true,
     compatibility_date: manifest.compatibility_date,
-    ...manifest.compatibility_flags.length ? { compatibility_flags: manifest.compatibility_flags } : {},
+    // Sites on workers.dev in the same account can only be called with this (and the hub can only be called back).
+    compatibility_flags: [...new Set([...manifest.compatibility_flags, SAME_ZONE_FETCH_FLAG])],
     assets: {
       directory: path.join(bundle.dir, "client"),
       binding: "ASSETS",

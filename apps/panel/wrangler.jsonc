@@ -4,6 +4,8 @@
   "name": "vibe-panel",
   "main": "src/server/index.ts",
   "compatibility_date": "2026-10-01",
+  // Lets the panel call sites (and sites call the panel) when both are on workers.dev in one account.
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "assets": {
     "directory": "dist/client",
     "binding": "ASSETS",
