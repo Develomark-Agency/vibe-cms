@@ -418,6 +418,7 @@ async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secre
     `Backups     ${record.backups ? `${record.backups}${create.some(c => c.kind === "R2 bucket") ? " (new)" : ""}` : "off"}`,
     `Org         ${record.vars.VIBE_ORG}`,
     `Sign-in     ${record.vars.OIDC_ISSUER}`,
+    ...url ? [`Redirect    ${url}/auth/callback  (register this at the provider before signing in)`] : [],
     `Secrets     ${Object.keys(secrets).map(k => k === "PANEL_SETUP_TOKEN" ? "one-time setup link" : k).join(", ") || "unchanged"}`
   ].join("\n"), "About to deploy");
   if(create.length) {
