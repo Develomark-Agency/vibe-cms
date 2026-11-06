@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+
+      - name: Check the tag matches the package version
+        run: |
+          pkg=$(bun -e 'console.log(require("./packages/vibe-cms/package.json").version)')
+          [ "v$pkg" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME doesn't match package version $pkg"; exit 1; }
+
+      - name: Pack (builds the panel via prepack)
+        working-directory: packages/vibe-cms
+        run: bun pm pack --destination "$GITHUB_WORKSPACE"
+
+      - name: Check the tarball ships the panel
+        run: tar -tzf vibe-cms-*.tgz | grep -q 'package/panel-dist/index.js'
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease";; esac
+          gh release create "$GITHUB_REF_NAME" vibe-cms-*.tgz --draft --generate-notes --title "$GITHUB_REF_NAME" $flags

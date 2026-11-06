@@ -8,10 +8,11 @@
     "examples/*"
   ],
   "scripts": {
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "tsc --noEmit && bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
+    "release": "bun scripts/release.ts",
     "dev": "bun run --filter @vibe-cms/example-blog dev"
   },
   "devDependencies": {
