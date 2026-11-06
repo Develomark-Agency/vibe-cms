@@ -13,6 +13,8 @@ import { addSite, attachSite } from "../sites.ts";
 import { access } from "./access.ts";
 import { announceSetup, hasOwner, hubAccess, requireVisibleSite, visibleSiteIds } from "../access.ts";
 
+declare const __VIBE_VERSION__: string | undefined;
+
 /**
  * The panel's JSON API, mounted at `/api`: sites, the org, connected agents, backups. One chain, so
  * `hc<PanelApi>` (see `web/backend.ts`) gets every route's path, input and response type.
@@ -34,6 +36,9 @@ export const api = new Hono<AppEnv>()
     const { PANEL_NAME, PANEL_ACCENT, PANEL_ICON } = c.env;
     return c.json(normalizeBranding({ name: PANEL_NAME, accent: PANEL_ACCENT, icon: PANEL_ICON }), 200, { "cache-control": "public, max-age=300" });
   })
+
+  // Public: which Vibe CMS version this panel is running, so `vibe-cms admin deploy` can show what a redeploy replaces.
+  .get("/version", c => c.json({ version: typeof __VIBE_VERSION__ === "string" ? __VIBE_VERSION__ : null }))
 
   // Public: whether the panel still needs its first owner, for the setup page.
   .get("/setup", async c => {

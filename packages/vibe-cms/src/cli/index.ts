@@ -96,6 +96,7 @@ const adminDeploy = command({
         exec: wranglerExec,
         prompts: clackPrompts,
         bundle: await locateBundle(),
+        version: pkg.version,
         setAccount: id => { process.env.CLOUDFLARE_ACCOUNT_ID = id; }
       });
     } catch (error) {

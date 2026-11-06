@@ -23,6 +23,8 @@ export interface HubRecord {
   domain: string | null,
   /** Where the panel can be reached, for the setup link. */
   url?: string,
+  /** The Vibe CMS version last deployed to this panel from this machine, if known. */
+  panelVersion?: string,
   /** Secrets known to be set on the Worker (their names), so a redeploy doesn't replace them. */
   secrets?: string[]
 }

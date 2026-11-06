@@ -33,8 +33,12 @@ export interface WizardDeps {
   checkOidc?: (issuer: string) => Promise<OidcCheck>,
   /** Asks a panel whether it still needs its first owner. Replaceable for tests. */
   needsOwner?: (url: string) => Promise<boolean | null>,
+  /** Asks a panel which Vibe CMS version it's running; null when it can't say. Replaceable for tests. */
+  liveVersion?: (url: string) => Promise<string | null>,
   /** Points wrangler at an account when the person has several. */
-  setAccount?: (id: string) => void
+  setAccount?: (id: string) => void,
+  /** The Vibe CMS version being deployed. */
+  version?: string
 }
 
 const WORKER_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -56,6 +60,16 @@ async function defaultNeedsOwner(url: string) {
     const response = await fetch(`${url}/api/setup`);
     if(!response.ok) return null;
     return (await response.json() as { needsOwner?: boolean }).needsOwner ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function defaultLiveVersion(url: string) {
+  try {
+    const response = await fetch(`${url}/api/version`, { signal: AbortSignal.timeout(5000) });
+    if(!response.ok) return null;
+    return (await response.json() as { version?: string | null }).version ?? null;
   } catch {
     return null;
   }
@@ -102,7 +116,7 @@ async function wizard(deps: WizardDeps) {
   let secrets: string[] = [];
   if(choice === "new") {
     const plan = await configure(deps, root, account, api, null);
-    return void await deploy(deps, root, plan, {}, [], api);
+    return void await deploy(deps, root, plan, {}, [], api, null);
   } else if(choice === "search") {
     if(!api) throw new Error("Searching needs Cloudflare's API, which wrangler's login couldn't reach. Log in again with `wrangler login`.");
     const found = await searchCloudflare(deps, root, account, api);
@@ -141,7 +155,7 @@ async function wizard(deps: WizardDeps) {
     if(action === "settings") plan = await configure(deps, root, account, api, record);
     if(action === "key") extra.HUB_SIGNING_KEY = await generateHubKey();
     if(action === "secret") extra.OIDC_CLIENT_SECRET = await p.password({ message: "New OIDC client secret", validate: required("The client secret") });
-    await deploy(deps, root, plan, extra, secrets, api);
+    await deploy(deps, root, plan, extra, secrets, api, record);
   }
 }
 
@@ -396,11 +410,16 @@ async function addressOf(record: HubRecord, api: CloudflareApi | null): Promise<
   return sub ? `https://${record.name}.${sub}.workers.dev` : record.url;
 }
 
-async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secrets, existing: string[], api: CloudflareApi | null) {
+async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secrets, existing: string[], api: CloudflareApi | null, deployed: HubRecord | null) {
   const { exec, prompts: p } = deps;
-  const { record, create } = plan;
+  const { record: planned, create } = plan;
+  // Carried on the record so the next redeploy can say what is running now.
+  const record: HubRecord = { ...planned, panelVersion: deps.version ?? planned.panelVersion };
   let url = await addressOf(record, api);
   const needsOwner = url ? await (deps.needsOwner ?? defaultNeedsOwner)(url) : null;
+  // What the running panel says wins; the saved record covers panels that can't say (older ones, or offline).
+  const running = deployed && url ? await (deps.liveVersion ?? defaultLiveVersion)(url) : null;
+  const current = running ?? deployed?.panelVersion ?? "unknown";
 
   const secrets: Secrets = { ...replace };
   if(!secrets.OIDC_CLIENT_SECRET && !existing.includes("OIDC_CLIENT_SECRET")) {
@@ -413,6 +432,7 @@ async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secre
 
   p.note([
     `Worker      ${record.name}`,
+    ...deps.version ? [`Version     ${deployed ? `${current} (current) → ${deps.version}` : deps.version}`] : [],
     `Address     ${url ?? "its workers.dev address"}${record.domain ? " (custom domain)" : ""}`,
     `Database    ${record.database.name}${create.some(c => c.kind === "D1 database") ? " (new)" : ""}`,
     `Backups     ${record.backups ? `${record.backups}${create.some(c => c.kind === "R2 bucket") ? " (new)" : ""}` : "off"}`,
@@ -427,7 +447,8 @@ async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secre
   if(!await p.confirm({ message: create.length ? "Create these and deploy now?" : "Deploy now?", initial: true })) throw new Cancelled();
 
   await createResources(deps, api, record, create);
-  const dir = await writeHub(root, { ...record, url }, deps.bundle);
+  // The version is recorded only once the deploy succeeds.
+  const dir = await writeHub(root, { ...record, url, panelVersion: deployed?.panelVersion }, deps.bundle);
   const configPath = path.join(dir, "wrangler.jsonc");
   p.info(`Settings saved in ${dir}`);
 
