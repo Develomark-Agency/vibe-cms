@@ -1,6 +1,7 @@
 /**
  * `bun release --version x.x.x`: bumps packages/vibe-cms to that version, commits, tags `vX.Y.Z` and pushes.
- * The tag triggers .github/workflows/release.yml, which builds the package and opens a *draft* GitHub release
+ * The tag triggers .github/workflows/release.yml, which compiles the package (`bun run package`: the panel, then
+ * tsdown into dist), smoke-tests it under Node and opens a *draft* GitHub release
  * for you to review and publish on GitHub.
  *
  * Flags: --version <x.y.z> (required), --no-push (commit and tag locally only).

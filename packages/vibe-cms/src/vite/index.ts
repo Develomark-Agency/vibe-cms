@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { init as initLexer, parse as parseExports } from "es-module-lexer";
-import { build, createServer, runnerImport, searchForWorkspaceRoot, type Connect, type Plugin, type ViteDevServer } from "vite";
+import { build, createServer, defaultClientConditions, runnerImport, searchForWorkspaceRoot, type Connect, type Plugin, type ViteDevServer } from "vite";
 import type { AnyConfig } from "../config.ts";
 import { collectDescriptors } from "../descriptor.ts";
 
@@ -45,8 +45,11 @@ function entryPlugin(entry: string): Plugin {
 }
 
 const EXPORTS_ID = "\0vibe-cms:exports";
-const ADMIN_ROOT = fileURLToPath(new URL("../admin/app/", import.meta.url));
+// From the package root, which is two levels up from both src/vite and the published dist/vite. The editor
+// is always built from source, so it lives in src even when this module runs from dist.
 const PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const ADMIN_ROOT = path.join(PACKAGE_ROOT, "src", "admin", "app") + path.sep;
+const CLOUDFLARE_STUB = path.join(PACKAGE_ROOT, "src", "vite", "cloudflare-stub.ts");
 
 const ADMIN_FILE = /\.admin\.[cm]?[jt]sx?(\?|$)/;
 const SERVER_FILE = /\.server\.[cm]?[jt]sx?(\?|$)/;
@@ -197,8 +200,11 @@ function adminViteConfig(root: string, configFile: string, base: string, cssFile
     appType: "custom" as const,
     resolve: {
       dedupe: ["react", "react-dom", "@tanstack/react-query", "@base-ui/react"],
+      // The editor is built from vibe-cms's source. A widget's `vibe-cms/admin/ui` import must reach those same
+      // modules, not the compiled dist copy, or the two would hold separate React contexts.
+      conditions: ["source", ...defaultClientConditions],
       // Worker-only modules reached through `.server` files the scanner walks into.
-      alias: [{ find: /^cloudflare:.*/, replacement: fileURLToPath(new URL("./cloudflare-stub.ts", import.meta.url)) }]
+      alias: [{ find: /^cloudflare:.*/, replacement: CLOUDFLARE_STUB }]
     },
     server: {
       fs: { allow: [searchForWorkspaceRoot(root), root, PACKAGE_ROOT, searchForWorkspaceRoot(PACKAGE_ROOT)] },

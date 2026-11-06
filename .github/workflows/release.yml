@@ -22,12 +22,23 @@ jobs:
           pkg=$(bun -e 'console.log(require("./packages/vibe-cms/package.json").version)')
           [ "v$pkg" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME doesn't match package version $pkg"; exit 1; }
 
-      - name: Pack (builds the panel via prepack)
+      - name: Pack (builds the panel and compiles dist with tsdown)
         working-directory: packages/vibe-cms
-        run: bun pm pack --destination "$GITHUB_WORKSPACE"
+        run: bun run package --destination "$GITHUB_WORKSPACE"
 
-      - name: Check the tarball ships the panel
-        run: tar -tzf vibe-cms-*.tgz | grep -q 'package/panel-dist/index.js'
+      - name: Check the tarball ships the panel and the compiled package
+        run: |
+          files=$(tar -tzf vibe-cms-*.tgz)
+          for f in panel-dist/index.js dist/index.js dist/index.d.ts dist/cli/index.js; do
+            grep -qx "package/$f" <<< "$files" || { echo "Tarball is missing $f"; exit 1; }
+          done
+
+      - name: Smoke-test the tarball under Node
+        run: |
+          mkdir smoke && cd smoke
+          echo '{"name":"smoke","private":true,"type":"module"}' > package.json
+          bun add "$(ls "$GITHUB_WORKSPACE"/vibe-cms-*.tgz)"
+          node --input-type=module -e 'await import("vibe-cms"); await import("vibe-cms/schema"); await import("vibe-cms/vite"); process.exit(0)'
 
       - name: Create draft release
         env:

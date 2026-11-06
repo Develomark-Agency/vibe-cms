@@ -60,7 +60,8 @@ const adminDev = command({
       import("@vitejs/plugin-react"),
       import("@tailwindcss/vite")
     ]);
-    const root = fileURLToPath(new URL("../panel/", import.meta.url));
+    // The panel is built from source; `../../` is the package root from both src/cli and the published dist/cli.
+    const root = fileURLToPath(new URL("../../src/panel/", import.meta.url));
     const server = await createServer({
       root,
       configFile: false,
