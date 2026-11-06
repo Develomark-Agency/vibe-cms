@@ -219,7 +219,7 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
 
   let name = current?.name;
   if(!name) {
-    const taken = new Set([...(await listHubs(root)).filter(h => h.accountId === account.id).map(h => h.name), ...api ? await api.workers(account.id).catch(() => []) : []]);
+    const taken = new Set([...(await listHubs(root)).filter(h => h.accountId === account.id).map(h => h.name), ...api ? await api.workers(account.id).catch((): string[] => []) : []]);
     name = await p.text({
       message: "Worker name",
       initial: "vibe-panel",
@@ -245,7 +245,7 @@ async function configure(deps: WizardDeps, root: string, account: Account, api: 
   } else if(await p.confirm({ message: backups ? `Backups go to ${backups}. Change that?` : "Backups are off. Turn them on?", initial: false })) {
     const bucket = await p.text({ message: "R2 bucket name (empty for none)", initial: backups ?? `${name}-backups`, validate: v => !v || RESOURCE_NAME.test(v) ? undefined : "3 to 63 characters: lowercase letters, numbers and dashes" });
     if(bucket && bucket !== backups) {
-      const exists = api ? (await api.buckets(account.id).catch(() => [])).includes(bucket) : false;
+      const exists = api ? (await api.buckets(account.id).catch((): string[] => [])).includes(bucket) : false;
       if(!exists) create.push({ kind: "R2 bucket", name: bucket });
     }
     backups = bucket || null;

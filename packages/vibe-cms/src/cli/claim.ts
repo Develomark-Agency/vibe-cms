@@ -35,7 +35,7 @@ export async function findWorker(lookup: ClaimLookup, host: string, options: Cla
   const accounts = lookup.accounts.filter(a => !onlyAccount || a.id === onlyAccount);
   for(const account of accounts) {
     if(options.worker) {
-      if((await lookup.api.workers(account.id).catch(() => [])).includes(options.worker)) return { account: account.id, worker: options.worker };
+      if((await lookup.api.workers(account.id).catch((): string[] => [])).includes(options.worker)) return { account: account.id, worker: options.worker };
       continue;
     }
     const labels = host.split(".");

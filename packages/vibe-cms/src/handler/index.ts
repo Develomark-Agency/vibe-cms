@@ -192,10 +192,14 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
    * over the network, which is how a dev server's own static files (Vite's `public/`) are reached.
    */
   async function fetchSite(request: Request, env: E): Promise<Response> {
+    // `as Request`: in a program with both the DOM lib and @cloudflare/workers-types, the two global `Request`
+    // declarations merge and `clone()` returns workers-types' generic Request with its parameters unresolved,
+    // which isn't assignable to `Request`. The value is the same request either way.
+    const copy = () => request.clone() as Request;
     const assets = (options.bindings(env) as CoreBindings).assets ?? (env as { ASSETS?: Fetcher } | undefined)?.ASSETS;
     const local = [
-      assets && new URL(request.url).pathname !== "/" ? () => assets.fetch(request.clone()) : null,
-      siteHandler ? () => siteHandler!(request.clone(), env, { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext) : null
+      assets && new URL(request.url).pathname !== "/" ? () => assets.fetch(copy()) : null,
+      siteHandler ? () => siteHandler!(copy(), env, { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext) : null
     ];
     for(const attempt of local) {
       const response = attempt ? await Promise.resolve().then(attempt).catch(() => null) : null;
