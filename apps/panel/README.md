@@ -1,4 +1,4 @@
-# vibe-cms panel
+# <span style="white-space: nowrap">Vibe CMS</span> panel
 
 The agency's hub: sign in once, pick a site, edit it. Sites trust your org (a domain you own, in their `VIBE_ORG`), find this hub through the org's DNS record, and are added by URL; each site decides what you may do there. The editor, the CLI and AI agents all sign in here.
 

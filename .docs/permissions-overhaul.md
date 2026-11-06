@@ -6,7 +6,7 @@ Plan for moving users, roles and permissions out of code config and into data, a
 
 1. **Users are never in code.** `permissions.users` is removed.
 2. **Roles are data owned by the site.** They live in the site's D1 and are edited in the site's editor. The site enforces them on every request, as today, with no dependency on the hub being reachable.
-3. **No roles in code at all.** `permissions` is removed from `defineConfig`. A fresh site has only the built-in `owner`. vibe-cms ships **presets** (Admin, Editor, Contributor, Translator) inside the package: starting points, not live roles. Adding one copies it into the site's stored roles with no link back.
+3. **No roles in code at all.** `permissions` is removed from `defineConfig`. A fresh site has only the built-in `owner`. <span style="white-space: nowrap">Vibe CMS</span> ships **presets** (Admin, Editor, Contributor, Translator) inside the package: starting points, not live roles. Adding one copies it into the site's stored roles with no link back.
 4. **The hub manages its own admins and members.** The first admin comes from a printed one-time setup link, never from "first to sign in".
 5. **The hub assigns roles to users per site** and signs the role names into the site token. The site resolves them against its own stored roles.
 6. **Site authority is a signed per-site grant.** The user who added a site, the org owner and org admins may manage that site's roles and users. The hub signs this as a claim of its own; an identity provider group named `owner` still counts for nothing.

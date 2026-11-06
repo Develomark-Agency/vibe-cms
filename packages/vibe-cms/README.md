@@ -1,4 +1,4 @@
-# vibe-cms
+# <span style="white-space: nowrap">Vibe CMS</span>
 
 A headless CMS that runs inside your own Cloudflare Worker. Content types, editor widgets and plugins are TypeScript; content lives in D1, media in R2, and every site serves its own editor at `/_vibe/admin`.
 

@@ -94,7 +94,7 @@ export function codePage(url: URL): Response {
   const error = url.searchParams.get("error_description") ?? url.searchParams.get("error");
   const headers = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "no-referrer" };
   function shell(body: string) {
-    return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>vibe-cms</title><body style="font:15px/1.5 system-ui;display:grid;place-items:center;min-height:90vh;margin:0;padding:16px"><main style="max-width:480px;text-align:center">${body}</main>`;
+    return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Vibe CMS</title><body style="font:15px/1.5 system-ui;display:grid;place-items:center;min-height:90vh;margin:0;padding:16px"><main style="max-width:480px;text-align:center">${body}</main>`;
   }
   if(!code) return new Response(shell(`<h1 style="font-size:20px">Not connected</h1><p>${escape(error ?? "No code here.")}</p>`), { status: 400, headers });
   // The state rides along, so the CLI can check the pasted code is the one it asked for.

@@ -1,6 +1,6 @@
 # Schemas example
 
-Content type definitions for vibe-cms, one topic per file, plus the queries that read them. No site: each file's config can be dropped into any of the framework examples (`examples/astro`, `examples/worker`).
+Content type definitions for <span style="white-space: nowrap">Vibe CMS</span>, one topic per file, plus the queries that read them. No site: each file's config can be dropped into any of the framework examples (`examples/astro`, `examples/worker`).
 
 | File | Shows |
 |---|---|

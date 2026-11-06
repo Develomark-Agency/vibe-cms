@@ -38,7 +38,7 @@ const HexColor = extendType(string, {
 const Text = extendType(string, { displayName: "text", from: async value => value });
 const Path = extendType(string, { displayName: "path", from: async value => value });
 
-const brand = `${styleText(["bold", "magenta"], "◆")} ${styleText("bold", "vibe-cms")} ${styleText("dim", `v${pkg.version}`)}`;
+const brand = `${styleText(["bold", "magenta"], "◆")} ${styleText("bold", "Vibe CMS")} ${styleText("dim", `v${pkg.version}`)}`;
 
 const adminDev = command({
   name: "dev",

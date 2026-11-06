@@ -12,11 +12,11 @@ An agency with 50 client sites logs in once at `edit.my-agency.com`, picks a sit
 | **Identity provider** | Users and logins | Any OIDC provider you already use: Cloudflare Access, Google Workspace, Microsoft Entra, Okta, Clerk, Auth0, … |
 | **Panel** | The shared site list, per-user favorites | A black box deployed once per agency, e.g. `edit.my-agency.com` |
 
-vibe-cms does **not** run its own identity server. Logins belong to the identity provider, access rules and the editor belong to each site, and the panel is the agency's front door: sign-in, the site list, and a frame around each site's editor.
+<span style="white-space: nowrap">Vibe CMS</span> does **not** run its own identity server. Logins belong to the identity provider, access rules and the editor belong to each site, and the panel is the agency's front door: sign-in, the site list, and a frame around each site's editor.
 
 ## Each site hosts its own editor
 
-Every site serves a standalone admin app at `/_vibe/admin`: the vibe-cms admin core at that site's version, plus its widgets and admin plugins. It runs on the site's own origin, so its code can only ever act on that site.
+Every site serves a standalone admin app at `/_vibe/admin`: the <span style="white-space: nowrap">Vibe CMS</span> admin core at that site's version, plus its widgets and admin plugins. It runs on the site's own origin, so its code can only ever act on that site.
 
 The panel never loads a site's code into its own page. It shows the site's editor in a cross-origin **iframe** inside the panel's frame, the only place a deployed editor runs.
 
@@ -34,7 +34,7 @@ The panel never loads a site's code into its own page. It shows the site's edito
 - **Panel frame:** agency-level things only. Site switcher, favorites, panel settings, account.
 - **Site editor:** everything about the site, including its content navigation (posts, pages, media). The panel never renders a site's navigation or reads its schema.
 
-Because each site brings its own editor, sites on different vibe-cms versions never have to agree with each other or with the panel. The only shared contract is the small message protocol below.
+Because each site brings its own editor, sites on different <span style="white-space: nowrap">Vibe CMS</span> versions never have to agree with each other or with the panel. The only shared contract is the small message protocol below.
 
 ## Sites trust the org
 

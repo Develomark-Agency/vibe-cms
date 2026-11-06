@@ -75,7 +75,7 @@ export async function runWizard(deps: WizardDeps): Promise<void> {
 async function wizard(deps: WizardDeps) {
   const { exec, prompts: p } = deps;
   const root = deps.root ?? configRoot();
-  p.intro("vibe-cms panel");
+  p.intro("Vibe CMS panel");
 
   // 1. Who wrangler is logged in as, and which account this is for.
   const account = await chooseAccount(deps);

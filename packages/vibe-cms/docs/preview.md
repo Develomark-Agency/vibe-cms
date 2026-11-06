@@ -16,7 +16,7 @@ Only framed pages preview. The floating window is a frame, and so is the pop-out
 ## What your site needs
 
 - Requests must go through `vibe({ fetch })`, as in `vibe-cms docs astro` and `vibe-cms docs getting-started`. Sites that route with `vibe.match` and `vibe.handle` themselves don't get preview mode.
-- The `nodejs_compat` compatibility flag, which vibe-cms already requires. The preview scope uses `AsyncLocalStorage`.
+- The `nodejs_compat` compatibility flag, which <span style="white-space: nowrap">Vibe CMS</span> already requires. The preview scope uses `AsyncLocalStorage`.
 - Your own caches (KV, `caches.default`, in-memory memoization) should be skipped in preview. Check with `isPreview()`:
 
 ```ts

@@ -1,8 +1,8 @@
 # Overview
 
-What vibe-cms is, how a project using it is laid out, which code runs where, and the URLs it serves. Start here.
+What Vibe CMS is, how a project using it is laid out, which code runs where, and the URLs it serves. Start here.
 
-vibe-cms is a headless CMS that runs inside your own Cloudflare Worker. You define content types, editor widgets and plugins in TypeScript; content is stored as JSON documents in D1 and media in R2; every site serves its own editor at `/_vibe/admin`. Nothing is generated into your repository, and the CMS never provisions Cloudflare resources: you hand it bindings.
+<span style="white-space: nowrap">Vibe CMS</span> is a headless CMS that runs inside your own Cloudflare Worker. You define content types, editor widgets and plugins in TypeScript; content is stored as JSON documents in D1 and media in R2; every site serves its own editor at `/_vibe/admin`. Nothing is generated into your repository, and the CMS never provisions Cloudflare resources: you hand it bindings.
 
 ## A project
 

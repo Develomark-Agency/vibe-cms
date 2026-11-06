@@ -1,6 +1,6 @@
-# vibe-cms design notes
+# <span style="white-space: nowrap">Vibe CMS</span> design notes
 
-A snapshot of the current design decisions for vibe-cms: a headless, Cloudflare-native CMS whose content schemas, widgets and plugins are defined in code.
+A snapshot of the current design decisions for <span style="white-space: nowrap">Vibe CMS</span>: a headless, Cloudflare-native CMS whose content schemas, widgets and plugins are defined in code.
 
 Package subpaths used throughout (`vibe-cms/schema`, `vibe-cms/handler`, `vibe-cms/vite`, …) are working names, not final.
 

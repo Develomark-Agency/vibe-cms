@@ -111,7 +111,7 @@ export function ConnectionsPage() {
       <header className="space-y-2 pt-6">
         <h1 className="text-3xl font-medium tracking-[-0.03em]">Connected apps</h1>
         <p className="text-sm text-muted-foreground">
-          AI agents and the vibe-cms CLI you connected to this site. Add <code className="font-mono text-xs">{`${location.origin}${info.prefix}/api/mcp`}</code> to an agent as a custom connector, or run <code className="font-mono text-xs">{`vibe-cms login --site ${location.origin}`}</code>.
+          AI agents and the <span className="whitespace-nowrap">Vibe CMS</span> CLI you connected to this site. Add <code className="font-mono text-xs">{`${location.origin}${info.prefix}/api/mcp`}</code> to an agent as a custom connector, or run <code className="font-mono text-xs">{`vibe-cms login --site ${location.origin}`}</code>.
         </p>
       </header>
       <section className="flex flex-col divide-y rounded-[16px] elevated">

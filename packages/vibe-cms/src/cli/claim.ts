@@ -80,7 +80,7 @@ export async function claimLinkFor(site: string, lookup: ClaimLookup, options: C
   if(!reply || typeof reply.announced !== "boolean") {
     throw new Error(response.status === 404
       ? `${origin} doesn't answer to claim links. It was probably deployed before they existed: redeploy it, then try again.`
-      : `${origin} didn't answer the way a vibe-cms site does (${response.status}).`);
+      : `${origin} didn't answer the way a Vibe CMS site does (${response.status}).`);
   }
   // A site that printed its links a moment ago has its token already.
   if(!reply.announced && !reply.reason?.startsWith("Printed a moment ago")) throw new Error(`${reply.reason ?? "The site wouldn't make a claim link"}.`);

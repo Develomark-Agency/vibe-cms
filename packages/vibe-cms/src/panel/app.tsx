@@ -179,7 +179,7 @@ function ProblemBadge({ site }: { site: LiveSite }) {
   return (
     <span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-destructive">
       <span className="size-1.5 rounded-full bg-current" />
-      {site.problem.kind === "offline" ? "Not running" : "Not vibe-cms"}
+      {site.problem.kind === "offline" ? "Not running" : <>Not <span className="whitespace-nowrap">Vibe CMS</span></>}
     </span>
   );
 }
@@ -547,7 +547,7 @@ function SiteList({ backend, sites, loading, canAdd, member, onAdd, onBackups }:
         </dl>
         {canAdd && <AddSiteForm backend={backend} />}
         <p className="mt-auto text-xs text-muted-foreground">
-          {hosted ? "Sites need vibe-cms and must trust this panel's identity provider." : "This list is stored in this browser only."}
+          {hosted ? <>Sites need <span className="whitespace-nowrap">Vibe CMS</span> and must trust this panel's identity provider.</> : "This list is stored in this browser only."}
         </p>
       </aside>
       <div className="overflow-x-clip md:h-full md:overflow-y-auto">
@@ -567,7 +567,7 @@ function SiteList({ backend, sites, loading, canAdd, member, onAdd, onBackups }:
                 <EmptyDescription>
                   {!canAdd
                     ? member ? "Sites show up here once someone gives you a role on one." : "You're signed in, but nobody has given you a role on a site yet. Ask whoever runs this panel."
-                    : hosted ? "Add a site by its URL. It needs vibe-cms and has to trust the same identity provider as this panel." : "Start a site's dev server, then add its address, like localhost:4321."}
+                    : hosted ? <>Add a site by its URL. It needs <span className="whitespace-nowrap">Vibe CMS</span> and has to trust the same identity provider as this panel.</> : "Start a site's dev server, then add its address, like localhost:4321."}
                 </EmptyDescription>
               </EmptyHeader>
               {canAdd && <EmptyContent><Button onClick={onAdd}><PlusIcon /> Add your first site</Button></EmptyContent>}
@@ -730,7 +730,7 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
                       <TooltipTrigger render={
                         <span className="relative z-10 inline-flex shrink-0 items-center gap-1.5 font-medium text-destructive">
                           <span className="size-1.5 rounded-full bg-current" />
-                          {site.checking ? "Checking…" : site.problem.kind === "offline" ? "Not running" : "Not a vibe-cms site"}
+                          {site.checking ? "Checking…" : site.problem.kind === "offline" ? "Not running" : <>Not a <span className="whitespace-nowrap">Vibe CMS</span> site</>}
                         </span>
                       } />
                       <TooltipContent>{site.problem.message}</TooltipContent>
@@ -805,13 +805,17 @@ function AddSiteForm({ backend }: { backend: PanelBackend }) {
     }} className="grid gap-3">
       <div className="space-y-1">
         <h2 className="text-sm font-medium">Add a site</h2>
-        <p className="text-sm text-muted-foreground">{hosted ? "Paste the address of a site running vibe-cms, or the claim link a new site logged." : "Enter the address of a running dev server."}</p>
+        <p className="text-sm text-muted-foreground">
+          {hosted
+            ? <>Paste the address of a site running <span className="whitespace-nowrap">Vibe CMS</span>, or the claim link from a new site.</>
+            :  "Enter the address of a running dev server."}
+        </p>
       </div>
       <div className="flex gap-2">
         <Input value={url} onChange={e => {
           setUrl(e.target.value);
           if(add.isError) add.reset();
-        }} placeholder={hosted ? "client-site.com or its claim link" : "localhost:4321"} aria-label="Site URL or claim link" className="min-w-0 flex-1" />
+        }} placeholder={hosted ? "client-site.com" : "localhost:4321"} aria-label="Site URL or claim link" className="min-w-0 flex-1" />
         <Button type="submit" disabled={!url.trim() || add.isPending}>{add.isPending && <Spinner />} Add</Button>
       </div>
       {add.isError && <p className="text-sm text-destructive">{(add.error as Error).message}</p>}

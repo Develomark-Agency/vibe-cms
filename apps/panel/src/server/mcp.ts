@@ -104,7 +104,7 @@ async function visibleForGrant(env: Env, grant: GrantRow): Promise<Set<string> |
 export async function handleMcp(request: Request, env: Env, grant: GrantRow, version: string): Promise<Response> {
   const readOnly = grant.scope === SCOPE_READ;
   return serveMcp(request, {
-    name: "vibe-cms panel",
+    name: "Vibe CMS panel",
     version,
     instructions: INSTRUCTIONS,
     tools: () => allTools().filter(tool => !readOnly || tool.annotations.readOnlyHint),

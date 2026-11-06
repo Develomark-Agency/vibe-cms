@@ -1,6 +1,6 @@
 # Agents
 
-How AI agents work with vibe-cms: coding agents read these guides, content agents edit through MCP, connecting differently to development and deployed sites.
+How AI agents work with Vibe CMS: coding agents read these guides, content agents edit through MCP, connecting differently to development and deployed sites.
 
 There are two kinds of agent work, with different tools:
 

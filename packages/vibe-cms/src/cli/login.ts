@@ -68,7 +68,7 @@ function saveLogin(root: string, login: Login): Promise<void> {
 
 async function metadata(hub: string): Promise<ServerMetadata> {
   const response = await fetch(`${hub}/.well-known/oauth-authorization-server`).catch(() => null);
-  if(!response?.ok) throw new Error(`${hub} isn't a vibe-cms hub (no /.well-known/oauth-authorization-server)`);
+  if(!response?.ok) throw new Error(`${hub} isn't a Vibe CMS hub (no /.well-known/oauth-authorization-server)`);
   return await response.json() as ServerMetadata;
 }
 
@@ -89,7 +89,7 @@ function openBrowser(url: string) {
 }
 
 function page(message: string, status = 200): Response {
-  const html = `<!doctype html><meta charset="utf-8"><title>vibe-cms</title><body style="font:15px system-ui;display:grid;place-items:center;min-height:90vh"><p>${message}</p></body>`;
+  const html = `<!doctype html><meta charset="utf-8"><title>Vibe CMS</title><body style="font:15px system-ui;display:grid;place-items:center;min-height:90vh"><p>${message}</p></body>`;
   return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
@@ -240,7 +240,7 @@ export async function loginToSite(site: string, prefix: string, headless: boolea
   const login: SiteLogin = {
     site: origin,
     prefix,
-    ...await authorize(origin, meta, `vibe-cms CLI (${path.basename(projectRoot())})`, headless ? { redirectUri: `${origin}${prefix}/oauth/code` } : undefined)
+    ...await authorize(origin, meta, `Vibe CMS CLI (${path.basename(projectRoot())})`, headless ? { redirectUri: `${origin}${prefix}/oauth/code` } : undefined)
   };
   await secrets().set({ service: SERVICE, name: siteKey(origin, prefix), value: JSON.stringify(login) });
   return login;
@@ -333,7 +333,7 @@ async function loginToHub(value: string, headless: boolean): Promise<Login> {
   const meta = await metadata(origin);
   const login: Login = {
     hub: origin,
-    ...await authorize(origin, meta, `vibe-cms CLI (${path.basename(root)})`, headless ? { redirectUri: `${origin}/oauth/code` } : undefined),
+    ...await authorize(origin, meta, `Vibe CMS CLI (${path.basename(root)})`, headless ? { redirectUri: `${origin}/oauth/code` } : undefined),
     ...(org === origin ? {} : { org })
   };
   await saveLogin(root, login);
@@ -404,6 +404,6 @@ export const logoutCommand = command({
       : false;
     await secrets().delete({ service: SERVICE, name: root });
     console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged out")} of ${styleText("cyan", login.hub)}`);
-    if(!revoked) console.log(styleText("yellow", `  Couldn't revoke the login at ${login.hub}. Remove "vibe-cms CLI" under Connected agents there.`));
+    if(!revoked) console.log(styleText("yellow", `  Couldn't revoke the login at ${login.hub}. Remove "Vibe CMS CLI" under Connected agents there.`));
   }
 });

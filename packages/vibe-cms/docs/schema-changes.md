@@ -2,7 +2,7 @@
 
 What happens to stored content when you change a schema, which changes are safe, and how to rename or retype a field on a site that already has content.
 
-vibe-cms doesn't migrate content. Documents are JSON in D1, written under the schema of the time, and validation only runs when a document is written. Reads check one thing: that each stored value still has the right type for its field. Missing values and broken rules (`min`, `format`, …) come back as stored.
+<span style="white-space: nowrap">Vibe CMS</span> doesn't migrate content. Documents are JSON in D1, written under the schema of the time, and validation only runs when a document is written. Reads check one thing: that each stored value still has the right type for its field. Missing values and broken rules (`min`, `format`, …) come back as stored.
 
 When a published value has the wrong type, the query fails with `CONFLICT` (HTTP 409) and says which document and field:
 

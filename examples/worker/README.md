@@ -1,6 +1,6 @@
 # Worker example
 
-vibe-cms in a plain Cloudflare Worker built with Vite and `@cloudflare/vite-plugin`. The Worker renders HTML strings from in-process queries; there's no framework.
+<span style="white-space: nowrap">Vibe CMS</span> in a plain Cloudflare Worker built with Vite and `@cloudflare/vite-plugin`. The Worker renders HTML strings from in-process queries; there's no framework.
 
 | File | What |
 |---|---|

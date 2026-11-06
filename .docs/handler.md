@@ -1,6 +1,6 @@
 # The handler
 
-vibe-cms is a library, not infrastructure. You already have a Worker for your site (Astro, Vinext, React Router, plain Vite); the CMS mounts inside it. One Worker per site serves both the site and the CMS.
+<span style="white-space: nowrap">Vibe CMS</span> is a library, not infrastructure. You already have a Worker for your site (Astro, Vinext, React Router, plain Vite); the CMS mounts inside it. One Worker per site serves both the site and the CMS.
 
 ## `createHandler`
 

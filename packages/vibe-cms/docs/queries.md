@@ -7,7 +7,7 @@ Get a client, then query a content type from `config.schemas`:
 | Where your code runs | Client |
 |---|---|
 | The site's own Worker (pages, API routes) | `vibe.client(env)`, in-process, no HTTP. `vibe` is your `createHandler(...)` result. |
-| A vibe-cms plugin's server code | `ctx.cms` (`vibe-cms docs server-hooks`) |
+| A <span style="white-space: nowrap">Vibe CMS</span> plugin's server code | `ctx.cms` (`vibe-cms docs server-hooks`) |
 | Anywhere else (another app, a browser, a script) | `createClient<typeof config>({ url })` from `vibe-cms/client` (`vibe-cms docs http-client`) |
 
 All three are a `QueryClient<typeof config>` with the same API, so query code can take the client as a parameter:

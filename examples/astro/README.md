@@ -1,6 +1,6 @@
 # Astro example
 
-vibe-cms in an Astro site on Cloudflare, with the official `@astrojs/cloudflare` adapter and a hand-written `wrangler.jsonc`. Pages read content in-process with `vibe.client(env)`.
+<span style="white-space: nowrap">Vibe CMS</span> in an Astro site on Cloudflare, with the official `@astrojs/cloudflare` adapter and a hand-written `wrangler.jsonc`. Pages read content in-process with `vibe.client(env)`.
 
 | File | What |
 |---|---|

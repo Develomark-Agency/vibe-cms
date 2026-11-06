@@ -151,7 +151,7 @@ v.asset({
 
 ### `image()` and `video()`
 
-Shipped with vibe-cms from `vibe-cms/media`, but they are ordinary presets over `v.asset()`. A plugin could ship `audio()` the same way.
+Shipped with <span style="white-space: nowrap">Vibe CMS</span> from `vibe-cms/media`, but they are ordinary presets over `v.asset()`. A plugin could ship `audio()` the same way.
 
 ```ts
 // vibe-cms/media

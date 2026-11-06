@@ -1,6 +1,6 @@
 # Client example
 
-Reading a vibe-cms site's content from outside its Worker: scripts, other apps and browsers. It reads the [worker example](../worker), so start that first (`bun run dev` there).
+Reading a <span style="white-space: nowrap">Vibe CMS</span> site's content from outside its Worker: scripts, other apps and browsers. It reads the [worker example](../worker), so start that first (`bun run dev` there).
 
 | File | What |
 |---|---|

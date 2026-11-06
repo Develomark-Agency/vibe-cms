@@ -1,6 +1,6 @@
 # Without Vite
 
-Use vibe-cms in a Worker that `wrangler dev` and `wrangler deploy` build directly: build the editor with `vibe-cms build-admin` and set `dev` yourself.
+Use Vibe CMS in a Worker that `wrangler dev` and `wrangler deploy` build directly: build the editor with `vibe-cms build-admin` and set `dev` yourself.
 
 The Vite plugin is the easier path (`vibe-cms docs vite`). Without it, three things change.
 

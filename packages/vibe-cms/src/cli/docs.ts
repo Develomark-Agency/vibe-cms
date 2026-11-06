@@ -55,7 +55,7 @@ export function search(topics: Topic[], words: string[]): string[] {
 
 export const docs = command({
   name: "docs",
-  description: "Read the vibe-cms guides: schemas, plugins, framework setup, agents",
+  description: "Read the Vibe CMS guides: schemas, plugins, framework setup, agents",
   args: {
     words: restPositionals({ type: string, displayName: "topic", description: "A topic name, `topics`, or `search` followed by words" })
   },

@@ -1,6 +1,6 @@
 # Astro
 
-Run vibe-cms inside an Astro site on Cloudflare with the official `@astrojs/cloudflare` adapter: your own Worker entry wraps Astro's, and pages read content in-process.
+Run Vibe CMS inside an Astro site on Cloudflare with the official `@astrojs/cloudflare` adapter: your own Worker entry wraps Astro's, and pages read content in-process.
 
 This follows `examples/astro`. Read `vibe-cms docs getting-started` first for what the config and handler are.
 

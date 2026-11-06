@@ -1,8 +1,8 @@
 # Getting started
 
-Add vibe-cms to a Cloudflare Worker: a config file, a handler wrapped around your Worker, the Vite plugin, and the bindings it needs. Ends with the editor running at `/_vibe/admin`.
+Add Vibe CMS to a Cloudflare Worker: a config file, a handler wrapped around your Worker, the Vite plugin, and the bindings it needs. Ends with the editor running at `/_vibe/admin`.
 
-vibe-cms runs inside your own Worker. It doesn't create Cloudflare resources and it doesn't generate files in your repository: you hand it a D1 database (and optionally an R2 bucket), and it creates its tables on the first request.
+<span style="white-space: nowrap">Vibe CMS</span> runs inside your own Worker. It doesn't create Cloudflare resources and it doesn't generate files in your repository: you hand it a D1 database (and optionally an R2 bucket), and it creates its tables on the first request.
 
 The steps below follow `examples/worker` in the vibe-cms repository. For Astro, read this page, then `vibe-cms docs astro`. Without Vite, see `vibe-cms docs wrangler`.
 

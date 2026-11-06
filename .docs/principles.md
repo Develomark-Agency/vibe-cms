@@ -2,13 +2,13 @@
 
 ## Cloudflare-native, deploy-tool agnostic
 
-vibe-cms targets one runtime: Cloudflare Workers. It is built directly on D1, R2, Durable Objects, Queues, Workflows and cron triggers, with no storage or platform adapter layer.
+<span style="white-space: nowrap">Vibe CMS</span> targets one runtime: Cloudflare Workers. It is built directly on D1, R2, Durable Objects, Queues, Workflows and cron triggers, with no storage or platform adapter layer.
 
 - **Database:** D1 (SQLite dialect). D1-specific features like batches and read-replica sessions are fair game.
 - **Media:** R2.
 - **Background work:** cron triggers, Queues, Durable Objects, Workflows.
 
-How you deploy is not our concern. The CMS is a library mounted inside a Worker you already have (see [handler.md](./handler.md)), so wrangler, Alchemy or anything else works. vibe-cms never provisions infrastructure; it declares typed contracts for the bindings it needs, and you plug in resources you created.
+How you deploy is not our concern. The CMS is a library mounted inside a Worker you already have (see [handler.md](./handler.md)), so wrangler, Alchemy or anything else works. <span style="white-space: nowrap">Vibe CMS</span> never provisions infrastructure; it declares typed contracts for the bindings it needs, and you plug in resources you created.
 
 Internally, the engine keeps clean seams between core logic and Cloudflare APIs, but those seams are **not** public adapter interfaces. Internal seams are cheap; public adapters are a long-term promise we are not making.
 

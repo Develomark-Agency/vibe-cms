@@ -298,7 +298,7 @@ export async function fetchDescriptor(url: string): Promise<SiteDescriptor> {
   }
   if(!response.ok) {
     if(isSameZoneBlock(await response.text().catch(() => ""))) throw new PanelError(502, sameZoneAdvice(origin));
-    throw new PanelError(422, `${origin} isn't a vibe-cms site (no /.well-known/vibe-cms)`);
+    throw new PanelError(422, `${origin} isn't a Vibe CMS site (no /.well-known/vibe-cms)`);
   }
   const descriptor = await response.json() as SiteDescriptor;
   if(descriptor.protocol !== 1 || !descriptor.id || !descriptor.admin) throw new PanelError(422, "Unsupported site descriptor");

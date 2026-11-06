@@ -2,7 +2,7 @@
 
 ## Schemas are the query markers
 
-Inspired by Drizzle's relational queries: not its syntax, but the idea that you pass around typed objects that shape the query. In vibe-cms, the schemas from the config are those objects.
+Inspired by Drizzle's relational queries: not its syntax, but the idea that you pass around typed objects that shape the query. In <span style="white-space: nowrap">Vibe CMS</span>, the schemas from the config are those objects.
 
 ```ts
 import { eq, gt, desc, and, inArray } from "vibe-cms/query";
