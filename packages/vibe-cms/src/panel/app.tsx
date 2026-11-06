@@ -59,6 +59,7 @@ import { ConfirmHost } from "../admin/app/confirm.tsx";
 import { BackupDefaultsDialog, BackupsDialog } from "./backups.tsx";
 import { go, listeners, useRoute } from "./location.ts";
 import { AccessPage, PeoplePage, SetupCard, TemplatePicker, TemplatesPage } from "./access.tsx";
+import type { SiteWarning } from "../handler/images.ts";
 import { DEFAULT_BRANDING, fetchDescriptor, isClaimLink, PanelError, type PanelBackend, type PanelBranding, type PanelSite, type PanelUser } from "./backend.ts";
 
 /**
@@ -104,7 +105,9 @@ type LiveSite = PanelSite & {
   /** A check of the site is in flight. */
   checking?: boolean,
   /** Not checked yet: whether it's up, and its live name, aren't known. */
-  pending?: boolean
+  pending?: boolean,
+  /** Setup problems the site reports, e.g. image optimization failing. */
+  warnings?: SiteWarning[]
 };
 
 function siteProblem(error: unknown): LiveSite["problem"] {
@@ -143,7 +146,7 @@ function useLiveSites(sites: PanelSite[] | undefined): LiveSite[] | undefined {
   });
   return sites?.map((site, i) => {
     const { data: live, error, isFetching } = descriptors[i] ?? {};
-    if(live) return { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null };
+    if(live) return { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null, warnings: live.warnings };
     if(error) return { ...site, problem: siteProblem(error), checking: isFetching };
     return { ...site, pending: true };
   });
@@ -758,7 +761,20 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
                       <TooltipContent>{site.problem.message}</TooltipContent>
                     </Tooltip>
                   )}
-                  {site.problem && <span aria-hidden>·</span>}
+                  {!site.problem && site.warnings?.length ? (
+                    <Tooltip>
+                      <TooltipTrigger render={
+                        <span className="relative z-10 inline-flex shrink-0 items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+                          <span className="size-1.5 rounded-full bg-current" />
+                          {site.warnings.length === 1 ? "1 warning" : `${site.warnings.length} warnings`}
+                        </span>
+                      } />
+                      <TooltipContent className="max-w-xs">
+                        {site.warnings.map(w => <p key={w.code}>{w.message}</p>)}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                  {(site.problem || !!site.warnings?.length) && <span aria-hidden>·</span>}
                   <span className="truncate">{new URL(site.url).host}</span>
                 </span>
               </button>

@@ -1,5 +1,5 @@
 import alchemy from "alchemy";
-import { D1Database, DurableObjectNamespace, R2Bucket, Website } from "alchemy/cloudflare";
+import { D1Database, DurableObjectNamespace, Images, R2Bucket, Website } from "alchemy/cloudflare";
 import type { ViewCounter } from "./src/plugins/views/counter.server.ts";
 
 const app = await alchemy("vibe-blog");
@@ -7,6 +7,8 @@ const app = await alchemy("vibe-blog");
 // vibe-cms never provisions anything: these are the resources it's handed in src/cms.ts.
 const db = await D1Database("db", { adopt: true });
 const media = await R2Bucket("media", { adopt: true });
+// Resizes images and converts them to AVIF and WebP for `?w=` media URLs (see `vibe-cms docs media`).
+const images = Images();
 // Binding for the example views plugin (its class is exported through `vibe-cms/exports`).
 const viewCounters = DurableObjectNamespace<ViewCounter>("view-counters", { className: "ViewCounter", sqlite: true });
 
@@ -22,7 +24,7 @@ export const site = await Website("site", {
   spa: false,
   // global_fetch_strictly_public: lets the site and a panel on workers.dev in the same account call each other.
   compatibilityFlags: ["nodejs_compat", "global_fetch_strictly_public"],
-  bindings: { DB: db, MEDIA: media, VIEW_COUNTERS: viewCounters },
+  bindings: { DB: db, MEDIA: media, IMAGES: images, VIEW_COUNTERS: viewCounters },
   // Runs scheduled publishing.
   crons: ["* * * * *"],
   // The Astro adapter reads this file, so `astro dev` gets the same bindings,

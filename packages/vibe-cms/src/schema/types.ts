@@ -183,6 +183,8 @@ export interface AssetMeta {
   width?: number,
   height?: number,
   duration?: number,
+  /** Location and camera details were removed on upload. */
+  metadataRemoved?: boolean,
   [key: string]: unknown
 }
 

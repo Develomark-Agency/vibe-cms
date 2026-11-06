@@ -1,5 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronsUpDownIcon, ExternalLinkIcon, FileIcon, FilmIcon, ImageIcon, LibraryIcon, SearchIcon, UploadIcon, XIcon } from "lucide-react";
+import { chooseStripMetadata } from "./upload-metadata.tsx";
+import { CollapsedPath } from "./collapsed-path.tsx";
+import type { DroppedFile } from "./dropped-files.ts";
+import { ChevronRightIcon, ChevronsUpDownIcon, ExternalLinkIcon, FileIcon, FilmIcon, FolderIcon, ImageIcon, LibraryIcon, SearchIcon, UploadIcon, XIcon } from "lucide-react";
 import { useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import type { AnySchema, AssetSchema, RefSchema } from "../../schema/types.ts";
 import type { Issue, Path } from "../../schema/validate.ts";
@@ -157,24 +160,49 @@ export function useAsset(id: string | undefined) {
 }
 
 export function useUpload() {
-  const { cms } = useAdmin();
+  const { cms, site } = useAdmin();
   const queryClient = useQueryClient();
   const [uploading, setUploading] = useState(false);
-  async function upload(file: File, options?: Parameters<typeof cms.upload>[1]): Promise<Asset | null> {
+
+  /**
+   * Uploads files one after another, asking first whether to remove location and camera details
+   * when any photo has them. Null when that's cancelled; the files that uploaded otherwise.
+   */
+  async function uploadFiles(files: Array<File | DroppedFile>, options?: Parameters<typeof cms.upload>[1], prepare?: () => Promise<unknown>, folders: string[] = []): Promise<Asset[] | null> {
+    // A file from a dropped folder goes into that folder, inside `options.folder`.
+    const list = files.map(f => (f instanceof File ? { file: f, folder: null } : f));
+    const strip = await chooseStripMetadata(list, site.stripMetadata ?? true, folders);
+    if(strip === null) return null;
+    // Runs once the upload is confirmed: making a dropped folder's folders, say.
+    await prepare?.();
     setUploading(true);
+    const uploaded: Asset[] = [];
     try {
-      const asset = await cms.upload(file, options);
-      queryClient.setQueryData(["asset", asset.id], asset);
-      await queryClient.invalidateQueries({ queryKey: ["assets"] });
-      return asset;
-    } catch (error) {
-      cms.toast(error instanceof ApiError ? error.message : "Upload failed", { type: "error" });
-      return null;
+      for(const { file, folder } of list) {
+        try {
+          const into = folder ? [options?.folder, folder].filter(Boolean).join("/") : options?.folder;
+          const choice = strip?.get(file);
+          const asset = await cms.upload(file, { ...options, folder: into, ...(choice === undefined ? {} : { stripMetadata: choice }) });
+          queryClient.setQueryData(["asset", asset.id], asset);
+          uploaded.push(asset);
+        } catch (error) {
+          cms.toast(error instanceof ApiError ? error.message : `Couldn't upload ${file.name}`, { type: "error" });
+        }
+      }
+      if(uploaded.length) await queryClient.invalidateQueries({ queryKey: ["assets"] });
+      return uploaded;
     } finally {
       setUploading(false);
     }
   }
-  return { upload, uploading };
+
+  /** One file; says so when its details were removed, since nothing else confirms it. */
+  async function upload(file: File, options?: Parameters<typeof cms.upload>[1]): Promise<Asset | null> {
+    const asset = (await uploadFiles([file], options))?.[0] ?? null;
+    if(asset?.meta.metadataRemoved) cms.toast(`Removed location and camera details from ${asset.filename}`, { type: "success" });
+    return asset;
+  }
+  return { upload, uploadFiles, uploading };
 }
 
 export function AssetControl({ schema, value, onChange, path, issues, readOnly, doc, optional, field, options }: PickerProps & { options: AssetPickerOptions }) {
@@ -379,10 +407,20 @@ export function AssetPreview({ asset, focal, onFocal, className }: {
   );
 }
 
-export function AssetThumb({ asset, selected, onClick, style }: { asset: Asset, selected?: boolean, onClick?(event: React.MouseEvent): void, style?: CSSProperties }) {
+export function AssetThumb({ asset, selected, onClick, style, folder, nav }: {
+  asset: Asset,
+  /** A row for the media library's arrow keys. */
+  nav?: boolean,
+  selected?: boolean,
+  onClick?(event: React.MouseEvent): void,
+  style?: CSSProperties,
+  /** Shown above the details, e.g. where a search result lives. */
+  folder?: string
+}) {
   return (
     <button
       type="button"
+      data-nav={nav ? "file" : undefined}
       onClick={onClick}
       style={style}
       className={cn(
@@ -401,32 +439,103 @@ export function AssetThumb({ asset, selected, onClick, style }: { asset: Asset, 
       </div>
       <div className="min-w-0 px-2.5 py-2">
         <p className="truncate text-xs font-medium">{asset.filename}</p>
+        {folder && <p className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground"><FolderIcon className="size-3 shrink-0" /><span className="truncate">{folder}</span></p>}
         <p className="truncate text-[11px] text-muted-foreground">{describeAsset(asset)}</p>
       </div>
     </button>
   );
 }
 
+const LAST_FOLDER_KEY = "vibe:library-folder";
+
+/** The folder the dialog was last left in, so picking several files in a row doesn't start over each time. */
+function lastFolder(): string | null {
+  try {
+    return localStorage.getItem(LAST_FOLDER_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberFolder(folder: string | null) {
+  try {
+    if(folder) localStorage.setItem(LAST_FOLDER_KEY, folder);
+    else localStorage.removeItem(LAST_FOLDER_KEY);
+  } catch {}
+}
+
+/** `"a/b"` → `["a", "a/b"]`, for the breadcrumb. */
+function ancestors(path: string): string[] {
+  const parts = path.split("/");
+  return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+}
+
+/**
+ * Picking a file: browse folders like the media library's Folders view (a breadcrumb, then the
+ * folder's subfolders and files), or search every folder. Opens in the field's folder, else where
+ * it was last left.
+ */
 export function MediaLibraryDialog({ open, onOpenChange, accept, folder, onSelect }: {
   open: boolean,
   onOpenChange(open: boolean): void,
   accept?: string[],
+  /** The field's folder: where the dialog opens and uploads go. */
   folder?: string,
   onSelect(asset: Asset): void
 }) {
   const { cms } = useAdmin();
   const [search, setSearch] = useState("");
-  const [currentFolder, setCurrentFolder] = useState<string | undefined>(folder);
+  // null is the top level, "All files".
+  const [current, setCurrent] = useState<string | null>(() => folder ?? lastFolder());
+  const [wasOpen, setWasOpen] = useState(open);
+  if(open !== wasOpen) {
+    setWasOpen(open);
+    // Each time it opens: the field's folder, else the last one, and no leftover search.
+    if(open) {
+      setCurrent(folder ?? lastFolder());
+      setSearch("");
+    }
+  }
   const { upload, uploading } = useUpload();
   const fileInput = useRef<HTMLInputElement>(null);
+  const searching = search.trim().length > 0;
   const list = useQuery({
-    queryKey: ["assets", { search, folder: currentFolder, accept }],
+    queryKey: ["assets", { search: searching ? search : undefined, folder: searching ? undefined : current ?? "", accept }],
     enabled: open,
-    queryFn: () => cms.assets.list({ search: search || undefined, folder: currentFolder, accept, limit: 120 })
+    queryFn: () => cms.assets.list(searching
+      ? { search, accept, limit: 120 }
+      : { folder: current ?? "", accept, limit: 120 })
   });
+  // Counted by the types this field accepts, so a tile's number matches what opening it shows.
+  const folders = useQuery({
+    queryKey: ["folders", { accept }],
+    enabled: open,
+    queryFn: () => cms.actions.folders.list({ accept })
+  });
+  const all = folders.data?.folders ?? [];
+  const exists = current === null || all.some(f => f.path === current);
+  const children = searching ? [] : all.filter(f => f.path !== current && (current === null ? !f.path.includes("/") : f.path.startsWith(`${current}/`) && !f.path.slice(current.length + 1).includes("/")));
+  /** Files in a folder and everything under it, for its tile. */
+  function countIn(path: string): number {
+    return all.filter(f => f.path === path || f.path.startsWith(`${path}/`)).reduce((n, f) => n + f.files, 0);
+  }
+
+  function go(next: string | null) {
+    setCurrent(next);
+    setSearch("");
+    rememberFolder(next);
+  }
+
+  function pick(asset: Asset) {
+    rememberFolder(asset.folder);
+    onSelect(asset);
+  }
+
+  const assets = list.data?.assets ?? [];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] flex-col gap-4 sm:max-w-3xl">
+      {/* A fixed height: moving between folders mustn't resize the dialog and shift it under the pointer. */}
+      <DialogContent className="flex h-[min(85vh,44rem)] flex-col gap-4 sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Media library</DialogTitle>
           <DialogDescription>Pick a file{accept?.length ? ` (${accept.join(", ")})` : ""}, or upload a new one.</DialogDescription>
@@ -434,49 +543,74 @@ export function MediaLibraryDialog({ open, onOpenChange, accept, folder, onSelec
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-48 flex-1">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by file name" className="pl-8" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search all folders" className="pl-8" />
           </div>
-          <FolderSelect folders={list.data?.folders ?? []} value={currentFolder} onChange={setCurrentFolder} />
           <input ref={fileInput} type="file" hidden accept={accept?.join(",")} onChange={async e => {
             const file = e.target.files?.[0];
             e.target.value = "";
             if(!file) return;
-            const asset = await upload(file, { folder: currentFolder ?? folder });
-            if(asset) onSelect(asset);
+            const asset = await upload(file, { folder: current ?? undefined });
+            if(asset) pick(asset);
           }} />
           <Button onClick={() => fileInput.current?.click()} disabled={uploading}>{uploading ? <Spinner /> : <UploadIcon />} Upload</Button>
         </div>
-        <div className="-mx-1 min-h-48 overflow-y-auto px-1">
+
+        {searching ? (
+          <p className="-mt-1 px-1 text-sm text-muted-foreground">Results from every folder</p>
+        ) : (
+          <nav aria-label="Folder" className="-mt-1 -ml-1.5 min-w-0 text-sm text-muted-foreground">
+            <CollapsedPath
+              items={[null, ...(current ? ancestors(current) : [])] as Array<string | null>}
+              label={path => (path === null ? "All files" : path.slice(path.lastIndexOf("/") + 1))}
+              separator={<ChevronRightIcon className="mx-0.5 size-3.5 opacity-50" />}
+              onOpen={go}
+              renderItem={(path, last) => (
+                <button
+                  type="button"
+                  disabled={last}
+                  onClick={() => go(path)}
+                  title={path ?? undefined}
+                  className={cn("truncate rounded-[8px] px-1.5 py-1", last ? "font-medium text-foreground" : "hover:bg-foreground/[0.05] hover:text-foreground")}
+                >
+                  {path === null ? "All files" : path.slice(path.lastIndexOf("/") + 1)}
+                </button>
+              )}
+            />
+          </nav>
+        )}
+
+        {/* Bleeds into the dialog's padding so tile shadows (and their hover lift) aren't clipped by the scroll area. */}
+        <div className="-mx-3 -mt-2 -mb-3 min-h-0 flex-1 overflow-y-auto px-3 pt-2 pb-3">
           {list.isLoading ? (
             <Delayed><div className="flex justify-center p-10"><Spinner /></div></Delayed>
-          ) : list.data?.assets.length ? (
+          ) : children.length || assets.length ? (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {list.data.assets.map(asset => <AssetThumb key={asset.id} asset={asset} onClick={() => onSelect(asset)} />)}
+              {children.map(child => (
+                <button
+                  key={child.path}
+                  type="button"
+                  onClick={() => go(child.path)}
+                  className="flex items-center gap-2.5 rounded-[14px] elevated px-3 py-2.5 text-left transition-[box-shadow,scale] duration-150 hover:shadow-(--shadow-raised-hover) active:scale-[0.98] focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                >
+                  <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{child.path.slice(child.path.lastIndexOf("/") + 1)}</span>
+                    <span className="block text-[11px] text-muted-foreground">{countIn(child.path) === 1 ? "1 file" : `${countIn(child.path)} files`}</span>
+                  </span>
+                </button>
+              ))}
+              {/* A folder tile row stays its own row: files start on the next line. */}
+              {children.length > 0 && assets.length > 0 && <div className="col-span-full -my-1" />}
+              {assets.map(asset => <AssetThumb key={asset.id} asset={asset} folder={searching ? asset.folder ?? "All files" : undefined} onClick={() => pick(asset)} />)}
             </div>
           ) : (
-            <p className="p-10 text-center text-sm text-muted-foreground">No files here yet.</p>
+            <p className="p-10 text-center text-sm text-muted-foreground">
+              {searching ? `Nothing matches “${search.trim()}”.` : exists ? "Nothing in this folder yet." : "This folder doesn't exist yet. Uploads will create it."}
+            </p>
           )}
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-export function FolderSelect({ folders, value, onChange }: { folders: string[], value: string | undefined, onChange(folder: string | undefined): void }) {
-  const all = value && !folders.includes(value) ? [...folders, value] : folders;
-  return (
-    <Select
-      items={[{ value: "*", label: "All folders" }, { value: "", label: "No folder" }, ...all.map(f => ({ value: f, label: f }))]}
-      value={value === undefined ? "*" : value}
-      onValueChange={next => onChange(next === "*" ? undefined : next as string)}
-    >
-      <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="*">All folders</SelectItem>
-        <SelectItem value="">No folder</SelectItem>
-        {all.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
-      </SelectContent>
-    </Select>
   );
 }
 

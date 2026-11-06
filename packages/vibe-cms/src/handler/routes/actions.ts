@@ -197,6 +197,7 @@ actions
       content: await c.req.text()
     }))
   )
+  .delete("/assets/:id/metadata", async c => c.json(await c.var.actions.assets.stripMetadata({ id: c.req.param("id") })))
 
   .get("/folders", async c => c.json(await c.var.actions.folders.list()))
   .post(

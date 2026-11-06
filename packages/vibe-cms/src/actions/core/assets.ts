@@ -35,9 +35,15 @@ const assetsUpload = base({
     file: fileInput(),
     folder: z.string().optional(),
     type: z.string().optional().describe("Content type whose field the file is for"),
-    field: z.string().optional().describe("Dot path of that asset field, e.g. cover")
+    field: z.string().optional().describe("Dot path of that asset field, e.g. cover"),
+    stripMetadata: z.boolean().optional().describe("Remove location and camera details from photos, keeping orientation. Defaults to the site's setting (on unless turned off)")
   }))
-  .handler(({ context: { engine }, input }) => engine.upload(input.file, { folder: input.folder || undefined, type: input.type || undefined, field: input.field || undefined }));
+  .handler(({ context: { engine }, input }) => engine.upload(input.file, {
+    folder: input.folder || undefined,
+    type: input.type || undefined,
+    field: input.field || undefined,
+    stripMetadata: input.stripMetadata
+  }));
 
 const assetsUpdate = base({
   summary: "Rename or move a file",
@@ -62,6 +68,14 @@ const assetsReplaceContent = base({
   }))
   .handler(({ context: { engine }, input }) => engine.replaceContent(input.id, new TextEncoder().encode(input.content).buffer as ArrayBuffer));
 
+const assetsStripMetadata = base({
+  summary: "Remove a photo's location and camera details",
+  description: "Removes EXIF, XMP and IPTC metadata (GPS, camera, dates) from an uploaded JPEG, PNG or WebP in place, keeping orientation. The file keeps its ID; its URL gets a new ?v=. Can't be undone.",
+  idempotent: true
+})
+  .input(z.object({ id: assetId }))
+  .handler(({ context: { engine }, input }) => engine.stripAssetMetadata(input.id));
+
 const assetsDelete = base({
   summary: "Delete a file",
   description: "Moves a file to the trash. Fails with CONFLICT while a document uses it."
@@ -75,5 +89,6 @@ export const assets = router({
   upload: assetsUpload,
   update: assetsUpdate,
   replaceContent: assetsReplaceContent,
+  stripMetadata: assetsStripMetadata,
   delete: assetsDelete
 });

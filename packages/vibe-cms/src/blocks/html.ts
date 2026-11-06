@@ -1,4 +1,5 @@
 import { renderRichText, type RenderOptions } from "../rich-text/render.ts";
+import { focus, img as imgAttributes, imgTag, type ImageLike, type Sizes } from "../media/img.ts";
 import { field } from "../preview/index.ts";
 import type { BlockProps, AnyBlock } from "./define.ts";
 import { isBuiltInType, type BuiltInBlock, type BuiltInType } from "./builtins.ts";
@@ -67,9 +68,12 @@ function buttons(list: Of<"hero">["buttons"]): SafeHtml {
   return html`<div class="vb-buttons">${field.entries(list).map(([b, attr]) => html`<a class="vb-button vb-button--${b.style}" href="${url(b.href)}"${mark(attr("label"))}>${b.label}</a>`)}</div>`;
 }
 
-function img(image: { url: string, alt?: string, width?: number, height?: number, focal?: { x: number, y: number } | null }, sizes?: string): SafeHtml {
-  const position = image.focal ? ` style="object-position: ${image.focal.x * 100}% ${image.focal.y * 100}%"` : "";
-  return html`<img src="${url(image.url)}" alt="${image.alt ?? ""}"${raw(image.width ? ` width="${image.width}"` : "")}${raw(image.height ? ` height="${image.height}"` : "")}${raw(sizes ? ` sizes="${escape(sizes)}"` : "")} loading="lazy" decoding="async"${raw(position)}${mark(field(image))}>`;
+/** The blocks' own stylesheet goes to two columns from 40rem, whatever the site's breakpoints are. */
+const BLOCK_BREAKPOINTS = { wide: 640 };
+
+function img(image: ImageLike, sizes?: Sizes): SafeHtml {
+  const position = image.focal ? ` style="object-position: ${focus(image)}"` : "";
+  return raw(imgTag(imgAttributes({ ...image, url: url(image.url) }, { sizes, breakpoints: BLOCK_BREAKPOINTS }), `${position}${mark(field(image))}`));
 }
 
 /** YouTube and Vimeo links become privacy-friendly embeds; anything else plays in a <video>. */
@@ -94,11 +98,11 @@ export const builtInRenderers: { [T in BuiltInType]: HtmlComponent<Of<T>> } = {
     ${b.text && html`<p class="vb-lead"${mark(field(b, "text"))}>${b.text}</p>`}
     ${buttons(b.buttons)}
   </div>
-  ${b.image && html`<div class="vb-hero__media">${img(b.image, "(min-width: 60rem) 50vw, 100vw")}</div>`}
+  ${b.image && html`<div class="vb-hero__media">${img(b.image, { base: "100vw", wide: "50vw" })}</div>`}
 </section>`,
   text: (b, context) => html`<div class="vb-block vb-text"${mark(field(b, "body"))}>${raw(renderRichText(b.body, { linkTo: context.linkTo }))}</div>`,
   image: b => html`<figure class="vb-block vb-image vb-image--${b.width}">${img(b.image)}${b.caption && html`<figcaption${mark(field(b, "caption"))}>${b.caption}</figcaption>`}</figure>`,
-  gallery: b => html`<div class="vb-block vb-gallery vb-gallery--${b.columns}">${b.images.map(image => html`<figure>${img(image, `(min-width: 60rem) ${Math.round(100 / Number(b.columns))}vw, 50vw`)}</figure>`)}</div>`,
+  gallery: b => html`<div class="vb-block vb-gallery vb-gallery--${b.columns}">${b.images.map(image => html`<figure>${img(image, { base: "50vw", wide: `${Math.round(100 / Number(b.columns))}vw` })}</figure>`)}</div>`,
   cta: b => html`<section class="vb-block vb-cta">
   <h2${mark(field(b, "heading"))}>${b.heading}</h2>
   ${b.text && html`<p${mark(field(b, "text"))}>${b.text}</p>`}

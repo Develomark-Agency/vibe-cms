@@ -26,7 +26,9 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { createDb } from "../db/client.ts";
 import { assets, documents, folders, meta, schedules, trash, versions, type AssetRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "../db/schema.ts";
 import { all, first, getMeta, newId } from "./db.ts";
-import type { D1, ExecutionContext, R2 } from "./platform.ts";
+import type { D1, ExecutionContext, ImagesBinding, R2 } from "./platform.ts";
+import { serveTransformed, type ImageHealth } from "./images.ts";
+import { hasMetadataSupport, stripMetadata } from "../media/metadata.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
 import { ftsQuery, jsonPath, searchWords, SqlBuilder } from "./sql.ts";
 
@@ -45,6 +47,10 @@ export interface EngineState {
   config: AnyConfig,
   db: D1,
   storage: R2 | undefined,
+  /** Cloudflare's Images binding; `false` when the site opted out of optimization. */
+  images?: ImagesBinding | false,
+  /** Whether optimization is working, for warnings. */
+  imageHealth?: ImageHealth,
   plugins: PluginHost,
   schemaHash: string,
   prefix: string,
@@ -81,20 +87,28 @@ export interface SiteSettings {
   /** The icon chosen on the Site page. */
   icon: { id: string, url: string } | null,
   /** The site's own favicon, found on its home page. Shown when no icon is chosen. */
-  favicon: string | null
+  favicon: string | null,
+  /**
+   * Whether uploads lose their location and camera details, keeping orientation. The editor asks
+   * when a photo has them, suggesting this; uploads from the CLI and agents follow it. Default true.
+   */
+  stripMetadata: boolean
 }
 
 export interface SiteSettingsPatch {
   name?: string,
   accent?: string | null,
   /** Asset ID; null removes the icon. */
-  icon?: string | null
+  icon?: string | null,
+  stripMetadata?: boolean
 }
 
 interface StoredSite {
   name?: string,
   accent?: string,
-  icon?: string
+  icon?: string,
+  /** Only stored when turned off. */
+  stripMetadata?: false
 }
 
 /** What the CMS has seen of the site from its requests, refreshed daily. */
@@ -189,6 +203,12 @@ export function normalizeFolder(input: string | null | undefined): string | null
   }
   if(segments.length > 12) throw new HttpError(400, "Folders nest at most 12 deep");
   return segments.join("/");
+}
+
+/** `mime LIKE` for a list of accepted types (`image/*`, `application/pdf`); undefined when any type will do. */
+function mimeCondition(accept: string[] | undefined): SQL | undefined {
+  const types = (accept ?? []).filter(a => a && a !== "*/*" && a !== "*");
+  return types.length ? or(...types.map(a => like(assets.mime, a.replace("*", "%")))) : undefined;
 }
 
 /** `"a/b/c"` → `["a", "a/b", "a/b/c"]`. */
@@ -956,7 +976,7 @@ export class Engine {
     return this.state.storage;
   }
 
-  async upload(file: File, options: { folder?: string | null, type?: string, field?: string }) {
+  async upload(file: File, options: { folder?: string | null, type?: string, field?: string, stripMetadata?: boolean }) {
     const session = this.writer({ action: "write", scope: "media" });
     // Browsers send unknown types (often .md, .yaml, .csv) as octet-stream in multipart bodies.
     const sent = file.type && file.type !== "application/octet-stream" ? file.type : null;
@@ -974,8 +994,17 @@ export class Engine {
     } as { filename: string, folder: string | null, reject?: string };
     await this.state.plugins.transform("media.beforeUpload", { mime, size: file.size, session: session ?? undefined }, output);
     if(output.reject) throw new HttpError(422, output.reject);
+    let metadataRemoved = false;
+    if(hasMetadataSupport(mime) && (options.stripMetadata ?? (await this.storedSite()).stripMetadata ?? true)) {
+      const stripped = stripMetadata(new Uint8Array(await file.arrayBuffer()), mime);
+      if(stripped) {
+        file = new File([stripped], file.name, { type: file.type });
+        metadataRemoved = true;
+      }
+    }
     const head = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer());
     const meta: AssetMeta = mime.startsWith("image/") ? analyzeImage(head, mime) : {};
+    if(metadataRemoved) meta.metadataRemoved = true;
     for(const [pattern, analyze] of this.state.plugins.analyzers()) {
       if(mimeMatches(mime, [pattern])) Object.assign(meta, await analyze(head, mime));
     }
@@ -1007,8 +1036,8 @@ export class Engine {
     const conditions: SQL[] = [];
     if(options.folder !== undefined) conditions.push(options.folder === "" ? isNull(assets.folder) : eq(assets.folder, options.folder));
     if(options.search) conditions.push(like(assets.filename, `%${options.search}%`));
-    const accept = (options.accept ?? []).filter(a => a && a !== "*/*" && a !== "*");
-    if(accept.length) conditions.push(or(...accept.map(a => like(assets.mime, a.replace("*", "%"))))!);
+    const accept = mimeCondition(options.accept);
+    if(accept) conditions.push(accept);
     const where = conditions.length ? and(...conditions) : undefined;
     const rows = await this.orm.select().from(assets).where(where)
       .orderBy(desc(assets.created_at))
@@ -1025,16 +1054,19 @@ export class Engine {
     if(path) await this.orm.insert(folders).values({ path, created_at: Date.now() }).onConflictDoNothing();
   }
 
-  /** Every folder: stored ones, ones files are in, and all their parents. */
-  async listFolders(): Promise<MediaFolder[]> {
+  /** Every folder: stored ones, ones files are in, and all their parents. `accept` counts only files of those types. */
+  async listFolders(options: { accept?: string[] } = {}): Promise<MediaFolder[]> {
     require(this.state, this.scope.session, { action: "read", scope: "media" });
-    const [stored, counts] = await Promise.all([
+    const types = mimeCondition(options.accept);
+    const [stored, counts, holding] = await Promise.all([
       this.orm.select({ path: folders.path }).from(folders),
-      this.orm.select({ folder: assets.folder, n: count() }).from(assets).where(isNotNull(assets.folder)).groupBy(assets.folder)
+      this.orm.select({ folder: assets.folder, n: count() }).from(assets).where(types ? and(isNotNull(assets.folder), types) : isNotNull(assets.folder)).groupBy(assets.folder),
+      // Folders with files of other types still exist, with a count of 0.
+      types ? this.orm.selectDistinct({ folder: assets.folder }).from(assets).where(isNotNull(assets.folder)) : Promise.resolve([])
     ]);
     const files = new Map(counts.map(c => [c.folder!, c.n]));
     const paths = new Set<string>();
-    for(const path of [...stored.map(s => s.path), ...files.keys()]) withAncestors(path).forEach(p => paths.add(p));
+    for(const path of [...stored.map(s => s.path), ...files.keys(), ...holding.map(h => h.folder!)]) withAncestors(path).forEach(p => paths.add(p));
     return [...paths].sort((a, b) => a.localeCompare(b)).map(path => ({ path, files: files.get(path) ?? 0 }));
   }
 
@@ -1115,6 +1147,32 @@ export class Engine {
     const next = JSON.stringify({ ...meta, version: (typeof meta.version === "number" ? meta.version : 0) + 1, editedAt: new Date().toISOString() });
     await this.orm.update(assets).set({ size: content.byteLength, meta: next }).where(eq(assets.id, id));
     return this.toAsset({ ...row, size: content.byteLength, meta: next });
+  }
+
+  /**
+   * Removes an uploaded photo's location and camera details in place, keeping orientation. The asset
+   * keeps its ID; its URL gets a new `?v=`, since media is cached as immutable.
+   */
+  async stripAssetMetadata(id: string) {
+    this.writer({ action: "write", scope: "media" });
+    const row = await this.assetRow(id);
+    if(!row) throw new HttpError(404, "Asset not found");
+    if(!hasMetadataSupport(row.mime)) throw new HttpError(415, "Only JPEG, PNG and WebP images can have their details removed");
+    const object = await this.storage.get(row.key);
+    if(!object) throw new HttpError(404, "The file's content is gone");
+    const stripped = stripMetadata(new Uint8Array(await new Response(object.body).arrayBuffer()), row.mime);
+    const meta = JSON.parse(row.meta) as AssetMeta;
+    if(!stripped) {
+      // Nothing to remove: record that, so the editor stops offering.
+      if(meta.metadataRemoved) return this.toAsset(row);
+      const next = JSON.stringify({ ...meta, metadataRemoved: true });
+      await this.orm.update(assets).set({ meta: next }).where(eq(assets.id, id));
+      return this.toAsset({ ...row, meta: next });
+    }
+    await this.storage.put(row.key, stripped, { httpMetadata: { contentType: row.mime } });
+    const next = JSON.stringify({ ...meta, metadataRemoved: true, version: (typeof meta.version === "number" ? meta.version : 0) + 1, editedAt: new Date().toISOString() });
+    await this.orm.update(assets).set({ size: stripped.byteLength, meta: next }).where(eq(assets.id, id));
+    return this.toAsset({ ...row, size: stripped.byteLength, meta: next });
   }
 
   async deleteAsset(id: string) {
@@ -1380,7 +1438,8 @@ export class Engine {
       name: stored.name ?? detected?.host ?? (this.scope.origin ? new URL(this.scope.origin).hostname : "Untitled site"),
       accent: stored.accent ?? null,
       icon: row ? { id: row.id, url: this.assetUrl(row) } : null,
-      favicon: favicon?.startsWith("/") ? `${this.scope.origin}${favicon}` : favicon
+      favicon: favicon?.startsWith("/") ? `${this.scope.origin}${favicon}` : favicon,
+      stripMetadata: stored.stripMetadata ?? true
     };
   }
 
@@ -1407,6 +1466,10 @@ export class Engine {
         next.icon = row.id;
       }
     }
+    if(patch.stripMetadata !== undefined) {
+      if(patch.stripMetadata) delete next.stripMetadata;
+      else next.stripMetadata = false;
+    }
     await this.putMeta(SITE_KEY, JSON.stringify(next));
     return this.site();
   }
@@ -1414,7 +1477,21 @@ export class Engine {
   async serveAsset(file: string, request: Request): Promise<Response> {
     const id = file.replace(/\.[a-z0-9]+$/i, "");
     // Trashed files keep their bytes in R2 but aren't served.
-    if(!(await this.assetRow(id))) return new Response("Not found", { status: 404 });
+    const row = await this.assetRow(id);
+    if(!row) return new Response("Not found", { status: 404 });
+    if(this.state.imageHealth) {
+      const transformed = await serveTransformed({
+        request,
+        storage: this.storage,
+        key: `assets/${id}`,
+        mime: row.mime,
+        meta: JSON.parse(row.meta) as AssetMeta,
+        images: this.state.images,
+        health: this.state.imageHealth,
+        ctx: this.scope.ctx
+      });
+      if(transformed) return transformed;
+    }
     const object = await this.storage.get(`assets/${id}`);
     if(!object) return new Response("Not found", { status: 404 });
     const headers = new Headers({

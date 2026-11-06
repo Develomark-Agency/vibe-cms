@@ -1,4 +1,5 @@
 import { field } from "../preview/index.ts";
+import { img, imgTag } from "../media/img.ts";
 import type { Block, InlineNode, Mark, RichTextDoc, RichTextOutput } from "./schema.ts";
 
 export interface RenderOptions {
@@ -46,10 +47,10 @@ export function renderRichText(doc: RichTextDoc | RichTextOutput | null | undefi
         return `<${tag}${at}>${node.items.map(item => `<li>${inline(item, options)}</li>`).join("")}</${tag}>`;
       }
       case "image": {
-        const asset = node.asset as typeof node.asset & { url?: string, width?: number, height?: number };
+        const asset = node.asset as typeof node.asset & { url?: string, mime?: string, width?: number, height?: number };
         if(!asset.url) return "";
-        const size = asset.width && asset.height ? ` width="${asset.width}" height="${asset.height}"` : "";
-        return `<figure${at}><img src="${escape(asset.url)}" alt="${escape(asset.alt ?? "")}"${size} loading="lazy"></figure>`;
+        // Rich text runs the width of the text column.
+        return `<figure${at}>${imgTag(img({ ...asset, url: asset.url }, { sizes: 768 }))}</figure>`;
       }
       default: return "";
     }

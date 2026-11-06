@@ -43,6 +43,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
           // The floating material, like menus and dialogs.
           toast: "cn-toast !border-0 !shadow-(--shadow-float)",
           actionButton: "!h-7 !rounded-[8px] !bg-foreground !px-2.5 !font-medium !text-background",
+          // Even line lengths, and room for long file names to truncate instead of pushing the button.
+          content: "min-w-0 flex-1",
+          title: "text-pretty",
+          description: "min-w-0 text-pretty",
         },
       }}
       {...props}

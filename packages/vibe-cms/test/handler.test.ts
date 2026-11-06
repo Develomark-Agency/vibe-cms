@@ -414,7 +414,9 @@ describe("auth", () => {
       hub: "https://hub.test",
       orgMove: null,
       backups: false,
-      admin: "https://site.test/_vibe/admin"
+      admin: "https://site.test/_vibe/admin",
+      // Media without an Images binding.
+      warnings: [expect.objectContaining({ code: "images.missing-binding" })]
     });
   });
 });
@@ -608,14 +610,14 @@ describe("text files", () => {
 describe("site settings", () => {
   test("name, accent and icon show up everywhere", async () => {
     const { id } = (await t.api("/api/site")).body;
-    expect((await t.api("/api/site")).body).toEqual({ id, name: "site.test", accent: null, icon: null, favicon: null });
+    expect((await t.api("/api/site")).body).toEqual({ id, name: "site.test", accent: null, icon: null, favicon: null, stripMetadata: true });
 
     const form = new FormData();
     form.set("file", new File([png(64, 64)], "logo.png", { type: "image/png" }));
     const logo = (await t.api("/api/assets", { method: "POST", body: form })).body;
 
     const saved = await t.api("/api/site", { method: "PATCH", json: { name: "  Acme  ", accent: "#2563EB", icon: logo.id } });
-    expect(saved.body).toEqual({ id, name: "Acme", accent: "#2563eb", icon: { id: logo.id, url: logo.url }, favicon: null });
+    expect(saved.body).toEqual({ id, name: "Acme", accent: "#2563eb", icon: { id: logo.id, url: logo.url }, favicon: null, stripMetadata: true });
 
     const descriptor = await (await t.vibe.handle(new Request("https://site.test/.well-known/vibe-cms"), t.env, ctx)).json() as any;
     expect(descriptor).toMatchObject({ id, name: "Acme", accent: "#2563eb", icon: logo.url });
@@ -627,7 +629,7 @@ describe("site settings", () => {
     expect((await t.api(`/api/assets/${logo.id}`, { method: "DELETE" })).status).toBe(409);
 
     const reset = await t.api("/api/site", { method: "PATCH", json: { accent: null, icon: null } });
-    expect(reset.body).toEqual({ id, name: "Acme", accent: null, icon: null, favicon: null });
+    expect(reset.body).toEqual({ id, name: "Acme", accent: null, icon: null, favicon: null, stripMetadata: true });
   });
 
   test("each database is its own site, with an ID made once and kept", async () => {
@@ -1039,5 +1041,23 @@ describe("roles", () => {
     const access = { config, roles: { map: { reader: { post: ["read" as const] } } } };
     expect(permissionSummary(access, { sub: "x", roles: ["reader"] }).types.post).toMatchObject({ read: true, write: false });
     expect(permissionSummary(access, { sub: "x", roles: ["editor"] }).types.post?.read).toBe(false);
+  });
+});
+
+describe("folder counts", () => {
+  test("count only the accepted types, and keep folders holding other types", async () => {
+    function form(name: string, type: string, data: BlobPart, folder: string) {
+      const f = new FormData();
+      f.set("file", new File([data], name, { type }));
+      f.set("folder", folder);
+      return f;
+    }
+    await t.api("/api/assets", { method: "POST", body: form("a.png", "image/png", png(10, 10), "pics") });
+    await t.api("/api/assets", { method: "POST", body: form("b.txt", "text/plain", "hi", "pics") });
+    await t.api("/api/assets", { method: "POST", body: form("c.txt", "text/plain", "hi", "docs") });
+    const all = (await t.api("/api/actions/folders.list", { method: "POST", json: {} })).body.folders;
+    expect(all).toEqual([{ path: "docs", files: 1 }, { path: "pics", files: 2 }]);
+    const images = (await t.api("/api/actions/folders.list", { method: "POST", json: { accept: ["image/*"] } })).body.folders;
+    expect(images).toEqual([{ path: "docs", files: 0 }, { path: "pics", files: 1 }]);
   });
 });

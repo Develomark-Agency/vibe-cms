@@ -1,3 +1,4 @@
+import type { SiteWarning } from "../../handler/images.ts";
 import { toast } from "sonner";
 import { hc } from "hono/client";
 import type { SerializedConfig } from "../../config.ts";
@@ -25,7 +26,9 @@ export interface SiteInfo extends SerializedConfig {
     admin: string,
     org: string | null,
     /** A pending move to another org; it takes effect at `effectiveAt` unless someone cancels it. */
-    orgMove: { to: string, requestedAt: number, effectiveAt: number } | null
+    orgMove: { to: string, requestedAt: number, effectiveAt: number } | null,
+    /** Setup problems a developer should fix, e.g. image optimization failing. */
+    warnings: SiteWarning[]
   },
   /** As of page load; the editor keeps the live copy under the "site" query. */
   settings: SiteSettings

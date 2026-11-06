@@ -63,3 +63,19 @@ export interface MessageBatch<T = unknown> {
   ackAll(): void,
   retryAll(): void
 }
+
+/** What `env.IMAGES.input(…).transform(…).output(…)` resolves to. */
+export interface ImagesResult {
+  response(): Response,
+  contentType(): string
+}
+
+export interface ImagesTransformer {
+  transform(options: { width?: number, height?: number, fit?: "scale-down" | "contain" | "cover" | "crop" | "pad" }): ImagesTransformer,
+  output(options: { format: string, quality?: number }): Promise<ImagesResult>
+}
+
+/** Cloudflare's Images binding (`Images()` in Alchemy, `"images": { "binding": "IMAGES" }` in wrangler). */
+export interface ImagesBinding {
+  input(stream: ReadableStream): ImagesTransformer
+}

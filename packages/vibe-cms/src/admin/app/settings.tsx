@@ -8,6 +8,7 @@ import { Button } from "../components/ui/button.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
+import { Switch } from "../components/ui/switch.tsx";
 import { cn } from "../lib/utils.ts";
 import { useAdmin } from "./context.tsx";
 import { MediaLibraryDialog } from "./pickers.tsx";
@@ -22,8 +23,9 @@ export function SiteSettingsPage() {
   const [name, setName] = useState(site.name);
   const [accent, setAccentDraft] = useState<string | null>(site.accent);
   const [icon, setIcon] = useState(site.icon);
+  const [stripMetadata, setStripMetadata] = useState(site.stripMetadata);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const dirty = name.trim() !== site.name || accent !== site.accent || icon?.id !== site.icon?.id;
+  const dirty = name.trim() !== site.name || accent !== site.accent || icon?.id !== site.icon?.id || stripMetadata !== site.stripMetadata;
 
   useEffect(() => {
     document.title = `Site · ${site.name}`;
@@ -56,6 +58,7 @@ export function SiteSettingsPage() {
     if(name.trim() !== site.name) patch.name = name.trim();
     if(accent !== site.accent) patch.accent = accent;
     if(icon?.id !== site.icon?.id) patch.icon = icon?.id ?? null;
+    if(stripMetadata !== site.stripMetadata) patch.stripMetadata = stripMetadata;
     save.mutate(patch);
   }
 
@@ -120,12 +123,26 @@ export function SiteSettingsPage() {
         </div>
       </section>
 
+      <section className="flex flex-col gap-4 rounded-[16px] elevated p-5">
+        <h2 className="text-sm font-medium">Media</h2>
+        <label className="flex items-start justify-between gap-4">
+          <span className="flex flex-col gap-1">
+            <span className="text-sm">Remove location and camera details from photos</span>
+            <span className="text-xs text-muted-foreground">
+              Uploading a photo that has them asks first, with this as the suggested answer. Uploads from the CLI and agents follow it. Orientation is always kept.
+            </span>
+          </span>
+          <Switch checked={stripMetadata} onCheckedChange={setStripMetadata} />
+        </label>
+      </section>
+
       <div className="flex justify-end gap-2">
         {dirty && (
           <Button type="button" variant="ghost" onClick={() => {
             setName(site.name);
             setAccentDraft(site.accent);
             setIcon(site.icon);
+            setStripMetadata(site.stripMetadata);
           }}>Discard</Button>
         )}
         <Button type="submit" disabled={!dirty || !name.trim() || save.isPending}>

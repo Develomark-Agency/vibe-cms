@@ -1,4 +1,8 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CollapsedPath } from "./collapsed-path.tsx";
+import { StoredMetadata } from "./upload-metadata.tsx";
+import { hasMetadataSupport } from "../../media/metadata.ts";
+import { readDrop, type Dropped } from "./dropped-files.ts";
 import {
   ChevronRightIcon,
   CopyIcon,
@@ -99,10 +103,10 @@ interface UndoEntry {
 const TOASTER = "media";
 
 /** Media toasts sit at the bottom centre, apart from the editor's other notices, and can carry an Undo button. */
-function notify(message: string, options: { type?: "success" | "error" | "info", undo?: () => void } = {}) {
+function notify(message: string, options: { type?: "success" | "error" | "info", undo?: () => void, description?: ReactNode } = {}) {
   const action = options.undo ? { label: "Undo", onClick: options.undo } : undefined;
   const show = options.type === "error" ? toast.error : options.type === "info" ? toast.info : options.type === "success" ? toast.success : toast;
-  show(message, { toasterId: TOASTER, action, duration: options.undo ? 6000 : 4000 });
+  show(message, { toasterId: TOASTER, action, description: options.description, duration: options.undo ? 6000 : 4000 });
 }
 
 function quote(name: string): string {
@@ -299,13 +303,15 @@ export function MediaPage() {
   const [dialog, setDialog] = useState<Dialogs | null>(null);
   const [editing, setEditing] = useState<Asset | null>(null);
   const [dragging, setDragging] = useState(false);
+  // Every folder an upload of folders brought in, so the tree shows what arrived, not just the top level.
+  const [revealed, setRevealed] = useState<string[]>([]);
   const [picked, setPicked] = useState<Map<string, Item>>(() => new Map());
   const [multi, setMulti] = useState(false);
   const anchor = useRef<string | null>(null);
   const registry = useRef(new Map<string, Item>());
   const browser = useRef<HTMLDivElement>(null);
   const [history, setHistory] = useState<UndoEntry[]>([]);
-  const { upload, uploading } = useUpload();
+  const { uploadFiles, uploading } = useUpload();
   const fileInput = useRef<HTMLInputElement>(null);
   const query = useDebounced(search);
   const results = useQuery({
@@ -567,15 +573,35 @@ export function MediaPage() {
     store("vibe:media-preview", open ? "open" : "closed");
   }
 
-  async function uploadInto(target: string | null, files: FileList | File[]) {
-    const uploaded: Asset[] = [];
-    for(const file of Array.from(files)) {
-      const asset = await upload(file, { folder: target ?? undefined });
-      if(asset) uploaded.push(asset);
+  async function uploadInto(target: string | null, files: FileList | File[] | Dropped) {
+    const dropped: Dropped = Array.isArray(files) || files instanceof FileList
+      ? { files: Array.from(files).map(file => ({ file, folder: null })), folders: [] }
+      : files;
+    // Folders that didn't exist before this drop: undo removes them again.
+    const existing = new Set(library.folders.map(f => f.path));
+    const created = dropped.folders.map(path => join(target, path)).filter(path => !existing.has(path));
+    // Every dropped folder, so empty ones arrive too; uploads make the rest. Not until the upload is confirmed.
+    async function makeFolders() {
+      for(const path of dropped.folders) await library.createFolder(join(target, path));
+    }
+    // Uploading folders always asks first, listing what's in them.
+    const topFolders = dropped.folders.filter(path => !path.includes("/"));
+    const uploaded = await uploadFiles(dropped.files, { folder: target ?? undefined }, makeFolders, topFolders);
+    if(uploaded === null) return;
+    // Uploads into new subfolders add them to the tree, opened.
+    if(dropped.folders.length) {
+      library.refresh();
+      setRevealed(dropped.folders.map(path => join(target, path)));
     }
     const last = uploaded.at(-1);
-    if(!last) return;
-    go({ folder: target, file: last.id });
+    // A single dropped folder opens; otherwise the target does, at the last file.
+    const top = dropped.folders.filter(path => !path.includes("/"));
+    const singleFolder = top.length === 1 && dropped.files.every(f => f.folder) ? join(target, top[0]!) : null;
+    if(!last) {
+      if(singleFolder) go({ folder: singleFolder, file: null });
+      return;
+    }
+    go(singleFolder ? { folder: singleFolder, file: null } : { folder: target, file: last.id });
     const undoUpload = record({
       label: uploaded.length === 1 ? "upload" : "uploads",
       async undo() {
@@ -584,10 +610,30 @@ export function MediaPage() {
           const { trash } = await cms.actions.assets.delete({ id: asset.id });
           await cms.actions.trash.purge({ id: trash });
         }
-        go({ file: null });
+        // Deepest first; each is empty once its files are gone.
+        for(const path of [...created].sort((a, b) => b.length - a.length)) await cms.actions.folders.delete({ path }).catch(() => {});
+        library.refresh();
+        go(singleFolder ? { folder: target, file: null } : { file: null });
       }
     });
-    notify(`Uploaded ${uploaded.length === 1 ? quote(last.filename) : `${uploaded.length} files`} to ${target ? nameOf(target) : "All files"}`, { type: "success", undo: undoUpload });
+    // A short headline, with the long parts (file names, what was removed) underneath on their own lines.
+    const cleaned = uploaded.filter(asset => asset.meta.metadataRemoved).length;
+    const into = target ? nameOf(target) : "All files";
+    const headline = singleFolder
+      ? `Uploaded ${quote(nameOf(singleFolder))}`
+      : uploaded.length === 1 ? `Uploaded to ${into}` : `Uploaded ${uploaded.length} files to ${into}`;
+    const removed = cleaned === 0 ? null : uploaded.length === 1 ? "Location and camera details removed" : `Details removed from ${cleaned} of ${uploaded.length}`;
+    notify(headline, {
+      type: "success",
+      undo: undoUpload,
+      description: (
+        <span className="flex min-w-0 flex-col">
+          {singleFolder && <span>{uploaded.length === 1 ? "1 file" : `${uploaded.length} files`} to {into}</span>}
+          {!singleFolder && uploaded.length === 1 && <span className="truncate" title={last.filename}>{last.filename}</span>}
+          {removed && <span>{removed}</span>}
+        </span>
+      )
+    });
   }
 
   async function renameFile(asset: Asset, filename: string) {
@@ -607,6 +653,8 @@ export function MediaPage() {
     event.preventDefault();
     event.stopPropagation();
     setDragging(false);
+    // Read now: a dropped folder's contents are only reachable while the event is being handled.
+    const desktop = event.dataTransfer.types.includes("Files") ? readDrop(event.dataTransfer) : null;
     const items = event.dataTransfer.getData(ITEMS_TYPE);
     const assetId = event.dataTransfer.getData(ASSET_TYPE);
     const folderPath = event.dataTransfer.getData(FOLDER_TYPE);
@@ -617,8 +665,8 @@ export function MediaPage() {
       const known = assetId ? registry.current.get(`f:${assetId}`) : undefined;
       const file = known?.kind === "file" ? known.asset : assetId ? await cms.assets.get(assetId) : null;
       await bulkMove({ files: file ? [{ id: file.id, folder: file.folder, size: file.size, name: file.filename }] : [], folders: folderPath ? [folderPath] : [] }, target);
-    } else if(event.dataTransfer.files.length && library.canWrite) {
-      await uploadInto(target, event.dataTransfer.files);
+    } else if(desktop && library.canWrite) {
+      await uploadInto(target, await desktop);
     }
   }
 
@@ -642,10 +690,14 @@ export function MediaPage() {
   return (
     <div
       className="mx-auto flex min-h-full w-full max-w-7xl flex-col gap-5 px-4 py-6 md:px-8"
+      // Capture: folders and the list stop the event, and while one of them is highlighted this outline steps aside.
+      onDragOverCapture={event => {
+        if(!library.canWrite || !event.dataTransfer.types.includes("Files")) return;
+        setDragging(!(event.target as Element).closest?.("[data-drop-target]"));
+      }}
       onDragOver={event => {
         if(!library.canWrite || !event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
-        setDragging(true);
       }}
       onDragLeave={event => event.currentTarget === event.target && setDragging(false)}
       onDrop={event => void dropInto(folder, event)}
@@ -704,11 +756,11 @@ export function MediaPage() {
 
       <SelectionContext.Provider value={selection}>
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-          <div ref={browser} className={cn("relative min-w-0 flex-1 rounded-[20px] transition-shadow", dragging && "shadow-[0_0_0_2px_var(--brand)]")}>
+          <div ref={browser} className={cn("relative min-w-0 flex-1", dragging && "[&_[data-drop-area]]:drop-glow")}>
             {searching ? (
               <SearchResults loading={results.isLoading} assets={results.data?.assets} selected={selected} onSelect={id => select(id)} query={query} />
             ) : view === "tree" ? (
-              <TreeView library={library} folder={folder} selected={selected} onSelect={(id, inFolder) => go({ folder: inFolder, file: id })} actions={actions} />
+              <TreeView library={library} folder={folder} reveal={revealed} selected={selected} onSelect={(id, inFolder) => go({ folder: inFolder, file: id })} actions={actions} />
             ) : (
               <GridView library={library} folder={folder} selected={selected} onSelect={id => select(id)} actions={actions} />
             )}
@@ -754,7 +806,7 @@ export function MediaPage() {
       <FolderNameDialog
         open={dialog?.kind === "new-folder" || dialog?.kind === "rename-folder"}
         title={dialog?.kind === "rename-folder" ? "Rename folder" : "New folder"}
-        description={dialog?.kind === "new-folder" ? `In ${dialog.parent ?? "Media"}` : undefined}
+        description={dialog?.kind === "new-folder" ? <span className="flex min-w-0 gap-1"><span className="shrink-0">In</span><FolderPath path={dialog.parent} /></span> : undefined}
         initial={dialog?.kind === "rename-folder" ? nameOf(dialog.path) : ""}
         submitLabel={dialog?.kind === "rename-folder" ? "Rename" : "Create"}
         onOpenChange={open => !open && setDialog(null)}
@@ -829,6 +881,7 @@ function useDropTarget(target: string | null, onDrop: FolderActions["dropInto"],
   return {
     over,
     props: {
+      "data-drop-target": "",
       onDragOver(event: DragEvent) {
         event.preventDefault();
         event.stopPropagation();
@@ -854,13 +907,15 @@ function Breadcrumb({ folder, onOpen, onDrop }: { folder: string | null, onOpen(
     ...segments.map((label, i) => ({ path: segments.slice(0, i + 1).join("/"), label }))
   ];
   return (
-    <nav aria-label="Folder" className="-ml-1.5 flex min-w-0 flex-wrap items-center gap-0.5 text-sm text-muted-foreground">
-      {crumbs.map((crumb, i) => (
-        <span key={crumb.path ?? ""} className="flex items-center gap-0.5">
-          {i > 0 && <ChevronRightIcon className="size-3.5 opacity-50" />}
-          <Crumb crumb={crumb} current={i === crumbs.length - 1} onOpen={onOpen} onDrop={onDrop} canDrop={session.permissions.media.write} />
-        </span>
-      ))}
+    <nav aria-label="Folder" className="-ml-1.5 min-w-0 text-sm text-muted-foreground">
+      {/* One line; a deep path folds its middle into "…", which lists the folders it hides. */}
+      <CollapsedPath
+        items={crumbs}
+        label={crumb => crumb.label}
+        separator={<ChevronRightIcon className="mx-0.5 size-3.5 opacity-50" />}
+        onOpen={crumb => onOpen(crumb.path)}
+        renderItem={(crumb, current) => <Crumb crumb={crumb} current={current} onOpen={onOpen} onDrop={onDrop} canDrop={session.permissions.media.write} />}
+      />
     </nav>
   );
 }
@@ -880,7 +935,7 @@ function Crumb({ crumb, current, onOpen, onDrop, canDrop }: {
       onClick={() => onOpen(crumb.path)}
       aria-current={current ? "location" : undefined}
       className={cn(
-        "max-w-48 truncate rounded-[8px] px-1.5 py-0.5 transition-colors hover:bg-foreground/[0.05] hover:text-foreground",
+        "max-w-48 min-w-0 truncate rounded-[8px] px-1.5 py-0.5 transition-colors hover:bg-foreground/[0.05] hover:text-foreground",
         current && "font-medium text-foreground",
         drop.over && "bg-foreground/[0.08] text-foreground"
       )}
@@ -900,13 +955,86 @@ function Crumb({ crumb, current, onOpen, onDrop, canDrop }: {
  */
 const GUTTER = 22;
 
+/**
+ * Arrow keys over a list of rows marked `data-nav` (`"folder"`, `"file"`, `"parent"`): Up and Down
+ * move between them in screen order, selecting files as they're reached so the preview follows;
+ * Left and Right are the view's to decide. Modified keys are left alone (Shift-click still extends).
+ */
+function navigateRows(event: React.KeyboardEvent<HTMLElement>, keys: { left(row: HTMLElement): void, right(row: HTMLElement): void }) {
+  if(event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  const row = (event.target as HTMLElement).closest<HTMLElement>("[data-nav]");
+  if(!row || !event.currentTarget.contains(row)) return;
+  const rows = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-nav]")];
+  const at = rows.indexOf(row);
+  if(event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    focusRow(rows[at + (event.key === "ArrowDown" ? 1 : -1)]);
+  } else if(event.key === "ArrowRight") {
+    event.preventDefault();
+    keys.right(row);
+  } else if(event.key === "ArrowLeft") {
+    event.preventDefault();
+    keys.left(row);
+  }
+}
+
+function focusRow(row: HTMLElement | undefined | null) {
+  if(!row) return;
+  row.focus();
+  row.scrollIntoView({ block: "nearest" });
+  // Reaching a file selects it, like clicking it, so the preview keeps up.
+  if(row.dataset.nav === "file") row.click();
+}
+
+/**
+ * Arrow keys in the Folders view's file grid move as it's laid out: Left and Right to the
+ * neighbouring file, Up and Down a whole row of the grid. Up from the top row goes back to the
+ * folder list above, if there is one. Returns whether it handled the key.
+ */
+function moveInGrid(event: React.KeyboardEvent<HTMLElement>, leftGrid: (file: HTMLElement) => void): boolean {
+  if(event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+  if(!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return false;
+  const file = (event.target as HTMLElement).closest<HTMLElement>("[data-nav=file]");
+  if(!file || !event.currentTarget.contains(file)) return false;
+  event.preventDefault();
+  const files = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-nav=file]")];
+  const at = files.indexOf(file);
+  // Columns: how many files share the first file's row.
+  const top = files[0]!.getBoundingClientRect().top;
+  const columns = Math.max(1, files.filter(f => Math.abs(f.getBoundingClientRect().top - top) < 2).length);
+  if(event.key === "ArrowLeft") focusRow(files[at - 1]);
+  else if(event.key === "ArrowRight") focusRow(files[at + 1]);
+  else if(event.key === "ArrowUp") {
+    if(at - columns >= 0) focusRow(files[at - columns]);
+    else {
+      // Above the grid: the last folder row. Down from there comes back to this file.
+      const rows = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-nav]:not([data-nav=file])")];
+      if(rows.length) {
+        leftGrid(file);
+        focusRow(rows.at(-1));
+      }
+    }
+  } else {
+    const row = Math.floor(at / columns);
+    const lastRow = Math.floor((files.length - 1) / columns);
+    // Down from a row with a shorter one below lands on that row's last file.
+    if(row < lastRow) focusRow(files[Math.min(at + columns, files.length - 1)]);
+  }
+  return true;
+}
+
+/** A row's highlight while the keyboard is on it. */
+const KEY_FOCUS = "has-[[data-nav]:focus-visible]:bg-foreground/[0.06] has-[[data-nav]:focus-visible]:shadow-[inset_0_0_0_1.5px_var(--ring)]";
+
 function indent(depth: number, file = false): number {
   // Files sit 20px further in than folders: past the chevron, so their icon lines up under the folder's name.
   return 6 + GUTTER + depth * 16 + (file ? 20 : 0);
 }
-function TreeView({ library, folder, selected, onSelect, actions }: {
+function TreeView({ library, folder, reveal, selected, onSelect, actions }: {
   library: Library,
   folder: string | null,
+  /** Folders to open, e.g. everything a dropped folder brought in. */
+  reveal: string[],
   selected: string | null,
   onSelect(id: string, folder: string | null): void,
   actions: FolderActions
@@ -914,6 +1042,10 @@ function TreeView({ library, folder, selected, onSelect, actions }: {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(folder ? folder.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/")) : []));
   const root = useDropTarget(null, actions.dropInto, library.canWrite);
   const rootFiles = useFolderFiles(null);
+
+  useEffect(() => {
+    if(reveal.length) setExpanded(prev => new Set([...prev, ...reveal]));
+  }, [reveal]);
 
   // Keep the current folder visible when it changes from elsewhere (breadcrumb, new folder).
   useEffect(() => {
@@ -943,8 +1075,22 @@ function TreeView({ library, folder, selected, onSelect, actions }: {
     <div
       role="tree"
       aria-label="Files"
+      onKeyDown={event => navigateRows(event, {
+        right(row) {
+          if(row.dataset.nav !== "folder") return;
+          // Closed: open it (as a click does). Open: step to its first row.
+          if(row.dataset.open !== "true") row.click();
+          else focusRow(row.closest("[role=treeitem]")?.querySelector<HTMLElement>("[role=group] [data-nav]"));
+        },
+        left(row) {
+          // An open folder closes (as a click does, stepping out of it); anything else goes to its folder.
+          if(row.dataset.nav === "folder" && row.dataset.open === "true") row.click();
+          else focusRow(row.closest("[role=treeitem]")?.parentElement?.closest("[role=treeitem]")?.querySelector<HTMLElement>("[data-nav]"));
+        }
+      })}
       {...root.props}
-      className={cn("flex min-h-64 flex-col gap-px rounded-[16px] elevated p-1.5 transition-shadow", root.over && "shadow-[0_0_0_2px_var(--brand),var(--shadow-card)]")}
+      data-drop-area=""
+      className={cn("flex min-h-64 flex-col gap-px rounded-[16px] elevated p-1.5 transition-shadow duration-300", root.over && "drop-glow")}
     >
       {topFolders.length === 0 && files.length === 0 && <EmptyLibrary />}
       {topFolders.map(f => (
@@ -982,6 +1128,7 @@ function TreeFolder({ path, depth, library, expanded, toggle, current, selected,
         {...selection.drag(item)}
         className={cn(
           "group/row group/pick relative flex h-8 items-center gap-1.5 rounded-[10px] pr-1 text-sm transition-[background-color,box-shadow] duration-150",
+          KEY_FOCUS,
           picked ? "raised font-medium" : current === path ? "bg-foreground/[0.06] font-medium" : "hover:bg-foreground/[0.04]",
           drop.over && "bg-foreground/[0.1] shadow-[inset_0_0_0_1px_var(--brand)]"
         )}
@@ -990,7 +1137,9 @@ function TreeFolder({ path, depth, library, expanded, toggle, current, selected,
         <PickBox item={item} className="absolute top-1/2 left-2 -translate-y-1/2" />
         <button
           type="button"
-          className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch text-left outline-none focus-visible:underline"
+          data-nav="folder"
+          data-open={open}
+          className="flex min-w-0 flex-1 items-center gap-1.5 self-stretch text-left outline-none"
           onClick={event => selection.click(item, event, () => {
             toggle(path);
             // Closing a folder steps out of it, so uploads and the preview don't stay in a folder you can't see.
@@ -1034,15 +1183,17 @@ function TreeFile({ asset, depth, selected, onSelect, onOpen }: { asset: Asset, 
       {...selection.drag(item)}
       className={cn(
         "group/pick relative flex h-8 items-center rounded-[10px] text-sm transition-[background-color,box-shadow] duration-150",
+        KEY_FOCUS,
         highlighted ? "raised font-medium" : "hover:bg-foreground/[0.04]"
       )}
     >
       <PickBox item={item} className="absolute top-1/2 left-2 -translate-y-1/2" />
       <button
         type="button"
+        data-nav="file"
         onClick={event => selection.click(item, event, onSelect)}
         onDoubleClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-2 self-stretch pr-2 text-left outline-none focus-visible:underline"
+        className="flex min-w-0 flex-1 items-center gap-2 self-stretch pr-2 text-left outline-none"
         style={{ paddingLeft: indent(depth, true) }}
       >
         <FileGlyph asset={asset} className="size-5 rounded-[4px]" />
@@ -1105,8 +1256,60 @@ function GridView({ library, folder, selected, onSelect, actions }: {
   const files = useFolderFiles(folder);
   const subfolders = library.childrenOf(folder);
   const loading = library.loading || files.isLoading;
+  const view = useRef<HTMLDivElement>(null);
+  // Moving between folders with the keyboard keeps the keyboard in the view: on the folder just
+  // left (going up), else the first thing inside (not the "Parent folder" row).
+  const keyed = useRef<{ from: string | null } | null>(null);
+  useEffect(() => {
+    const pending = keyed.current;
+    if(!pending || loading) return;
+    keyed.current = null;
+    const rows = [...(view.current?.querySelectorAll<HTMLElement>("[data-nav]") ?? [])];
+    const target = rows.find(r => pending.from !== null && r.dataset.path === pending.from) ?? rows.find(r => r.dataset.nav !== "parent") ?? rows[0];
+    target?.focus();
+  }, [folder, loading]);
+  function go(path: string | null) {
+    keyed.current = { from: folder };
+    actions.open(path);
+  }
+  // The file the keyboard left the grid from, going up into the folder list; Down returns to it.
+  const gridSpot = useRef<string | null>(null);
+  useEffect(() => {
+    gridSpot.current = null;
+  }, [folder]);
+  /** Down from the last folder row: back to the file Up left from, if it's still there. */
+  function returnToGrid(event: React.KeyboardEvent<HTMLElement>): boolean {
+    if(event.key !== "ArrowDown" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || !gridSpot.current) return false;
+    const row = (event.target as HTMLElement).closest<HTMLElement>("[data-nav]");
+    const above = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-nav]:not([data-nav=file])")];
+    if(!row || row !== above.at(-1)) return false;
+    const file = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-nav=file]")]
+      .find(f => f.closest<HTMLElement>("[data-pick]")?.dataset.pick === gridSpot.current);
+    if(!file) return false;
+    event.preventDefault();
+    focusRow(file);
+    return true;
+  }
   return (
-    <div className="flex flex-col gap-5">
+    <div
+      ref={view}
+      data-drop-area=""
+      className="flex flex-col gap-5 rounded-[16px] transition-shadow duration-300"
+      onKeyDown={event => {
+        if(returnToGrid(event)) return;
+        if(moveInGrid(event, file => {
+          gridSpot.current = file.closest<HTMLElement>("[data-pick]")?.dataset.pick ?? null;
+        })) return;
+        navigateRows(event, {
+          right(row) {
+            if(row.dataset.nav === "folder") go(row.dataset.path!);
+          },
+          left() {
+            if(folder !== null) go(parentOf(folder));
+          }
+        });
+      }}
+    >
       {(folder !== null || subfolders.length > 0) && (
         // 4px of card padding around 12px rows: a 16px card.
         <div className="stagger flex flex-col gap-0.5 rounded-[16px] elevated p-1">
@@ -1141,7 +1344,7 @@ function GridFile({ asset, index, selected, onSelect, onOpen, caption }: {
   const { key, picked, selection } = usePick(item);
   return (
     <div data-pick={key} {...selection.drag(item)} onDoubleClick={onOpen} style={staggerIndex(index)} className="group/pick relative grid gap-1">
-      <AssetThumb asset={asset} selected={picked || (selected && !selection.multi)} onClick={event => selection.click(item, event, onSelect)} />
+      <AssetThumb asset={asset} nav selected={picked || (selected && !selection.multi)} onClick={event => selection.click(item, event, onSelect)} />
       {/* 8px into the 14px thumbnail corner: a 6px checkbox corner. */}
       <PickBox item={item} className="absolute top-2 left-2 z-10 rounded-[6px] shadow-[0_1px_3px_rgb(0_0_0/0.3)]" />
       {caption && <span className="truncate px-1 text-[11px] text-muted-foreground">{caption}</span>}
@@ -1156,11 +1359,12 @@ function ParentRow({ folder, library, actions }: { folder: string, library: Libr
   return (
     <button
       type="button"
+      data-nav="parent"
       {...drop.props}
       onClick={() => actions.open(parent)}
       style={staggerIndex(0)}
       className={cn(
-        "flex h-11 items-center gap-3 rounded-[12px] px-3 text-left text-sm text-muted-foreground transition-[background-color,color,scale] duration-150 hover:bg-foreground/[0.04] hover:text-foreground active:scale-[0.995]",
+        "flex h-11 items-center gap-3 rounded-[12px] px-3 text-left text-sm text-muted-foreground transition-[background-color,color,scale] duration-150 outline-none hover:bg-foreground/[0.04] hover:text-foreground focus-visible:bg-foreground/[0.06] focus-visible:text-foreground focus-visible:shadow-[inset_0_0_0_1.5px_var(--ring)] active:scale-[0.995]",
         drop.over && "bg-foreground/[0.08] text-foreground shadow-[inset_0_0_0_1px_var(--brand)]"
       )}
     >
@@ -1184,12 +1388,13 @@ function FolderRow({ path, index, library, actions }: { path: string, index: num
       style={staggerIndex(index)}
       className={cn(
         "group/pick flex h-11 items-center gap-1 rounded-[12px] pr-1.5 pl-2 transition-[background-color,box-shadow,scale] duration-150 active:scale-[0.995]",
+        KEY_FOCUS,
         picked ? "raised" : "hover:bg-foreground/[0.04]",
         drop.over && "bg-foreground/[0.08] shadow-[inset_0_0_0_1px_var(--brand)]"
       )}
     >
       <PickBox item={item} />
-      <button type="button" onClick={event => selection.click(item, event, () => actions.open(path))} className="flex min-w-0 flex-1 items-center gap-3 self-stretch pl-2.5 text-left text-sm outline-none focus-visible:underline">
+      <button type="button" data-nav="folder" data-path={path} onClick={event => selection.click(item, event, () => actions.open(path))} className="flex min-w-0 flex-1 items-center gap-3 self-stretch pl-2.5 text-left text-sm outline-none">
         <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
         <span className="truncate font-medium">{nameOf(path)}</span>
         <span className="ml-auto pr-1 text-xs text-muted-foreground tabular-nums">{count === 1 ? "1 item" : `${count} items`}</span>
@@ -1329,11 +1534,34 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
         <div className="flex flex-col gap-1">
           <h4 className="eyebrow px-1">Used in</h4>
           {asset.usage.length === 0 ? <p className="px-1 text-sm text-muted-foreground">Not used by any document.</p> : (
-            <ul className="-mx-0.5 grid gap-0.5 text-sm">
+            <ul className="-mx-0.5 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5 text-sm">
               {asset.usage.map(u => <li key={`${u.id}/${u.locale}`}><UsageLink type={u.type} id={u.id} locale={u.locale} /></li>)}
             </ul>
           )}
         </div>
+
+        {hasMetadataSupport(asset.mime) && (
+          <div className="flex flex-col gap-1.5">
+            <h4 className="eyebrow px-1">Metadata</h4>
+            <div className="px-1">
+              <StoredMetadata
+                url={url}
+                mime={asset.mime}
+                canWrite={library.canWrite}
+                onRemove={async () => {
+                  try {
+                    await cms.actions.assets.stripMetadata({ id: asset.id });
+                    cms.toast("Removed location and camera details", { type: "success" });
+                  } catch (error) {
+                    cms.toast(error instanceof ApiError ? error.message : "Couldn't remove the details", { type: "error" });
+                  }
+                  library.refresh();
+                  await detail.refetch();
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {library.canDelete && (
           <Button
@@ -1369,7 +1597,7 @@ function Row({ label, children }: { label: string, children: ReactNode }) {
 function FolderNameDialog({ open, title, description, initial, submitLabel, onOpenChange, onSubmit }: {
   open: boolean,
   title: string,
-  description?: string,
+  description?: ReactNode,
   initial: string,
   submitLabel: string,
   onOpenChange(open: boolean): void,
@@ -1384,7 +1612,8 @@ function FolderNameDialog({ open, title, description, initial, submitLabel, onOp
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
-        <form className="flex flex-col gap-4" onSubmit={async event => {
+        {/* min-w-0: a long path wraps inside the dialog instead of widening the form past it. */}
+        <form className="flex min-w-0 flex-col gap-4" onSubmit={async event => {
           event.preventDefault();
           if(!valid) return;
           setBusy(true);
@@ -1404,6 +1633,19 @@ function FolderNameDialog({ open, title, description, initial, submitLabel, onOp
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** A folder path on one line: "All files" at the top; a long path folds its middle into "…". */
+function FolderPath({ path }: { path: string | null }) {
+  if(!path) return <span className="font-medium text-foreground">All files</span>;
+  return (
+    <CollapsedPath
+      items={path.split("/")}
+      label={part => part}
+      separator="/"
+      renderItem={(part, last) => <span className={cn("truncate", last && "font-medium text-foreground")} title={last ? path : undefined}>{part}</span>}
+    />
   );
 }
 

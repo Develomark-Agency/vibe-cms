@@ -13,7 +13,8 @@ import { collectionLabel, collectionSettings, documentTitle, formatDate, formatR
 import { EditorPage } from "./editor.tsx";
 import { Marked, markTitle } from "./marked.tsx";
 import { Link, navigate, useLocation } from "./router.tsx";
-import { StatusBadge, StatusDot } from "./status.tsx";
+import { StatusBadge, StatusDot, StatusIcon, statusLabel } from "./status.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 
 const PAGE = 25;
 
@@ -312,12 +313,33 @@ export function UsageLink({ type, id, locale }: { type: string, id: string, loca
     queryKey: ["document", type, id, locale],
     queryFn: () => cms.actions.documents.get({ type, id, locale })
   });
+  const title = doc.data ? documentTitle(config, type, doc.data.draft) : "…";
+  const where = `${collectionLabel(config, type, false)}${config.locales!.length > 1 ? ` · ${localeName(locale)}` : ""}`;
   return (
-    <Link to={`/content/${type}/${id}?locale=${locale}`} className="flex items-center gap-2 rounded-[8px] px-1.5 py-1 hover:bg-foreground/[0.05]">
-      <StatusDot status={doc.data?.status} />
-      <span className="truncate">{doc.data ? documentTitle(config, type, doc.data.draft) : "…"}</span>
-      <span className="ml-auto text-xs text-muted-foreground">{collectionLabel(config, type, false)}{config.locales!.length > 1 ? ` · ${locale}` : ""}</span>
-    </Link>
+    <Tooltip>
+      <TooltipTrigger render={
+        <Link to={`/content/${type}/${id}?locale=${locale}`} className="flex min-w-0 items-center gap-2 rounded-[8px] px-1.5 py-1 hover:bg-foreground/[0.05]">
+          <StatusIcon status={doc.data?.status} />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate">{title}</span>
+            <span className="truncate text-xs text-muted-foreground">{collectionLabel(config, type, false)}{config.locales!.length > 1 ? ` · ${locale}` : ""}</span>
+          </span>
+        </Link>
+      } />
+      {/* The full title, which the row cuts off, with where it lives and its status. */}
+      <TooltipContent side="left" className="max-w-72">
+        <div className="flex flex-col gap-0.5">
+          <p className="font-medium">{title}</p>
+          <p className="opacity-70">{where}</p>
+          {doc.data && (
+            <p className="flex items-center gap-1.5 opacity-70">
+              <StatusIcon status={doc.data.status} className="size-3" />
+              {statusLabel(doc.data.status)}
+            </p>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

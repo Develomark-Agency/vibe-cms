@@ -1,6 +1,7 @@
 ---
 import { renderRichText } from "vibe-cms/rich-text";
 import { field } from "vibe-cms/preview";
+import { focus, img } from "vibe-cms/media";
 import { eq } from "vibe-cms/query";
 import Base from "../../layouts/Base.astro";
 import { cms, localeFrom, post } from "../../content.ts";
@@ -18,12 +19,8 @@ if(!entry) return new Response("Not found", { status: 404 });
   <article class={entry.layout}>
     {entry.cover && (
       <img
-        src={entry.cover.url}
-        alt={entry.cover.alt}
-        width={entry.cover.width}
-        height={entry.cover.height}
-        style={entry.cover.focal ? `object-position: ${entry.cover.focal.x * 100}% ${entry.cover.focal.y * 100}%` : undefined}
-        data-vibe-field={field(entry, "cover")}
+        {...img(entry.cover, { sizes: 768, priority: true, field: field(entry, "cover") })}
+        style={`object-position: ${focus(entry.cover)}`}
       />
     )}
     <h1 data-vibe-field={field(entry, "title")}>{entry.title}</h1>

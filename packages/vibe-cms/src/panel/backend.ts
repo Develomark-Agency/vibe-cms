@@ -1,4 +1,5 @@
 import type { RoleRules } from "../config.ts";
+import type { SiteWarning } from "../handler/images.ts";
 import { isSameZoneBlock, sameZoneAdvice } from "../org/index.ts";
 
 /** A site as the panel knows it: from its `/.well-known/vibe-cms` descriptor. */
@@ -154,7 +155,9 @@ export interface SiteDescriptor {
   orgMove: { to: string, requestedAt: number, effectiveAt: number } | null,
   /** Whether the site lets its hub take and restore backups. */
   backups: boolean,
-  admin: string
+  admin: string,
+  /** Setup problems a developer should fix, e.g. image optimization failing. Older sites send none. */
+  warnings: SiteWarning[]
 }
 
 /** When a site is backed up and how many snapshots the panel keeps. */
@@ -302,7 +305,13 @@ export async function fetchDescriptor(url: string): Promise<SiteDescriptor> {
   }
   const descriptor = await response.json() as SiteDescriptor;
   if(descriptor.protocol !== 1 || !descriptor.id || !descriptor.admin) throw new PanelError(422, "Unsupported site descriptor");
-  return { ...descriptor, org: descriptor.org ?? null, hub: descriptor.hub ?? null, orgMove: descriptor.orgMove ?? null };
+  return {
+    ...descriptor,
+    org: descriptor.org ?? null,
+    hub: descriptor.hub ?? null,
+    orgMove: descriptor.orgMove ?? null,
+    warnings: Array.isArray(descriptor.warnings) ? descriptor.warnings : []
+  };
 }
 
 const STORAGE_KEY = "vibe-panel:sites";

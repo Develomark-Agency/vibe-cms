@@ -1,4 +1,5 @@
 import type { PluginDescriptor } from "./descriptor.ts";
+import { setBreakpoints } from "./media/widths.ts";
 import type {
   AnySchema,
   ArraySchema,
@@ -92,7 +93,15 @@ export interface ConfigInput {
    * Scheduled backups: `true` lets the site's hub (`VIBE_ORG`) take snapshots and restore them as
    * itself, and nothing else. See `vibe-cms docs backups`.
    */
-  backups?: boolean
+  backups?: boolean,
+  /** Media settings. See `vibe-cms docs media`. */
+  media?: {
+    /**
+     * Breakpoint names for `img()`'s `sizes`, in pixels. Defaults to Tailwind's: `sm` 640, `md` 768,
+     * `lg` 1024, `xl` 1280, `2xl` 1536.
+     */
+    breakpoints?: Record<string, number>
+  }
 }
 
 /** A column's path into the document and its field type. */
@@ -192,6 +201,7 @@ export function defineConfig<const C extends ConfigInput>(input: C & ConfigCheck
     schemas[name] = createCollection(name, schema);
   }
   const locales = input.locales?.length ? input.locales : [input.defaultLocale ?? "en"];
+  setBreakpoints(input.media?.breakpoints);
   return {
     ...input,
     locales,

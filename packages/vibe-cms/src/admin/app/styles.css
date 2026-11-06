@@ -408,6 +408,15 @@ tbody.stagger > tr {
   box-shadow: var(--shadow-card);
 }
 
+/* A card that will take what's being dragged over it: a soft accent glow around its resting shadow. */
+@utility drop-glow {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--brand) 35%, transparent),
+    0 0 18px 2px color-mix(in oklab, var(--brand) 22%, transparent),
+    0 0 48px 8px color-mix(in oklab, var(--brand) 10%, transparent),
+    var(--shadow-card);
+}
+
 /* Menus, popovers, dialogs: lifted well off the page. */
 @utility floating {
   background-color: var(--popover);

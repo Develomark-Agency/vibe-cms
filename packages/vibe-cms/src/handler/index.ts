@@ -6,7 +6,8 @@ import { readCookie } from "./http.ts";
 import { can, verifySession } from "./auth.ts";
 import { getOrCreateMeta, migrate, newId, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
-import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
+import type { D1, ExecutionContext, Fetcher, ImagesBinding, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
+import { ImageHealth } from "./images.ts";
 import { SiteOrg, type OrgEnv } from "./org.ts";
 import { wellKnownPaths } from "./oauth.ts";
 import { RoleStore } from "./roles.ts";
@@ -27,6 +28,12 @@ export interface CoreBindings {
   db: D1,
   /** R2 bucket for uploads. Optional if you never upload media. */
   storage?: R2,
+  /**
+   * Cloudflare's Images binding (`Images()` in Alchemy). Image URLs with `?w=` are then resized and
+   * served as AVIF or WebP; without it they're served at full size and the editor warns. `false`
+   * opts out of optimization and the warning. See `vibe-cms docs media`.
+   */
+  images?: ImagesBinding | false,
   /** Static assets binding, used to serve the editor's deep links. Defaults to `env.ASSETS`. */
   assets?: Fetcher,
   /**
@@ -167,6 +174,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       config,
       db: bindings.db,
       storage: bindings.storage,
+      images: bindings.images,
+      imageHealth: new ImageHealth(bindings.db, bindings.images),
       schemaHash: await schemaHash,
       prefix,
       roles,
@@ -230,7 +239,11 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   async function scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void> {
     const s = await state(env);
     const engine = new Engine(s, { origin: "", session: null, trusted: true, ctx });
-    const jobs: Array<Promise<unknown>> = [engine.runSchedules(event.scheduledTime), engine.purgeExpiredTrash(event.scheduledTime)];
+    const jobs: Array<Promise<unknown>> = [
+      engine.runSchedules(event.scheduledTime),
+      engine.purgeExpiredTrash(event.scheduledTime),
+      s.imageHealth?.refresh() ?? Promise.resolve()
+    ];
     for(const plugin of s.plugins.plugins) {
       const job = plugin.hooks.cron?.[event.cron];
       if(job) jobs.push(Promise.resolve(job()));

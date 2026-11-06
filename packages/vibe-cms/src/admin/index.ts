@@ -48,7 +48,8 @@ export interface AdminClient {
   /** Queries including drafts. */
   query: QueryClient<AnyConfig>,
   /** With `type` and `field`, the upload is checked against that asset field. */
-  upload(file: File, options?: { folder?: string, type?: string, field?: string }): Promise<Asset>,
+  /** `stripMetadata` defaults to the site's setting. */
+  upload(file: File, options?: { folder?: string, type?: string, field?: string, stripMetadata?: boolean }): Promise<Asset>,
   /** The media library. */
   assets: {
     list(options?: { folder?: string, search?: string, accept?: string[], limit?: number, offset?: number }): Promise<{ assets: Asset[], total: number, folders: string[] }>,

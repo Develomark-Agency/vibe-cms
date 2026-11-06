@@ -1,4 +1,6 @@
 import { defineWidget } from "../descriptor.ts";
+export { IMAGE_WIDTHS, DEFAULT_BREAKPOINTS, type Breakpoints } from "./widths.ts";
+export { img, focus, imageUrl, sizesAttribute, type ImgOptions, type ImgAttributes, type Sizes, type ImageLike } from "./img.ts";
 import * as v from "../schema/builders.ts";
 import type { AssetMeta, AssetSchema, ObjectSchema, OptionalSchema, TextSchema, NumberSchema } from "../schema/types.ts";
 

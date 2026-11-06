@@ -5,6 +5,7 @@ export const vibe = createHandler(config, {
   bindings: (env: Cloudflare.Env) => ({
     db: env.DB,
     storage: env.MEDIA,
+    images: env.IMAGES,
     views: { counters: env.VIEW_COUNTERS }
   })
 });

@@ -1,6 +1,8 @@
 import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
+import type { SiteWarning } from "../../handler/images.ts";
+import { MetadataPromptHost } from "./upload-metadata.tsx";
 import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon, ShieldIcon } from "lucide-react";
 import { createContext, StrictMode, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -369,6 +371,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
           </div>
         )}
         <OrgMoveBanner />
+        <SiteWarningsBanner />
         <div className="min-h-full" data-page>
           <ErrorBoundary resetKey={path}><Outlet /></ErrorBoundary>
         </div>
@@ -378,6 +381,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
       <TipHost />
       <Toaster position="bottom-right" />
       <ConfirmHost />
+      <MetadataPromptHost />
     </div>
   );
 }
@@ -457,6 +461,42 @@ function OrgMoveBanner() {
       )}
     </div>
   );
+}
+
+/** A dismissed warning stays hidden until it changes (a new `since`). Per browser. */
+function dismissedKey(warning: SiteWarning): string {
+  return `vibe:warning:${warning.code}:${warning.since ?? ""}`;
+}
+
+function isDismissed(warning: SiteWarning): boolean {
+  try {
+    return localStorage.getItem(dismissedKey(warning)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Setup problems, such as image optimization failing, for the people who manage the site. */
+function SiteWarningsBanner() {
+  const { info, session, config } = useAdmin();
+  const [warnings, setWarnings] = useState(() => (info.site.warnings ?? []).filter(w => !isDismissed(w)));
+  if(!session.permissions.site || !warnings.length) return null;
+  const clearLocaleMenu = config.locales!.length > 1 ? "md:pr-36" : "";
+  return warnings.map(warning => (
+    <div key={warning.code} role="status" className={`flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm ${clearLocaleMenu}`}>
+      <TriangleAlertIcon className="size-4 shrink-0 text-amber-600" />
+      <p className="min-w-0 flex-1">
+        {warning.message}
+        {warning.docs && <> See <code className="rounded bg-muted px-1 py-0.5 text-xs">vibe-cms docs {warning.docs}</code>.</>}
+      </p>
+      <Button size="sm" variant="ghost" onClick={() => {
+        try {
+          localStorage.setItem(dismissedKey(warning), "1");
+        } catch {}
+        setWarnings(list => list.filter(w => w !== warning));
+      }}>Dismiss</Button>
+    </div>
+  ));
 }
 
 function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: string): void }) {

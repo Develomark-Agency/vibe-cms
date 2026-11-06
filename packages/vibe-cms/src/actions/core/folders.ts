@@ -4,10 +4,11 @@ import { folder } from "./fields.ts";
 
 const foldersList = base({
   summary: "List folders",
-  description: "Every media folder with the number of files directly in it.",
+  description: "Every media folder with the number of files directly in it. Pass `accept` (MIME types, e.g. image/*) to count only files of those types.",
   readOnly: true
 })
-  .handler(async ({ context: { engine } }) => ({ folders: await engine.listFolders() }));
+  .input(z.object({ accept: z.array(z.string()).optional() }).optional())
+  .handler(async ({ context: { engine }, input }) => ({ folders: await engine.listFolders({ accept: input?.accept }) }));
 
 const foldersCreate = base({
   summary: "Create a folder",
