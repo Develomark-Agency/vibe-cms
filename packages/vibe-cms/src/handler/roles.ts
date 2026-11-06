@@ -1,10 +1,9 @@
 import { count, eq, like } from "drizzle-orm";
 import { HttpError, type AnyConfig, type RoleRules } from "../config.ts";
 import { createDb } from "../db/client.ts";
-import { meta, roles as rolesTable, users } from "../db/schema.ts";
-import { beyondReach, fitRules, normalizeLegacyRules, OWNER_ROLE, PRESETS, presetRules, ruleIssues, staleKeys, validRoleName, type RoleSchema, type StoredRole } from "../roles.ts";
+import { roles as rolesTable, users } from "../db/schema.ts";
+import { beyondReach, fitRules, OWNER_ROLE, PRESETS, presetRules, ruleIssues, staleKeys, validRoleName, type RoleSchema, type StoredRole } from "../roles.ts";
 import type { Session } from "../server/index.ts";
-import { getMeta } from "./db.ts";
 import type { D1 } from "./platform.ts";
 
 /** How long an isolate trusts its copy of the roles before reading them again. Writes here refresh at once. */
@@ -63,23 +62,6 @@ export function roleSchema(config: AnyConfig): RoleSchema {
     types: Object.keys(config.schemas).map(name => ({ name, label: collections[name]?.label ?? name })),
     locales: [...(config.locales ?? [config.defaultLocale ?? "en"])]
   };
-}
-
-/**
- * Upgrade path: a config that still has `permissions.roles` writes them into `vibe_roles` once,
- * skipping names already stored, and warns to remove the key.
- */
-export async function importConfigRoles(db: D1, config: AnyConfig): Promise<void> {
-  const configured = config.permissions?.roles;
-  if(!configured || !Object.keys(configured).length) return;
-  if(await getMeta(db, "roles_imported")) return;
-  const orm = createDb(db);
-  const now = Date.now();
-  for(const [name, rules] of Object.entries(configured)) {
-    await orm.insert(rolesTable).values({ name, rules: JSON.stringify(normalizeLegacyRules(rules)), updated_by: "config", updated_at: now }).onConflictDoNothing();
-  }
-  await orm.insert(meta).values({ key: "roles_imported", value: String(now) }).onConflictDoNothing();
-  console.warn(`vibe-cms: copied ${Object.keys(configured).length} role(s) from permissions.roles into the site's database. Roles are edited in the editor now: remove "permissions" from your config.`);
 }
 
 interface RoleState {

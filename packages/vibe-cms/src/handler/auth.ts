@@ -105,11 +105,9 @@ export const OWNER = "owner";
 /**
  * Maps a provider identity (`<issuer>|<sub>`) and its claims to this site's roles: the `roles` claim
  * (the hub fills it from its own assignments and the identity provider claim in its `OIDC_ROLES_CLAIM`),
- * the site's own assignments, and, as a fallback for one release, `permissions.users`. Names that aren't
- * stored roles are dropped.
+ * and the site's own assignments. Names that aren't stored roles are dropped.
  */
 export function identitySession(access: Access, sub: string, claims: Record<string, unknown>, siteRoles: string[] = [], siteAdmin = false): Session {
-  const { config } = access;
   const email = typeof claims.email === "string" ? claims.email : undefined;
   const verifiedEmail = email && claims.email_verified === true ? email.toLowerCase() : undefined;
   const roles = new Set<string>();
@@ -119,15 +117,7 @@ export function identitySession(access: Access, sub: string, claims: Record<stri
   for(const role of siteRoles) roles.add(role);
   if(siteAdmin) roles.add(OWNER);
   const known = new Set([OWNER, ...Object.keys(access.roles.map)]);
-  let granted = [...roles].filter(role => known.has(role));
-  // Deprecated: honored only when nothing else gives this identity a role.
-  if(granted.length === 0) {
-    const users = config.permissions?.users ?? {};
-    for(const key of [sub, verifiedEmail]) {
-      for(const role of (key && users[key]) || []) if(known.has(role)) granted.push(role);
-    }
-    granted = [...new Set(granted)];
-  }
+  const granted = [...roles].filter(role => known.has(role));
   if(granted.length === 0) throw new HttpError(403, "No access to this site");
   return {
     sub,
@@ -194,9 +184,7 @@ function allows(rules: RoleRules, { action, type, locale, scope }: Permit): bool
   if(action === "read") return true;
   let allowed: boolean;
   if(action === "publish") {
-    allowed = rules.publish === false ? false
-      : rules.publish === true ? typeRules.includes("write") || typeRules.includes("publish")
-        : typeRules.includes("publish");
+    allowed = rules.publish !== false && typeRules.includes("publish");
   } else if(action === "write") {
     // `write: { locales }` grants writing (translating) any readable type in those locales.
     allowed = typeRules.includes("write") || Boolean(rules.write);

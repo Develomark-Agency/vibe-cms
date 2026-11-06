@@ -101,10 +101,6 @@ test("config strings are checked against the config's own schemas", () => {
     collections: {
       post: { title: "title", icon: "newspaper", preview: "/{locale}/posts/{slug}" },
       author: { icon: "user-round" }
-    },
-    permissions: {
-      roles: { editor: { post: ["read", "write"], write: { locales: ["fr"] } } },
-      users: { "jane@example.com": ["editor"] }
     }
   });
   // @ts-expect-error not an icon
@@ -117,10 +113,6 @@ test("config strings are checked against the config's own schemas", () => {
   defineConfig({ schemas, collections: { pots: { icon: "file" } } });
   // @ts-expect-error "de" isn't one of the locales
   defineConfig({ locales: ["en", "fr"], defaultLocale: "de", schemas });
-  // @ts-expect-error roles can only name content types
-  defineConfig({ schemas, permissions: { roles: { editor: { pots: ["read"] } } } });
-  // @ts-expect-error users can only be given roles that exist
-  defineConfig({ schemas, permissions: { roles: { editor: { post: ["read"] } }, users: { "a@b.c": ["admin"] } } });
   // @ts-expect-error v.ref("authr") points at nothing
   defineConfig({ schemas: { post: v.object({ author: v.ref("authr") }), author: v.object({ name: v.text() }) } });
   expect(true).toBe(true);

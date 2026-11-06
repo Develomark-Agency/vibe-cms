@@ -61,13 +61,9 @@ const archive = bucket();
 function backupSite(origin: string, allowBackups: boolean) {
   const config = defineConfig({
     backups: allowBackups,
-    permissions: {
-      roles: { editor: { post: ["read", "write"] }, ops: { post: ["read"], backups: true } },
-      users: { "jane@agency.test": ["editor"], "ops@agency.test": ["ops"] }
-    },
     schemas: { post: v.object({ title: v.text() }) }
   });
-  const siteEnv = { DB: createD1(), MEDIA: createR2(), VIBE_ORG: ORG };
+  const siteEnv = { DB: createD1({ roles: { editor: { post: ["read", "write", "publish"] }, ops: { post: ["read"], backups: true } } }), MEDIA: createR2(), VIBE_ORG: ORG };
   // Development mode only so the test can seed content with a dev session; panel users still sign in through the hub.
   const vibe = createHandler(config, { dev: true, bindings: (e: typeof siteEnv) => ({ db: e.DB, storage: e.MEDIA }) });
   function handler(request: Request) {

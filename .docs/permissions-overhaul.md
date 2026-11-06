@@ -1,6 +1,6 @@
 # Permissions overhaul
 
-Plan for moving users, roles and permissions out of code config and into data, and for giving the org hub a real notion of who administers what. Supersedes the open "permissions overhaul" item in `panel-and-auth.md`. Built through step 6; step 7 is partly done: `permissions` is deprecated and imported, not yet rejected (see Migration).
+Plan for moving users, roles and permissions out of code config and into data, and for giving the org hub a real notion of who administers what. Supersedes the open "permissions overhaul" item in `panel-and-auth.md`. Built through step 7: `permissions` is gone from `defineConfig`, along with the one-time import of config roles and the `permissions.users` fallback.
 
 ## Decisions
 
@@ -81,13 +81,13 @@ The token already carries `roles` from the IdP claim. It gains:
 
 ### Migration
 
-- On first request after upgrade, a site whose config still has `permissions.roles` writes those roles into `vibe_roles` once (skipping names already stored) and logs a warning to remove the key. `permissions.users` entries are honored for one release as a fallback only if nothing else assigns that identity, then removed. After that, `defineConfig` rejects `permissions`.
+- Done. There was a release with a one-time import of `permissions.roles` into `vibe_roles` and a `permissions.users` fallback; both are removed, and so is `permissions` from `defineConfig`. Roles exist only as stored data.
 - Sites without an org keep their setup link and Users page unchanged; they also gain the Roles page.
 - Hub: existing panels have no owner. The setup link is printed on upgrade until someone claims it. Existing users who already hold sessions keep them but have no member row until claimed.
 
 ## Build order
 
-1. **Site: roles as data.** `vibe_roles` table, role resolution in `can()`/`identitySession`, role API with validation and guardrails, packaged presets, one-time import of config roles. Works for standalone sites immediately. Tests alongside `handler.test.ts` and `types.test.ts`.
+1. **Site: roles as data.** `vibe_roles` table, role resolution in `can()`/`identitySession`, role API with validation and guardrails, packaged presets, no roles in code. Works for standalone sites immediately. Tests alongside `handler.test.ts` and `types.test.ts`.
 2. **Site: Roles page in the editor.**
 3. **Hub: members and bootstrap.** Schema and migration, printed setup link, member invites, hub roles and permissions.
 4. **Hub → site: assignments and `siteAdmin`.** `site_assignments`, `site_grants`, token claims, the site accepting `siteAdmin`, panel UI to assign roles from the site's role list (fetched via `GET /roles`).

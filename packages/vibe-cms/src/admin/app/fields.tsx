@@ -782,25 +782,25 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
             >
               <div className="group/head relative flex items-center gap-1.5 border-b py-1.5 pr-2 pl-1 transition-colors duration-200 hover:bg-foreground/[0.04] data-[collapsed=true]:border-transparent" data-collapsed={isCollapsed}>
                 <Tip label="Drag to reorder">
-                <button
-                  type="button"
-                  aria-label={`Drag to reorder ${title}`}
-                  disabled={readOnly}
-                  draggable={!readOnly}
-                  onDragStart={event => {
-                    setDragFrom(i);
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("application/x-vibe-item", String(i));
-                    setDragChip(event, detail ? `${title}: ${detail}` : title);
-                  }}
-                  onDragEnd={() => {
-                    setDragFrom(null);
-                    setDropAt(null);
-                  }}
-                  className="relative z-10 flex size-6 shrink-0 cursor-grab items-center justify-center rounded-[6px] text-muted-foreground/50 hover:bg-foreground/[0.05] hover:text-muted-foreground active:cursor-grabbing disabled:cursor-default"
-                >
-                  <GripVerticalIcon className="size-3.5" />
-                </button>
+                  <button
+                    type="button"
+                    aria-label={`Drag to reorder ${title}`}
+                    disabled={readOnly}
+                    draggable={!readOnly}
+                    onDragStart={event => {
+                      setDragFrom(i);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("application/x-vibe-item", String(i));
+                      setDragChip(event, detail ? `${title}: ${detail}` : title);
+                    }}
+                    onDragEnd={() => {
+                      setDragFrom(null);
+                      setDropAt(null);
+                    }}
+                    className="relative z-10 flex size-6 shrink-0 cursor-grab items-center justify-center rounded-[6px] text-muted-foreground/50 hover:bg-foreground/[0.05] hover:text-muted-foreground active:cursor-grabbing disabled:cursor-default"
+                  >
+                    <GripVerticalIcon className="size-3.5" />
+                  </button>
                 </Tip>
                 <button
                   type="button"

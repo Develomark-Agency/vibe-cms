@@ -100,8 +100,8 @@ async function userBy(state: State, where: ReturnType<typeof eq>): Promise<UserR
 }
 
 /**
- * A session for someone signed in by the site itself. Roles come from the config's
- * `permissions.users`, the identity provider's role claim, and the user's row (by verified email).
+ * A session for someone signed in by the site itself. Roles come from the identity provider's role claim
+ * and the user's row (by verified email).
  */
 export async function standaloneSession(state: State, identity: Identity): Promise<Session> {
   const email = identity.email?.toLowerCase();

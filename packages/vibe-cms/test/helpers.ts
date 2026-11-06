@@ -1,9 +1,31 @@
 import { Database } from "bun:sqlite";
+import type { RoleRules } from "../src/config.ts";
+import { migrations } from "../src/db/migrations/index.ts";
 import type { D1, D1Statement, R2, R2Object } from "../src/handler/platform.ts";
 
-/** A D1 stand-in over bun:sqlite, enough for the engine's needs. */
-export function createD1(): D1 & { sqlite: Database } {
+/** The engine's own statements for a table and its indexes. They're `IF NOT EXISTS`, so the site's migrations still run over them. */
+function tableStatements(table: string): string[] {
+  return migrations.flatMap(m => m.statements).filter(sql => sql.includes(`EXISTS \`${table}\``) || sql.includes(`ON \`${table}\``));
+}
+
+/**
+ * A D1 stand-in over bun:sqlite, enough for the engine's needs. `roles` and `users` (roles by email) are stored
+ * up front, as the editor's Roles and Users pages would store them.
+ */
+export function createD1(options: { roles?: Record<string, RoleRules>, users?: Record<string, string[]> } = {}): D1 & { sqlite: Database } {
   const sqlite = new Database(":memory:");
+  if(options.roles) {
+    for(const sql of tableStatements("vibe_roles")) sqlite.run(sql);
+    for(const [name, rules] of Object.entries(options.roles)) {
+      sqlite.query("INSERT INTO vibe_roles (name, rules, updated_by, updated_at) VALUES (?, ?, 'test', 0)").run(name, JSON.stringify(rules));
+    }
+  }
+  if(options.users) {
+    for(const sql of tableStatements("vibe_users")) sqlite.run(sql);
+    for(const [email, roles] of Object.entries(options.users)) {
+      sqlite.query("INSERT INTO vibe_users (id, email, roles, created_at, created_by) VALUES (?, ?, ?, 0, 'test')").run(`u-${email}`, email, JSON.stringify(roles));
+    }
+  }
   function statement(sql: string, params: unknown[] = []): D1Statement & { exec(): { results: unknown[] } } {
     function values() {
       // Like D1, which refuses `undefined` rather than binding NULL.

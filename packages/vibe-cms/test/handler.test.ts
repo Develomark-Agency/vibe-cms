@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { can, permissionSummary } from "../src/handler/auth.ts";
-import { beyondReach, normalizeLegacyRules } from "../src/roles.ts";
+import { beyondReach } from "../src/roles.ts";
 import type { Action } from "../src/config.ts";
 import { createHandler } from "../src/handler/index.ts";
 import { previewScope } from "../src/handler/preview.ts";
@@ -9,13 +9,13 @@ import { and, desc, eq, gt, has, inArray } from "../src/query/index.ts";
 import { defineConfig } from "../src/index.ts";
 import { image } from "../src/media/index.ts";
 import v from "../src/schema/index.ts";
-import { calls, config } from "./fixture.ts";
+import { calls, config, roles } from "./fixture.ts";
 import { createD1, createR2, ctx, png } from "./helpers.ts";
 
 const { post, author } = config.schemas;
 
 function setup() {
-  const env = { DB: createD1(), MEDIA: createR2(), VIBE_ORG: "https://hub.test" };
+  const env = { DB: createD1({ roles }), MEDIA: createR2(), VIBE_ORG: "https://hub.test" };
   const vibe = createHandler(config, {
     dev: true,
     bindings: (e: typeof env) => ({ db: e.DB, storage: e.MEDIA })
@@ -691,7 +691,7 @@ describe("site settings", () => {
     t.setToken("");
     expect((await t.api("/api/site", { method: "PATCH", json: { name: "Nope" } })).status).toBe(401);
     // Writing content doesn't imply changing the site's branding.
-    expect(permissionSummary({ config, roles: { map: config.permissions.roles } }, { sub: "x", roles: ["editor"] }).site).toBe(false);
+    expect(permissionSummary({ config, roles: { map: roles } }, { sub: "x", roles: ["editor"] }).site).toBe(false);
   });
 });
 
@@ -966,7 +966,7 @@ describe("mcp", () => {
 });
 
 describe("roles", () => {
-  test("config roles are imported once, then edited as data", async () => {
+  test("stored roles are listed, then edited as data", async () => {
     const listed = await t.api("/api/roles");
     expect(listed.body.roles.map((role: { name: string }) => role.name)).toEqual(["editor", "translator"]);
     expect(listed.body.canEdit).toBe(true);
@@ -987,6 +987,8 @@ describe("roles", () => {
     expect(badType.body.error).toContain("homepage");
     expect((await t.api("/api/roles/x", { method: "PUT", json: { rules: { write: { locales: ["de"] } } } })).status).toBe(400);
     expect((await t.api("/api/roles/x", { method: "PUT", json: { rules: { post: ["fly"] } } })).status).toBe(400);
+    // Publishing is only ever listed per type; `publish` can switch it off, never on.
+    expect((await t.api("/api/roles/x", { method: "PUT", json: { rules: { post: ["read", "write"], publish: true } } })).status).toBe(400);
     expect((await t.api("/api/roles/owner", { method: "PUT", json: { rules: { all: true } } })).status).toBe(400);
   });
 
@@ -1006,19 +1008,14 @@ describe("roles", () => {
     const access = { config, roles: { map: {
       writer: { post: ["read" as const, "write" as const] },
       publisher: { post: ["read" as const, "write" as const, "publish" as const] },
-      legacy: { post: ["read" as const, "write" as const], publish: true },
+      off: { post: ["read" as const, "write" as const, "publish" as const], publish: false as const },
       taker: { backups: "take" as const }
     } } };
     expect(can(access, { sub: "x", roles: ["writer"] }, { action: "publish", type: "post" })).toBe(false);
     expect(can(access, { sub: "x", roles: ["publisher"] }, { action: "publish", type: "post" })).toBe(true);
-    expect(can(access, { sub: "x", roles: ["legacy"] }, { action: "publish", type: "post" })).toBe(true);
+    expect(can(access, { sub: "x", roles: ["off"] }, { action: "publish", type: "post" })).toBe(false);
     expect(can(access, { sub: "x", roles: ["taker"] }, { action: "read", scope: "backups" })).toBe(true);
     expect(can(access, { sub: "x", roles: ["taker"] }, { action: "write", scope: "backups" })).toBe(false);
-  });
-
-  test("config roles are copied in today's terms: write used to imply publish", () => {
-    expect(normalizeLegacyRules({ post: ["read", "write"], author: ["read"] })).toEqual({ post: ["read", "write", "publish"], author: ["read"] });
-    expect(normalizeLegacyRules({ post: ["read", "write", "publish"], publish: false })).toEqual({ post: ["read", "write"] });
   });
 
   test("role managers only reach as far as their own roles", () => {

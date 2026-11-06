@@ -11,12 +11,11 @@ import { Authenticator } from "./webauthn.ts";
 const ORIGIN = "https://client.test";
 
 const config = defineConfig({
-  permissions: { roles: { editor: { post: ["read", "write"] } } },
   schemas: { post: v.object({ title: v.text() }) }
 });
 
 function site(vars: Record<string, string> = {}) {
-  const env = { DB: createD1(), ...vars };
+  const env = { DB: createD1({ roles: { editor: { post: ["read", "write", "publish"] } } }), ...vars };
   const vibe = createHandler(config, { dev: false, bindings: (e: typeof env) => ({ db: e.DB }) });
 
   async function raw(path: string, init: RequestInit & { json?: unknown, form?: Record<string, string>, bearer?: string, cookie?: string } = {}) {

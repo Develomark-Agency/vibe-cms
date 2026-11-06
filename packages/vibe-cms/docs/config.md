@@ -28,7 +28,6 @@ export default defineConfig({
 | `plugins` | `[]` | Plugin descriptors, e.g. `[SearchPlugin({ … })]`. See `vibe-cms docs plugins`. |
 | `locales` | `[defaultLocale]` | Locales documents can be translated into. See `vibe-cms docs localization`. |
 | `defaultLocale` | first of `locales`, else `"en"` | The locale reads fall back to. |
-| `permissions` | none | Deprecated: roles are stored on the site and edited on the editor's Roles page. Config roles are copied there once. See `vibe-cms docs permissions`. |
 | `prefix` | `"/_vibe"` | URL prefix for everything the CMS serves. |
 | `trash` | `{ days: 30 }` | How long deleted documents and files stay restorable before the cron trigger purges them. |
 | `backups` | `false` | `true` lets the hub of the site's org (`VIBE_ORG`) take and restore scheduled backups (`vibe-cms docs backups`). |

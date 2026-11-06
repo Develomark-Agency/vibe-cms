@@ -75,7 +75,7 @@ The hub's signing key is a Worker secret, `HUB_SIGNING_KEY` (`bunx vibe-cms hub 
 
 ## Permissions live on the site
 
-Roles are data owned by each site: a `vibe_roles` table in its D1, edited on the editor's Roles page (or written by the hub from a template through `POST /_vibe/api/roles/apply`), enforced on every request with no dependency on the hub being reachable. A fresh site has only the built-in `owner`; the package ships presets (Admin, Editor, Contributor, Translator) that are copied in, not linked. Nothing about roles lives in the config any more: an old `permissions.roles` is copied into the database once, and `permissions.users` is a fallback for one release. See `vibe-cms docs permissions`.
+Roles are data owned by each site: a `vibe_roles` table in its D1, edited on the editor's Roles page (or written by the hub from a template through `POST /_vibe/api/roles/apply`), enforced on every request with no dependency on the hub being reachable. A fresh site has only the built-in `owner`; the package ships presets (Admin, Editor, Contributor, Translator) that are copied in, not linked. Nothing about roles or users lives in the config. See `vibe-cms docs permissions`.
 
 The hub decides **who has which role where** (`site_assignments`: a `sub`, or a verified email until that person first signs in, and the site's role names) and **who manages each site** (its owner and admins, plus `site_grants`: whoever added the site, or was made its owner). Neither the hub nor the identity provider can define what a role means; unknown role names are ignored.
 

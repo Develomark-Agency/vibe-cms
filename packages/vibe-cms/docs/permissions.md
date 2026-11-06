@@ -81,8 +81,6 @@ Only the site's stored roles and the built-in `owner` count; other names are ign
 
 **Managing roles within your own.** A role with `manageRoles: true` ("Manage roles" on the Roles page) may create, change, delete and give out roles, but only roles that stay within what that person's own roles allow: no action on a type, media, language, site settings or backups they don't have themselves, never `all`, and never `owner`. Roles beyond their reach show read only, and so do people who hold them. On org sites the hub applies the same rule when they give people roles from the Users page. Templates (`POST /roles/apply`) stay owners-only.
 
-**Upgrading.** A config that still has `permissions.roles` has them copied into the database once, on the first request (names already stored are skipped), with a warning in the logs to remove the key. `permissions.users` is honored for one more release, only for people nothing else gives a role. Remove `permissions` from your config once the roles are on the site.
-
 ## Role rules
 
 A role is an object of rules; a user may do anything any of their roles allows.
@@ -92,7 +90,7 @@ A role is an object of rules; a user may do anything any of their roles allows.
 | `all: true` | Everything, including media and site settings |
 | `"<type>": [...]` | Actions on that content type: `"read"`, `"write"`, `"publish"`, `"delete"` |
 | `"*": [...]` | The same, for every type without its own rule. A type's own rule replaces `"*"` rather than adding to it. |
-| `publish: false` | Turns publishing (and scheduling) off for every type. Otherwise a type is published only when its rule lists `"publish"`. (`publish: true` keeps the old meaning, where `write` implied publishing; config roles are rewritten in today's terms when they're copied onto the site.) |
+| `publish: false` | Turns publishing (and scheduling) off for every type. Otherwise a type is published only when its rule lists `"publish"`. |
 | `write: { locales: [...] }` | Writing every type the role can read, but only in these locales: a translator. Also limits the role's other writes to these locales. |
 | `media: [...]` | The media library. Without it: read always, upload (`write`) if the role may write any type, delete never. |
 | `siteSettings: true` | Changing the site's name, accent and icon (`vibe-cms docs config`). Not implied by anything but `all`. |

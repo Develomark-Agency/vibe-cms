@@ -9,7 +9,7 @@ import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
 import { SiteOrg, type OrgEnv } from "./org.ts";
 import { wellKnownPaths } from "./oauth.ts";
-import { importConfigRoles, RoleStore } from "./roles.ts";
+import { RoleStore } from "./roles.ts";
 import { announceClaim, announceSetup, signInConfig, type SignInEnv } from "./signin.ts";
 import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
@@ -161,7 +161,6 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     const bindings = options.bindings(env) as Bindings<C> & Record<string, unknown>;
     checkBindings(config, bindings);
     await migrate(bindings.db, config);
-    await importConfigRoles(bindings.db, config);
     const roles = new RoleStore(bindings.db);
     await roles.refresh(true);
     const partial = {
@@ -195,7 +194,9 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     // `as Request`: in a program with both the DOM lib and @cloudflare/workers-types, the two global `Request`
     // declarations merge and `clone()` returns workers-types' generic Request with its parameters unresolved,
     // which isn't assignable to `Request`. The value is the same request either way.
-    const copy = () => request.clone() as Request;
+    function copy() {
+      return request.clone() as Request;
+    }
     const assets = (options.bindings(env) as CoreBindings).assets ?? (env as { ASSETS?: Fetcher } | undefined)?.ASSETS;
     const local = [
       assets && new URL(request.url).pathname !== "/" ? () => assets.fetch(copy()) : null,

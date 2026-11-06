@@ -9,12 +9,8 @@ import { assignRoles, env, HUB, hubOrigins, idp, installMock, ORG, panel, remove
 
 /** A site whose database survives redeploys (new handlers over the same D1), with an admin and an editor. */
 function orgSite(origin: string, siteEnv: Record<string, string> = {}) {
-  const db = createD1();
+  const db = createD1({ roles: { admin: { all: true }, editor: { post: ["read", "write", "publish"] } } });
   const config = defineConfig({
-    permissions: {
-      roles: { admin: { all: true }, editor: { post: ["read", "write"] } },
-      users: { "jane@agency.test": ["admin"], "bob@agency.test": ["editor"] }
-    },
     schemas: { post: v.object({ title: v.text() }) }
   });
   function deploy(vars: Record<string, string>) {

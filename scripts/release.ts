@@ -50,5 +50,5 @@ if(values["no-push"]) {
   console.log(`Not pushed. When ready: git push origin ${branch} ${tag}`);
 } else {
   await git("push", "origin", branch, tag);
-  console.log(`✓ Pushed. The workflow is building a draft release: https://github.com/jclarkDM/vibe-cms/releases`);
+  console.log("✓ Pushed. The workflow is building a draft release: https://github.com/jclarkDM/vibe-cms/releases");
 }

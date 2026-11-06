@@ -1,4 +1,4 @@
-import { defineConfig } from "../src/index.ts";
+import { defineConfig, type RoleRules } from "../src/index.ts";
 import { image } from "../src/media/index.ts";
 import v from "../src/schema/index.ts";
 import { definePlugin } from "../src/descriptor.ts";
@@ -11,15 +11,15 @@ export const AuditPlugin = definePlugin()((options: { tag: string }) => ({
   server: () => import("./audit.server.ts")
 }));
 
+/** The roles most tests sign in with, stored on the site the way the Roles page stores them (`createD1({ roles })`). */
+export const roles: Record<string, RoleRules> = {
+  editor: { post: ["read", "write"], author: ["read"] },
+  translator: { "*": ["read"], write: { locales: ["fr"] } }
+};
+
 export const config = defineConfig({
   locales: ["en", "fr"],
   plugins: [AuditPlugin({ tag: "t" })],
-  permissions: {
-    roles: {
-      editor: { post: ["read", "write"], author: ["read"], publish: false },
-      translator: { "*": ["read"], write: { locales: ["fr"] } }
-    }
-  },
   schemas: {
     author: v.object({
       name: v.text({ min: 1 }),

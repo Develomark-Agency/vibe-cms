@@ -83,7 +83,7 @@ All HTTP routing is [Hono](https://hono.dev), in the site's handler, the panel a
 
 - **Dev sessions:** with `dev` (default: Vite's `import.meta.env.DEV`), `POST /_vibe/api/session { dev: true }` signs in a local developer with every permission. An embedded editor in dev mode also posts navigation and title messages to any parent, since no code tells it who the panel is.
 - **Session lifetime:** site sessions last 12 hours. Editors ask the panel for a fresh code on 401, without a word to the user; deployed editors only run framed by the panel.
-- **Roles** come from the configured claim and from `permissions.users`; only roles defined in `permissions.roles` count, and a user with none gets 403 at the code endpoint, which the panel shows as "No access".
+- **Roles** come from the hub's `roles` claim and the site's own assignments; only roles stored on the site (and the built-in `owner`) count, and a user with none gets 403 at the code endpoint, which the panel shows as "No access".
 - `write: { locales }` grants writing (translating) every readable type in those locales.
 
 ## Build

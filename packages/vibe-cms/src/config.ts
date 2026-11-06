@@ -18,17 +18,18 @@ import type { StandardProps } from "./schema/standard.ts";
 export type Action = "read" | "write" | "publish" | "delete";
 
 /**
- * One role's rules, in `permissions.roles`. A user may do anything any of their roles allows.
+ * One role's rules, as the site stores them and the editor's Roles page edits them. A user may do anything any
+ * of their roles allows.
  * See `vibe-cms docs permissions`.
  */
 export interface RoleRules {
   /** Everything, everywhere. */
   all?: boolean,
   /**
-   * `false` turns publishing (and scheduling) off for every type. Otherwise a type is published only
-   * when its rule lists `publish`; `true` is the old meaning, where `write` implied it.
+   * `false` turns publishing (and scheduling) off for every type. Without it, a type is published only
+   * when its rule lists `publish`.
    */
-  publish?: boolean,
+  publish?: false,
   /** Write (translate) every readable type, only in these locales. Also limits the role's other writes to them. */
   write?: { locales: string[] },
   /** Media library access. Without it: read, upload if the role writes any type, never delete. */
@@ -50,13 +51,6 @@ export interface RoleRules {
 }
 
 /** Who may do what on a deployed site. Development sessions have every permission. */
-export interface Permissions {
-  /** Role name → rules. Only roles defined here count, whatever the identity provider sends. */
-  roles?: Record<string, RoleRules>,
-  /** Roles per user, keyed by verified email (lowercase) or `<issuer>|<sub>`, on top of the roles the hub passes on from the identity provider. */
-  users?: Record<string, string[]>
-}
-
 type TextKeys<S> = S extends ObjectSchema<infer Sh>
   ? { [K in keyof Sh & string]: Unwrap<Sh[K]> extends TextSchema ? K : never }[keyof Sh & string]
   : string;
@@ -90,11 +84,6 @@ export interface ConfigInput {
   locales?: readonly string[],
   /** The locale reads fall back to. Defaults to the first of `locales`, else `"en"`. */
   defaultLocale?: string,
-  /**
-   * @deprecated Roles are stored on the site and edited on the editor's Roles page; these are copied
-   * there once, on the first request. `users` is honored for one release. See `vibe-cms docs permissions`.
-   */
-  permissions?: Permissions,
   /** URL prefix for everything the CMS serves. Defaults to `/_vibe`. */
   prefix?: string,
   /** Deleted documents and files stay restorable this long, then the cron trigger purges them. Defaults to 30 days. */
@@ -154,7 +143,6 @@ export type AnyConfig = Config<ConfigInput>;
 
 type Types<C extends ConfigInput> = keyof C["schemas"] & string;
 type Locales<C> = C extends { locales: ReadonlyArray<infer L extends string> } ? L : string;
-type RoleNames<C> = C extends { permissions: { roles: infer R } } ? keyof R & string : string;
 type Extra<T, Allowed> = { [K in Exclude<keyof T, Allowed>]: never };
 
 /** Every content type a `v.ref("...")` anywhere in a schema points at. */
@@ -168,16 +156,6 @@ type RefTargets<S> =
               : never;
 
 type UnknownRefTargets<C extends ConfigInput> = Exclude<{ [K in Types<C>]: RefTargets<C["schemas"][K]> }[Types<C>], Types<C>>;
-
-type RuleChecks<C extends ConfigInput> = {
-  all?: boolean,
-  publish?: boolean,
-  write?: { locales: ReadonlyArray<Locales<C>> },
-  media?: readonly Action[],
-  siteSettings?: boolean,
-  manageRoles?: boolean,
-  backups?: boolean | "take"
-} & { [T in Types<C> | "*"]?: readonly Action[] };
 
 type Placeholders<T> = T extends `${string}{${infer K}}${infer Rest}` ? K | Placeholders<Rest> : never;
 type FieldKeys<S> = S extends ObjectSchema<infer Sh> ? keyof Sh & string : string;
@@ -195,23 +173,16 @@ type CollectionChecks<C extends ConfigInput> = {
 
 type ConfigChecks<C extends ConfigInput> = {
   collections?: CollectionChecks<C> & Extra<C["collections"], Types<C>>,
-  defaultLocale?: Locales<C>,
-  permissions?: {
-    roles?: {
-      [R in keyof NonNullable<NonNullable<C["permissions"]>["roles"]>]:
-        RuleChecks<C> & Extra<NonNullable<NonNullable<C["permissions"]>["roles"]>[R], keyof RuleChecks<C>>
-    },
-    users?: Record<string, ReadonlyArray<RoleNames<C>>>
-  }
+  defaultLocale?: Locales<C>
 } & ([UnknownRefTargets<C>] extends [never] ? {} : {
   "~error": `v.ref("${UnknownRefTargets<C> & string}") points at a content type that isn't in schemas`
 });
 
 /**
- * Defines the site: content types, editor settings, plugins, locales and permissions.
+ * Defines the site: content types, editor settings, plugins and locales.
  * The default export of `vibe-cms.config.ts`, imported by the Worker and the editor, so
  * keep it to schemas and descriptors. Strings that name schemas (collection keys, `title`,
- * `preview` placeholders, role rules, `v.ref()` targets, locales) are checked at the type level.
+ * `preview` placeholders, `v.ref()` targets, locales) are checked at the type level.
  * See `vibe-cms docs config`.
  */
 export function defineConfig<const C extends ConfigInput>(input: C & ConfigChecks<C>): Config<C> {

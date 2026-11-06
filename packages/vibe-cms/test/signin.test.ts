@@ -12,15 +12,12 @@ import { Authenticator } from "./webauthn.ts";
 const ORIGIN = "https://client.test";
 
 const config = defineConfig({
-  permissions: {
-    roles: { editor: { post: ["read", "write"] } },
-    users: { "config@client.test": ["editor"] }
-  },
   schemas: { post: v.object({ title: v.text() }) }
 });
 
-function site(vars: Record<string, string> = {}, email?: EmailSender) {
-  const env = { DB: createD1(), ...vars };
+/** `users`: people already given roles on the Users page, by email. */
+function site(vars: Record<string, string> = {}, email?: EmailSender, users?: Record<string, string[]>) {
+  const env = { DB: createD1({ roles: { editor: { post: ["read", "write", "publish"] } }, users }), ...vars };
   const vibe = createHandler(config, { dev: false, bindings: (e: typeof env) => ({ db: e.DB, email }) });
 
   /** One browser: keeps the sign-in cookie, and the session token the editor holds in memory. */
@@ -256,12 +253,12 @@ describe("the site's own identity provider", () => {
     expect((await browser.call("/api/auth")).body.setup).toBe(false);
   });
 
-  test("people sign in with roles from the config, invites and the role claim; others are turned away", async () => {
-    const idp = await provider({ email: "config@client.test", email_verified: true });
-    const s = site(OIDC);
+  test("people sign in with roles from the Users page and the role claim; others are turned away", async () => {
+    const idp = await provider({ email: "listed@client.test", email_verified: true });
+    const s = site(OIDC, undefined, { "listed@client.test": ["editor"] });
     const browser = s.browser();
     await login(s, idp, browser);
-    expect((await browser.resume()).body.user).toMatchObject({ email: "config@client.test", roles: ["editor"] });
+    expect((await browser.resume()).body.user).toMatchObject({ email: "listed@client.test", roles: ["editor"] });
 
     const stranger = await provider({ email: "eve@elsewhere.test", email_verified: true });
     const eve = s.browser();
@@ -278,7 +275,7 @@ describe("the site's own identity provider", () => {
   });
 
   test("VIBE_ALLOW keeps other accounts out before roles are looked at", async () => {
-    const idp = await provider({ email: "config@client.test", email_verified: true });
+    const idp = await provider({ email: "listed@client.test", email_verified: true });
     const s = site({ ...OIDC, VIBE_ALLOW: "agency.test" });
     const browser = s.browser();
     const refused = await login(s, idp, browser);
@@ -286,7 +283,7 @@ describe("the site's own identity provider", () => {
   });
 
   test("a callback without the login cookie is refused", async () => {
-    const idp = await provider({ email: "config@client.test", email_verified: true });
+    const idp = await provider({ email: "listed@client.test", email_verified: true });
     const s = site(OIDC);
     const browser = s.browser();
     const start = await browser.call("/api/auth/oidc/login");

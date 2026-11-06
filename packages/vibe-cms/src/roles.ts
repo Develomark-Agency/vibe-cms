@@ -64,28 +64,6 @@ export const PRESETS: readonly Preset[] = [
   }
 ];
 
-/**
- * Rules written before publishing had to be listed: there, `write` implied `publish` unless the role
- * said `publish: false`. Returns the same permissions in today's terms. Config roles go through this
- * when they're copied onto the site.
- */
-export function normalizeLegacyRules(rules: RoleRules): RoleRules {
-  const out: RoleRules = {};
-  const publishes = rules.publish !== false;
-  for(const [key, value] of Object.entries(rules)) {
-    if(key === "publish") continue;
-    if(!SPECIAL.has(key) || key === "*") {
-      const actions = new Set(value as Action[]);
-      if(publishes && actions.has("write")) actions.add("publish");
-      if(!publishes) actions.delete("publish");
-      out[key] = ACTIONS.filter(action => actions.has(action));
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
 /** A preset's rules for one site: the translator writes in its non-default locales. */
 export function presetRules(preset: Preset, schema: RoleSchema, defaultLocale?: string): RoleRules {
   const rules = structuredClone(preset.rules);
@@ -115,7 +93,9 @@ export function ruleIssues(rules: unknown, schema: RoleSchema): string[] {
     if(value === undefined) continue;
     if(key === "backups") {
       if(typeof value !== "boolean" && value !== "take") issues.push("backups must be true, false or \"take\"");
-    } else if(["all", "publish", "siteSettings", "manageRoles"].includes(key)) {
+    } else if(key === "publish") {
+      if(value !== false) issues.push("publish can only be false");
+    } else if(["all", "siteSettings", "manageRoles"].includes(key)) {
       if(typeof value !== "boolean") issues.push(`${key} must be true or false`);
     } else if(key === "write") {
       const locales = (value as { locales?: unknown })?.locales;
@@ -197,7 +177,6 @@ function typeActions(rules: RoleRules, key: string): Action[] {
   const actions = new Set<Action>((Array.isArray(own) ? own : rules["*"] as Action[] | undefined) ?? []);
   if(rules.write && actions.size) actions.add("write");
   if(rules.publish === false) actions.delete("publish");
-  if(rules.publish === true && actions.has("write")) actions.add("publish");
   return [...actions];
 }
 

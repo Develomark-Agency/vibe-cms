@@ -808,7 +808,7 @@ function AddSiteForm({ backend }: { backend: PanelBackend }) {
         <p className="text-sm text-muted-foreground">
           {hosted
             ? <>Paste the address of a site running <span className="whitespace-nowrap">Vibe CMS</span>, or the claim link from a new site.</>
-            :  "Enter the address of a running dev server."}
+            : "Enter the address of a running dev server."}
         </p>
       </div>
       <div className="flex gap-2">

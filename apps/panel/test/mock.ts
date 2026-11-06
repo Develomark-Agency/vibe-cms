@@ -52,11 +52,10 @@ export async function idToken(claims: Record<string, unknown> = {}) {
 
 export function site(org = ORG, siteEnv: Record<string, unknown> = {}) {
   const config = defineConfig({
-    permissions: { roles: { editor: { post: ["read", "write"] } }, users: { "jane@agency.test": ["editor"] } },
     schemas: { post: v.object({ title: v.text() }) }
   });
   const vibe = createHandler(config, { dev: false, bindings: (env: { DB: ReturnType<typeof createD1> }) => ({ db: env.DB }) });
-  const env = { DB: createD1(), VIBE_ORG: org, ...siteEnv };
+  const env = { DB: createD1({ roles: { editor: { post: ["read", "write", "publish"] } } }), VIBE_ORG: org, ...siteEnv };
   return (request: Request) => vibe.handle(request, env, { waitUntil() {} });
 }
 

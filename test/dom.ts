@@ -9,8 +9,8 @@ import { GlobalWindow } from "happy-dom";
 const window = new GlobalWindow({ url: "http://localhost/", console });
 const g = globalThis as Record<string | symbol, unknown>;
 
-for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(window))) {
-  if (key in g) continue;
+for(const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(window))) {
+  if(key in g) continue;
   // Properties that point back at the window (`window`, `self`, `top`, `parent`)
   // point at the global object instead, so `window.location === location`.
   const value = descriptor.value === window ? globalThis : descriptor.value;

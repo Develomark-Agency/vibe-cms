@@ -8,7 +8,7 @@ import { BackupError, listSnapshots, packSnapshot, planRestore, restoreSnapshot,
 import { can } from "../src/handler/auth.ts";
 import { UPLOAD_LIMITS } from "../src/handler/backups.ts";
 import { createHandler } from "../src/handler/index.ts";
-import { config } from "./fixture.ts";
+import { config, roles } from "./fixture.ts";
 import { createD1, createR2, ctx, png } from "./helpers.ts";
 
 /** A site reachable at its own origin, in process. */
@@ -249,7 +249,7 @@ describe("restores", () => {
 
 describe("access", () => {
   test("backups need their own permission", () => {
-    expect(can({ config, roles: { map: config.permissions?.roles ?? {} } }, { sub: "x", roles: ["editor"] }, { action: "read", scope: "backups" })).toBe(false);
+    expect(can({ config, roles: { map: roles } }, { sub: "x", roles: ["editor"] }, { action: "read", scope: "backups" })).toBe(false);
     expect(can({ config, roles: { map: { ops: { backups: true } } } }, { sub: "x", roles: ["ops"] }, { action: "write", scope: "backups" })).toBe(true);
   });
 

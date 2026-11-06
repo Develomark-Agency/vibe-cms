@@ -8,7 +8,7 @@ What Vibe CMS is, how a project using it is laid out, which code runs where, and
 
 ```
 my-site/
-├── vibe-cms.config.ts     # defineConfig: content types, plugins, locales, permissions
+├── vibe-cms.config.ts     # defineConfig: content types, plugins, locales
 ├── src/
 │   ├── cms.ts             # createHandler(config, { bindings }) → `vibe`
 │   ├── worker.ts          # export default vibe({ fetch: yourApp })
