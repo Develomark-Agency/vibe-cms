@@ -46,7 +46,7 @@ The plan lists the redirect URI to register at your provider and the `wrangler` 
 - the org's **DNS record**, added for you when the domain's zone is in the account (an existing record is never overwritten), or printed to add yourself,
 - the **setup link**.
 
-The panel's settings are saved, without secrets, in `~/.config/vibe-cms/panels/<account id>/<worker name>/`. Run the wizard again whenever you want to redeploy after upgrading `vibe-cms`, change settings, replace the signing key or the client secret, or find a panel you deployed from another machine.
+The panel's settings are saved, without secrets, in `~/.config/vibe-cms/panels/<account id>/<worker name>/`. Run the wizard again whenever you want to redeploy after upgrading `vibe-cms` (it shows the version the panel is running next to the one it will deploy), change settings, replace the signing key or the client secret, or find a panel you deployed from another machine.
 
 ### Sign in for the first time
 

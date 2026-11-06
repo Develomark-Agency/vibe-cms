@@ -13,7 +13,7 @@ bun add vibe-cms
 bun add -d vite @cloudflare/vite-plugin wrangler @cloudflare/workers-types
 ```
 
-The `vibe-cms` CLI (`vibe-cms docs`, `vibe-cms admin`, actions against a site) runs on Bun.
+The `vibe-cms` CLI (`vibe-cms docs`, `vibe-cms admin`, actions against a site) runs on Node or Bun.
 
 ## 2. Write the config
 
