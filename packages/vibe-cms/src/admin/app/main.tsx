@@ -2,8 +2,10 @@ import { keepPreviousData, QueryClient, QueryClientProvider, useQuery } from "@t
 import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
 import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon, ShieldIcon } from "lucide-react";
-import { StrictMode, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
+import { createContext, StrictMode, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { Outlet, useRouteError, type RouteObject } from "react-router";
+import { RouterProvider } from "react-router/dom";
 import Fuse from "fuse.js";
 import type { AnyConfig } from "../../config.ts";
 import { collectDescriptors, IMPL, loadLazy } from "../../descriptor.ts";
@@ -29,7 +31,7 @@ import { UsersPage } from "./users.tsx";
 import { RolesPage } from "./roles.tsx";
 import { ConnectApp, ConnectionsPage, takeConnectRequest } from "./connect.tsx";
 import { TrashPage } from "./trash.tsx";
-import { Link, match, navigate, ParamsContext, setBase, useLocation, useNavigationSync } from "./router.tsx";
+import { createAdminRouter, Link, match, navigate, useLocation, useNavigationGuard, useNavigationSync, usePageTransitions, useParams } from "./router.tsx";
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
 import { openPick, type PreviewPick } from "./reveal.ts";
 import { FULLSCREEN_BELOW, PreviewWindow } from "./preview-window.tsx";
@@ -85,7 +87,6 @@ function App({ config }: { config: AnyConfig }) {
     const m = /^(.*)\/admin(\/|$)/.exec(location.pathname);
     return m?.[1] ?? config.prefix ?? "/_vibe";
   }, []);
-  setBase(`${prefix}/admin`);
   const info = useQuery({ queryKey: ["info"], // The serialized schemas are JSON Schema, which `hc`'s JSON typing can't express; `SiteInfo` keeps them precise.
     queryFn: async () => await read(await siteApi(prefix).info.$get()) as unknown as SiteInfo, staleTime: Infinity });
   const [session, setSession] = useState<SessionState | null | undefined>(undefined);
@@ -137,12 +138,57 @@ function Shell({ config, info, session, prefix, onSignOut }: {
     setAccent(site.accent ?? panelAccent);
     setFavicon(site.icon?.url ?? site.favicon);
   }, [site.accent, site.icon?.url, site.favicon, panelAccent]);
-  const { search } = useLocation();
-  const locale = search.get("locale") && config.locales!.includes(search.get("locale")!) ? search.get("locale")! : config.defaultLocale!;
-
   useEffect(() => {
     void loadPlugins(config, cms).then(setPlugins);
   }, [config, cms]);
+
+  // One router per page load: routes depend only on the plugins, and permissions are checked as pages render.
+  const router = useMemo(() => (plugins ? createAdminRouter(`${prefix}/admin`, plugins, () => adminRoutes(plugins)) : null), [plugins, prefix]);
+
+  if(!plugins || !router) return <Delayed><Centered><Spinner className="size-5" /></Centered></Delayed>;
+  return (
+    <ShellContext.Provider value={{ config, info, site, session, cms, plugins, prefix, onSignOut }}>
+      <RouterProvider router={router} />
+    </ShellContext.Provider>
+  );
+}
+
+/** What the shell knows before routing: the root route adds the locale and provides `AdminContext`. */
+const ShellContext = createContext<Omit<AdminContextValue, "locale" | "setLocale"> & { prefix: string, onSignOut(): void } | null>(null);
+
+function adminRoutes(plugins: Required<AdminPlugin>): RouteObject[] {
+  return [{
+    path: "/",
+    element: <Root />,
+    errorElement: <RouteError />,
+    children: [
+      { index: true, element: <Dashboard /> },
+      { path: "content/:type", element: <ContentList /> },
+      { path: "content/:type/:id", element: <ContentDocument /> },
+      { path: "media", element: <Allowed when={a => a.canMedia}><MediaPage /></Allowed> },
+      { path: "settings", element: <Allowed when={a => a.canSite}><SiteSettingsPage /></Allowed> },
+      { path: "users", element: <Allowed when={a => a.canManageUsers}><UsersPage /></Allowed> },
+      { path: "roles", element: <Allowed when={a => a.canManageRoles}><RolesPage /></Allowed> },
+      { path: "connections", element: <Allowed when={a => a.canConnect}><ConnectionsPage /></Allowed> },
+      { path: "trash", element: <Allowed when={a => a.canTrash}><TrashPage /></Allowed> },
+      ...Object.entries(plugins.pages).map(([pattern, entry]): RouteObject => ({ path: pattern, element: <PluginRoute component={entry.component} /> })),
+      { path: "*", element: <NotFound /> }
+    ]
+  }];
+}
+
+/** Errors in the frame itself go to the outer boundary (startAdmin); pages have their own, in Layout. */
+function RouteError(): never {
+  throw useRouteError();
+}
+
+function Root() {
+  const shell = useContext(ShellContext)!;
+  const { config, prefix, onSignOut } = shell;
+  const { search } = useLocation();
+  usePageTransitions();
+  useNavigationGuard();
+  const locale = search.get("locale") && config.locales!.includes(search.get("locale")!) ? search.get("locale")! : config.defaultLocale!;
 
   function setLocale(next: string) {
     const params = new URLSearchParams(location.search);
@@ -153,12 +199,61 @@ function Shell({ config, info, session, prefix, onSignOut }: {
     navigate(`${path}${query ? `?${query}` : ""}`, { replace: true });
   }
 
-  if(!plugins) return <Delayed><Centered><Spinner className="size-5" /></Centered></Delayed>;
-  const value: AdminContextValue = { config, info, site, session, cms, plugins, locale, setLocale };
+  const value: AdminContextValue = { ...shell, locale, setLocale };
   return (
     <AdminContext.Provider value={value}>
       <Layout onSignOut={onSignOut} />
     </AdminContext.Provider>
+  );
+}
+
+/** What the signed-in user can open, beyond reading content types. */
+function useAccess() {
+  const { config, session, info } = useAdmin();
+  const types = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
+  return {
+    types,
+    canMedia: session.permissions.media.read,
+    canSite: session.permissions.site,
+    canTrash: session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete),
+    // In development nobody signs in for real. Org sites show who the hub signed in, read only.
+    canManageUsers: session.permissions.users && !info.dev,
+    canManageRoles: session.permissions.roles,
+    // Agents and the CLI connect to the site itself only when it signs people in itself.
+    canConnect: info.signIn !== "hub" && !info.dev
+  };
+}
+
+type Access = ReturnType<typeof useAccess>;
+
+function Allowed({ when, children }: { when(access: Access): boolean, children: ReactNode }) {
+  return when(useAccess()) ? children : <NotFound />;
+}
+
+function ContentList() {
+  const { type } = useParams();
+  return useAccess().types.includes(type!) ? <ListPage key={type} type={type!} /> : <NotFound />;
+}
+
+function ContentDocument() {
+  const { type, id } = useParams();
+  return useAccess().types.includes(type!) ? <DocumentRoute type={type!} id={id!} /> : <NotFound />;
+}
+
+function PluginRoute({ component: Page }: { component: Required<AdminPlugin>["pages"][string]["component"] }) {
+  const { cms } = useAdmin();
+  const params = useParams();
+  return <PluginPage><Page cms={cms} params={params} /></PluginPage>;
+}
+
+function NotFound() {
+  return (
+    <Centered>
+      <div className="text-center">
+        <h1 className="text-lg font-semibold">Page not found</h1>
+        <Link to="/" className="text-sm text-muted-foreground underline">Go to the dashboard</Link>
+      </div>
+    </Centered>
   );
 }
 
@@ -200,45 +295,9 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const types = Object.keys(config.schemas).filter(t => session.permissions.types[t]?.read);
+  const { types, canTrash, canManageUsers, canManageRoles, canConnect } = useAccess();
   const singletons = types.filter(t => collectionSettings(config, t).singleton);
   const collections = types.filter(t => !collectionSettings(config, t).singleton);
-  const canTrash = session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete);
-  // In development nobody signs in for real. Org sites show who the hub signed in, read only.
-  const canManageUsers = session.permissions.users && !info.dev;
-  const canManageRoles = session.permissions.roles;
-  // Agents and the CLI connect to the site itself only when it signs people in itself.
-  const canConnect = info.signIn !== "hub" && !info.dev;
-
-  let page: React.ReactNode = null;
-  let params: Record<string, string> | null;
-  if(path === "/") page = <Dashboard />;
-  else if((params = match("/content/:type", path)) && types.includes(params.type!)) page = <ListPage key={params.type} type={params.type!} />;
-  else if((params = match("/content/:type/:id", path)) && types.includes(params.type!)) page = <DocumentRoute type={params.type!} id={params.id!} />;
-  else if(path === "/media" && session.permissions.media.read) page = <MediaPage />;
-  else if(path === "/settings" && session.permissions.site) page = <SiteSettingsPage />;
-  else if(path === "/users" && canManageUsers) page = <UsersPage />;
-  else if(path === "/roles" && canManageRoles) page = <RolesPage />;
-  else if(path === "/connections" && canConnect) page = <ConnectionsPage />;
-  else if(path === "/trash" && canTrash) page = <TrashPage />;
-  else {
-    for(const [pattern, entry] of Object.entries(plugins.pages)) {
-      const found = match(pattern, path);
-      if(found) {
-        const Page = entry.component;
-        page = <ParamsContext.Provider value={found}><PluginPage><Page cms={cms} params={found} /></PluginPage></ParamsContext.Provider>;
-        break;
-      }
-    }
-  }
-  page ??= (
-    <Centered>
-      <div className="text-center">
-        <h1 className="text-lg font-semibold">Page not found</h1>
-        <Link to="/" className="text-sm text-muted-foreground underline">Go to the dashboard</Link>
-      </div>
-    </Centered>
-  );
 
   function active(to: string) {
     return to === "/" ? path === "/" : path === to || path.startsWith(`${to}/`);
@@ -311,7 +370,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
         )}
         <OrgMoveBanner />
         <div className="min-h-full" data-page>
-          <ErrorBoundary resetKey={path}>{page}</ErrorBoundary>
+          <ErrorBoundary resetKey={path}><Outlet /></ErrorBoundary>
         </div>
       </main>
       <ErrorBoundary resetKey={paletteOpen}><Palette open={paletteOpen} onOpenChange={setPaletteOpen} /></ErrorBoundary>
