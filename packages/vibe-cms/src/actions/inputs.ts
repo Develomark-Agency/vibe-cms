@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 
 /** How a surface that only has text (query strings, form fields, CLI flags) should read a field. */
 export type FieldKind = "string" | "number" | "boolean" | "strings" | "file" | "json";
@@ -8,6 +8,25 @@ export interface FieldInfo {
   optional: boolean,
   nullable: boolean,
   description: string | undefined
+}
+
+const fileInputs = new WeakSet<z.core.$ZodType>();
+
+/**
+ * An uploaded file in an action's input. Prefer it to `z.file()`: zod types `z.file()` through
+ * `typeof globalThis`, which doesn't see the Workers runtime's `File` class, so without the DOM lib its
+ * value is typed only `{ type, size }`. This is typed from the `File` class itself, and is still
+ * described and parsed as a file everywhere (`z.file()` is too).
+ */
+export function fileInput(): z.ZodType<File> {
+  const schema = z.instanceof(File);
+  fileInputs.add(schema);
+  return schema;
+}
+
+/** A `fileInput()` or `z.file()` schema, unwrapped. */
+export function isFileSchema(schema: z.core.$ZodType): boolean {
+  return fileInputs.has(schema) || schema._zod.def.type === "file";
 }
 
 type Def = { type: string, innerType?: z.ZodType, element?: z.ZodType, values?: unknown[] };
@@ -34,7 +53,7 @@ export function fieldInfo(schema: z.ZodType): FieldInfo {
   const kind: FieldKind = d.type === "string" || d.type === "enum" || (d.type === "literal" && typeof d.values?.[0] === "string") ? "string"
     : d.type === "number" ? "number"
       : d.type === "boolean" ? "boolean"
-        : d.type === "file" ? "file"
+        : isFileSchema(current) ? "file"
           : d.type === "array" && fieldInfo(d.element!).kind === "string" ? "strings"
             : "json";
   return { kind, optional, nullable, description };

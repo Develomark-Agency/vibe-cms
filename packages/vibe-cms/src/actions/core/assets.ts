@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { base, router } from "../define.ts";
+import { fileInput } from "../inputs.ts";
 import { folder, limit, offset } from "./fields.ts";
 
 const assetId = z.string().describe("Asset ID");
@@ -31,9 +32,7 @@ const assetsUpload = base({
   description: "Adds a file to the media library. Pass `type` and `field` to check it against that asset field (accepted types, size, image dimensions). Use the returned `id` as `{ asset: id }` in documents."
 })
   .input(z.object({
-    // Typed as `File`: zod finds `File` through `typeof globalThis`, which workers-types' `declare class File`
-    // isn't on, so without the DOM lib z.file() is typed only `{ type, size }`. It still checks `instanceof File`.
-    file: z.file() as unknown as z.ZodType<File>,
+    file: fileInput(),
     folder: z.string().optional(),
     type: z.string().optional().describe("Content type whose field the file is for"),
     field: z.string().optional().describe("Dot path of that asset field, e.g. cover")

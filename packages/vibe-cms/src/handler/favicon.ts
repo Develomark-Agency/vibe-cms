@@ -24,7 +24,7 @@ function iconLinks(html: string): string[] {
 
 async function isImage(fetchSite: SiteFetch, url: URL): Promise<boolean> {
   try {
-    const response = await withTimeout(fetchSite(new Request(url)));
+    const response = await withTimeout(fetchSite(new Request(url.href)));
     await response.body?.cancel();
     return response.ok && (response.headers.get("content-type") ?? "").startsWith("image/");
   } catch {
@@ -40,7 +40,7 @@ export async function detectFavicon(origin: string, fetchSite: SiteFetch): Promi
   const home = new URL("/", origin);
   let candidates: string[] = [];
   try {
-    const response = await withTimeout(fetchSite(new Request(home, { headers: { accept: "text/html" } })));
+    const response = await withTimeout(fetchSite(new Request(home.href, { headers: { accept: "text/html" } })));
     if(response.ok && (response.headers.get("content-type") ?? "").includes("html")) candidates = iconLinks(await response.text());
     else await response.body?.cancel();
   } catch {

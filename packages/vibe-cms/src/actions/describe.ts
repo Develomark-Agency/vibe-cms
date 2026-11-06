@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ActionAnnotations, ActionEntry } from "./define.ts";
-import { inputFields } from "./inputs.ts";
+import { inputFields, isFileSchema } from "./inputs.ts";
 
 /** An action as `GET /_vibe/api/actions` lists it: name, title, description, annotations, input JSON Schema. */
 export interface ActionDescription {
@@ -17,6 +17,9 @@ export interface JsonFile {
   type?: string,
   base64: string
 }
+
+/** How `z.file()` describes itself; `fileInput()` (a `z.instanceof`) is given the same. */
+const binaryFileSchema = { type: "string", format: "binary", contentEncoding: "binary" };
 
 const jsonFileSchema = {
   type: "object",
@@ -40,11 +43,9 @@ export function inputJsonSchema(schema: z.ZodType, options: { files?: "binary" |
     target: "draft-2020-12",
     unrepresentable: "any",
     override: ctx => {
-      const type = (ctx.zodSchema as unknown as { _zod: { def: { type: string } } })._zod.def.type;
-      if(type === "file" && options.files === "json") {
-        for(const key of Object.keys(ctx.jsonSchema)) delete (ctx.jsonSchema as Record<string, unknown>)[key];
-        Object.assign(ctx.jsonSchema, jsonFileSchema);
-      }
+      if(!isFileSchema(ctx.zodSchema)) return;
+      for(const key of Object.keys(ctx.jsonSchema)) delete (ctx.jsonSchema as Record<string, unknown>)[key];
+      Object.assign(ctx.jsonSchema, options.files === "json" ? jsonFileSchema : binaryFileSchema);
     }
   }) as Record<string, unknown>;
 }

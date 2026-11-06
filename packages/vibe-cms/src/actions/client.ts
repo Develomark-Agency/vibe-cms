@@ -35,7 +35,7 @@ export interface HttpCallerOptions {
   /** A site session token. Development sites give one to `POST /_vibe/api/session { dev: true }`. */
   token?: string,
   fetch?: typeof fetch,
-  credentials?: RequestCredentials
+  credentials?: RequestInit["credentials"]
 }
 
 /** Calls actions over `POST /_vibe/api/actions/<name>`: JSON, or multipart when the input holds a `File`. */
@@ -55,7 +55,7 @@ export function httpCaller(options: HttpCallerOptions): ActionCaller {
 }
 
 /** An action's input as a request body: JSON, or multipart when it holds a file. */
-export function encodeInput(input: unknown): { body: BodyInit, contentType?: string } {
+export function encodeInput(input: unknown): { body: string | FormData, contentType?: string } {
   const entries = typeof input === "object" && input !== null ? Object.entries(input) : [];
   if(!entries.some(([, value]) => value instanceof Blob)) return { body: JSON.stringify(input ?? {}), contentType: "application/json" };
   const form = new FormData();

@@ -36,7 +36,7 @@
     "./panel/styles.css": "./src/panel/styles.css"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "test": "bun test",
     "devices": "bun scripts/devices.ts",
     "build:panel": "bun scripts/build-panel.ts",

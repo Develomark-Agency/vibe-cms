@@ -89,7 +89,8 @@ function pack(entries: AsyncIterable<Entry>): ReadableStream<Uint8Array> {
 class ByteReader {
   private buffer = new Uint8Array(0);
   private done = false;
-  constructor(private readonly reader: ReadableStreamDefaultReader<Uint8Array>) {}
+  // Only `read()`: Bun, Node and Workers each type their stream readers with extra methods of their own.
+  constructor(private readonly reader: { read(): Promise<{ done: false, value: Uint8Array } | { done: true, value?: Uint8Array }> }) {}
 
   private async fill(n: number): Promise<boolean> {
     while(this.buffer.length < n && !this.done) {
