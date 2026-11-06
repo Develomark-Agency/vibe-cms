@@ -102,7 +102,9 @@ type LiveSite = PanelSite & {
   /** Why the site's descriptor couldn't be read: not answering at all, or answering but not as vibe-cms. */
   problem?: { kind: "offline" | "invalid", message: string },
   /** A check of the site is in flight. */
-  checking?: boolean
+  checking?: boolean,
+  /** Not checked yet: whether it's up, and its live name, aren't known. */
+  pending?: boolean
 };
 
 function siteProblem(error: unknown): LiveSite["problem"] {
@@ -143,7 +145,7 @@ function useLiveSites(sites: PanelSite[] | undefined): LiveSite[] | undefined {
     const { data: live, error, isFetching } = descriptors[i] ?? {};
     if(live) return { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null };
     if(error) return { ...site, problem: siteProblem(error), checking: isFetching };
-    return site;
+    return { ...site, pending: true };
   });
 }
 
@@ -170,6 +172,22 @@ function useRecheck() {
 }
 
 /** Healthy sites first, so the ones that can't be opened right now don't crowd the top. */
+/**
+ * Whether the first checks have come back, or waiting for them has gone on long enough. Sites are
+ * ordered by name and health, both known only after a check, so cards shown before then would
+ * rise in one order and then shuffle into another.
+ */
+function useSettled(pending: boolean, ms = 800): boolean {
+  const [settled, setSettled] = useState(!pending);
+  useEffect(() => {
+    if(settled) return;
+    if(!pending) return setSettled(true);
+    const timer = setTimeout(() => setSettled(true), ms);
+    return () => clearTimeout(timer);
+  }, [pending, settled, ms]);
+  return settled || !pending;
+}
+
 function healthyFirst<T extends LiveSite>(sites: T[]): T[] {
   return [...sites].sort((a, b) => Number(!!a.problem) - Number(!!b.problem));
 }
@@ -518,6 +536,7 @@ function SiteList({ backend, sites, loading, canAdd, member, onAdd, onBackups }:
 }) {
   const [filter, setFilter] = useState("");
   const portal = usePortalHover();
+  const settled = useSettled(!sites || sites.some(s => s.pending));
   if(loading) return <Delayed><div className="flex h-full items-center justify-center"><Spinner /></div></Delayed>;
   const hosted = backend.mode === "hosted";
   const all = sortSites(sites ?? []);
@@ -572,6 +591,9 @@ function SiteList({ backend, sites, loading, canAdd, member, onAdd, onBackups }:
               </EmptyHeader>
               {canAdd && <EmptyContent><Button onClick={onAdd}><PlusIcon /> Add your first site</Button></EmptyContent>}
             </Empty>
+          ) : !settled ? (
+            // Held back while the first checks come in (useSettled); quick enough not to need a spinner.
+            null
           ) : list.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No sites match “{filter}”.</p>
           ) : (
