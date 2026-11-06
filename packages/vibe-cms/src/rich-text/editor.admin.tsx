@@ -18,9 +18,9 @@ import {
   Undo2Icon
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { AdminClient } from "vibe-cms/admin";
-import { defineReactWidget } from "vibe-cms/admin/react";
-import { Button, cn, Input, MediaLibraryDialog, Popover, PopoverContent, PopoverTrigger, Separator, Toggle } from "vibe-cms/admin/ui";
+import type { AdminClient } from "../admin/index.ts";
+import { defineReactWidget } from "../admin/react.tsx";
+import { Button, cn, Input, MediaLibraryDialog, Popover, PopoverContent, PopoverTrigger, Separator, Toggle } from "../admin/ui.ts";
 import type { RichEditorOptions } from "./index.ts";
 import type { Block, InlineNode, Mark, RichTextDoc, TextNode } from "./schema.ts";
 

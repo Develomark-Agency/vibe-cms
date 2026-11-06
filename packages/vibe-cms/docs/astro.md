@@ -123,8 +123,8 @@ Astro matches fixed and parameterised routes before a rest parameter, so the cat
 ```astro
 ---
 // src/pages/[...path].astro: every page document, by its path.
-import { findPage } from "@vibe-cms/blocks";
-import { Blocks } from "@vibe-cms/blocks/astro";
+import { findPage } from "vibe-cms/blocks";
+import { Blocks } from "vibe-cms/blocks/astro";
 import Layout from "../layouts/Layout.astro";
 import { cms, page } from "../content.ts";
 import Callout from "../blocks/Callout.astro";

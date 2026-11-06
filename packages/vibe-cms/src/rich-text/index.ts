@@ -1,5 +1,5 @@
-import { defineWidget } from "vibe-cms";
-import v from "vibe-cms/schema";
+import { defineWidget } from "../descriptor.ts";
+import v from "../schema/index.ts";
 import { block, type RichTextDoc } from "./schema.ts";
 
 export * from "./schema.ts";

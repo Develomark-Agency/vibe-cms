@@ -1,6 +1,6 @@
-import { richText } from "@vibe-cms/rich-text";
-import { image } from "vibe-cms/media";
-import v from "vibe-cms/schema";
+import { richText } from "../rich-text/index.ts";
+import { image } from "../media/index.ts";
+import v from "../schema/index.ts";
 import { blocks, defineBlock, type BlockDefinition } from "./define.ts";
 
 /*

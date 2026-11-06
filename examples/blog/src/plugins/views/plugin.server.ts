@@ -1,4 +1,4 @@
-import { toPlainText } from "@vibe-cms/rich-text";
+import { toPlainText } from "vibe-cms/rich-text";
 import { defineServer } from "vibe-cms/server";
 import type config from "../../../vibe-cms.config.ts";
 import type { ViewsPlugin } from "./index.ts";

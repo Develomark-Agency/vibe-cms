@@ -1,5 +1,5 @@
-import { renderRichText, type RenderOptions } from "@vibe-cms/rich-text/render";
-import { field } from "vibe-cms/preview";
+import { renderRichText, type RenderOptions } from "../rich-text/render.ts";
+import { field } from "../preview/index.ts";
 import type { BlockProps, AnyBlock } from "./define.ts";
 import { isBuiltInType, type BuiltInBlock, type BuiltInType } from "./builtins.ts";
 
@@ -84,7 +84,7 @@ function embedUrl(link: string): string | null {
 /**
  * The built-in blocks as semantic, JavaScript-free HTML with `vb-` classes.
  * Every adapter uses these unless you pass your own component for the type;
- * `@vibe-cms/blocks/styles.css` gives them a neutral default look.
+ * `vibe-cms/blocks/styles.css` gives them a neutral default look.
  */
 export const builtInRenderers: { [T in BuiltInType]: HtmlComponent<Of<T>> } = {
   hero: b => html`<section class="vb-block vb-hero vb-hero--${b.align}">

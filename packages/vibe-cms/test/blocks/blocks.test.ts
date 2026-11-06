@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { createElement, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import v, { validate } from "vibe-cms/schema";
-import { defineBlock, normalizePath, pageSchema, type BlockProps } from "../src/index.ts";
-import { html, raw, renderBlock, renderBlocks, url } from "../src/html.ts";
+import v, { validate } from "../../src/schema/index.ts";
+import { defineBlock, normalizePath, pageSchema, type BlockProps } from "../../src/blocks/index.ts";
+import { html, raw, renderBlock, renderBlocks, url } from "../../src/blocks/html.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { pickVariants } from "../src/preview.ts";
-import { Blocks } from "../src/react.tsx";
+import { pickVariants } from "../../src/blocks/preview.ts";
+import { Blocks } from "../../src/blocks/react.tsx";
 
 const Testimonial = defineBlock({
   type: "testimonial",

@@ -1,4 +1,4 @@
-import type { BlockProps } from "@vibe-cms/blocks";
+import type { BlockProps } from "vibe-cms/blocks";
 import type { Features } from "../blocks/definitions.ts";
 
 /** A React block rendered on the server only: no `client:` directive, so it ships no JavaScript. */

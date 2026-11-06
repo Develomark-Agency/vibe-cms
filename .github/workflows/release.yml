@@ -29,7 +29,7 @@ jobs:
       - name: Check the tarball ships the panel and the compiled package
         run: |
           files=$(tar -tzf vibe-cms-*.tgz)
-          for f in panel-dist/index.js dist/index.js dist/index.d.ts dist/cli/index.js; do
+          for f in panel-dist/index.js dist/index.js dist/index.d.ts dist/cli/index.js dist/blocks/index.js dist/rich-text/index.js src/blocks/Blocks.astro; do
             grep -qx "package/$f" <<< "$files" || { echo "Tarball is missing $f"; exit 1; }
           done
 
@@ -38,7 +38,7 @@ jobs:
           mkdir smoke && cd smoke
           echo '{"name":"smoke","private":true,"type":"module"}' > package.json
           bun add "$(ls "$GITHUB_WORKSPACE"/vibe-cms-*.tgz)"
-          node --input-type=module -e 'await import("vibe-cms"); await import("vibe-cms/schema"); await import("vibe-cms/vite"); process.exit(0)'
+          node --input-type=module -e 'await import("vibe-cms"); await import("vibe-cms/schema"); await import("vibe-cms/vite"); await import("vibe-cms/rich-text"); await import("vibe-cms/blocks/html"); process.exit(0)'
 
       - name: Create draft release
         env:

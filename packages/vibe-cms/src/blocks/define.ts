@@ -1,8 +1,8 @@
-import type { Collection, Column } from "vibe-cms";
-import type { LocaleOf, QueryClient } from "vibe-cms/query";
-import { eq } from "vibe-cms/query";
-import v from "vibe-cms/schema";
-import type { FieldOptions, LiteralSchema, ObjectSchema, Output, Shape } from "vibe-cms/schema";
+import type { Collection, Column } from "../index.ts";
+import type { LocaleOf, QueryClient } from "../query/index.ts";
+import { eq } from "../query/index.ts";
+import v from "../schema/index.ts";
+import type { FieldOptions, LiteralSchema, ObjectSchema, Output, Shape } from "../schema/index.ts";
 
 type Icon = FieldOptions<unknown>["icon"];
 

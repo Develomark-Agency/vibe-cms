@@ -1,10 +1,6 @@
 # Blocks
 
-Pages built from blocks with `@vibe-cms/blocks`: defining blocks, the page schema, block lists as fields, and rendering them with your own components.
-
-```bash
-bun add @vibe-cms/blocks
-```
+Pages built from blocks with `vibe-cms/blocks`: defining blocks, the page schema, block lists as fields, and rendering them with your own components.
 
 Blocks are how editors build pages. A site usually has one `page` content type from `pageSchema()`, and every page editors manage is a document of it, each at its own `path`: `/` for the home page, `/about`, `/services/design`. Editors compose each page from blocks; the site renders them with its own components. A catch-all route renders them all (`vibe-cms docs astro` shows the routing).
 
@@ -38,7 +34,7 @@ Use blocks in two ways:
 - `blocks([...], { label, description, min, max })` is a field: an array of a union told apart by each block's `type`. The editor gives it drag-to-reorder, insertion points and a searchable add menu.
 - `pageSchema({ blocks })` is a whole content type: `title`, `path` (`format: "path"`, indexed, unique per locale), an optional search `description`, and `blocks` with the built-in blocks plus yours. Give its collection `preview: "{path}"`, so the editor's draft preview opens the page (`vibe-cms docs preview`).
 
-Built-in blocks: Hero, Text (rich text), Image, Gallery, Call to action, Quote, Video, FAQ and Divider. They render as plain HTML in every adapter unless you pass your own component for their type; `@vibe-cms/blocks/styles.css` styles them neutrally.
+Built-in blocks: Hero, Text (rich text), Image, Gallery, Call to action, Quote, Video, FAQ and Divider. They render as plain HTML in every adapter unless you pass your own component for their type; `vibe-cms/blocks/styles.css` styles them neutrally.
 
 ## Rendering
 
@@ -46,8 +42,8 @@ Look the page up by its URL path, then render its blocks with a map of block typ
 
 ```astro
 ---
-import { findPage } from "@vibe-cms/blocks";
-import { Blocks } from "@vibe-cms/blocks/astro";
+import { findPage } from "vibe-cms/blocks";
+import { Blocks } from "vibe-cms/blocks/astro";
 import Callout from "../blocks/Callout.astro";
 import { cms, page } from "../content.ts";
 
@@ -59,13 +55,40 @@ if(!entry) return new Response(null, { status: 404 });
 
 | Adapter | Import | Components |
 |---|---|---|
-| Astro | `@vibe-cms/blocks/astro` | Any Astro-renderable component; interactive ones through a one-line wrapper with a `client:` directive |
-| React | `@vibe-cms/blocks/react` | React components; works as a Server Component |
-| HTML | `@vibe-cms/blocks/html` | `renderBlocks(blocks, { components: { callout: b => html\`…\` } })`, with an escaping `html` template |
+| Astro | `vibe-cms/blocks/astro` | Any Astro-renderable component; interactive ones through a one-line wrapper with a `client:` directive |
+| React | `vibe-cms/blocks/react` | React components; works as a Server Component |
+| HTML | `vibe-cms/blocks/html` | `renderBlocks(blocks, { components: { callout: b => html\`…\` } })`, with an escaping `html` template |
 
 Each component's props are the block's resolved fields: type them with `BlockProps<typeof Callout>`. `findPage(cms, page, pathname, { locale, drafts })` normalises the path (`/About/` → `/about`) and returns the published page or `null`.
 
-The `@vibe-cms/blocks` package README has more on each adapter.
+### Astro
+
+Astro, React, Vue and Svelte components mix freely in one map. For a block with state and handlers, map its type to a one-line Astro wrapper, because Astro only hydrates components written with a `client:` directive in a file:
+
+```astro
+---
+import { PricingToggle } from "../components/PricingToggle";
+---
+<PricingToggle client:visible {...Astro.props} />
+```
+
+Astro's component types are loose, so `<Blocks>` checks which types the map covers but not each component's props.
+
+### React
+
+`<Blocks>` from `vibe-cms/blocks/react` uses no hooks, so it works as a Server Component: static blocks ship no JavaScript, and components marked `"use client"` hydrate with full state and handlers. Built-ins render inside a `display: contents` wrapper.
+
+### Plain HTML
+
+```ts
+import { html, renderBlocks } from "vibe-cms/blocks/html";
+
+renderBlocks(entry.blocks, {
+  components: { testimonial: b => html`<blockquote>${b.quote}</blockquote><p>${b.name}</p>` }
+});
+```
+
+`html` escapes everything you interpolate (`raw()` opts out, `url()` keeps links to safe schemes), so block content can't inject markup. Use this adapter for Workers, Vue or anything else. Pass `{ locale }` to `findPage` for translations, or `{ drafts: true }` from a trusted preview route.
 
 ## Custom blocks
 
@@ -97,7 +120,7 @@ export const UpcomingEvents = defineBlock({
 ```astro
 ---
 // src/blocks/UpcomingEvents.astro
-import type { BlockProps } from "@vibe-cms/blocks";
+import type { BlockProps } from "vibe-cms/blocks";
 import { field } from "vibe-cms/preview";
 import { asc, gte } from "vibe-cms/query";
 import { cms, event } from "../content.ts";

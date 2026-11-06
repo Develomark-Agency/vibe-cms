@@ -1,5 +1,5 @@
-import { blocks, defineBlock, pageSchema } from "@vibe-cms/blocks";
-import { richText } from "@vibe-cms/rich-text";
+import { blocks, defineBlock, pageSchema } from "vibe-cms/blocks";
+import { richText } from "vibe-cms/rich-text";
 import { defineConfig } from "vibe-cms";
 import { image } from "vibe-cms/media";
 import v from "vibe-cms/schema";

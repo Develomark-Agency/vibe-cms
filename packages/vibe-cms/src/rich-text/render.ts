@@ -1,4 +1,4 @@
-import { field } from "vibe-cms/preview";
+import { field } from "../preview/index.ts";
 import type { Block, InlineNode, Mark, RichTextDoc, RichTextOutput } from "./schema.ts";
 
 export interface RenderOptions {

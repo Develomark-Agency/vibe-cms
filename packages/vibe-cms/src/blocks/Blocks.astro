@@ -8,8 +8,8 @@
  */
 import type { AnyBlock } from "./define.ts";
 import type { AstroComponents } from "./astro.ts";
-import { renderBlock, type RenderContext } from "./html.ts";
-import { inPickRender, inPreview, pickSource, pickVariants } from "./preview.ts";
+import type { RenderContext } from "./html.ts";
+import { inPickRender, inPreview, pickSource, pickVariants, renderBlock } from "vibe-cms/blocks/astro-runtime";
 import Variant from "./Variant.astro";
 
 interface Props<B extends AnyBlock = AnyBlock> extends RenderContext {

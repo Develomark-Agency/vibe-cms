@@ -1,4 +1,4 @@
-import v from "vibe-cms/schema";
+import v from "../schema/index.ts";
 
 export const mark = v.enum(["bold", "italic", "underline", "strike", "code"]);
 

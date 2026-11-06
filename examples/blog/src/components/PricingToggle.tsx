@@ -1,4 +1,4 @@
-import type { BlockProps } from "@vibe-cms/blocks";
+import type { BlockProps } from "vibe-cms/blocks";
 import { useState } from "react";
 import type { Pricing } from "../blocks/definitions.ts";
 

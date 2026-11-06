@@ -47,7 +47,7 @@ How the code settles questions the design docs leave open, and where it delibera
 
 ## Pages and blocks
 
-- **`@vibe-cms/blocks`** is its own package, because its Text block uses `@vibe-cms/rich-text`, which itself depends on core. See its README for usage.
+- **`vibe-cms/blocks` and `vibe-cms/rich-text`** are subpaths of the one `vibe-cms` package. They were separate packages, but releases are tarballs on GitHub rather than a registry, so a separate package couldn't resolve its dependency on another one. The blocks guide (`vibe-cms docs blocks`) covers usage.
 - **Definition is separate from rendering.** `defineBlock` gives a block's type, label, icon and fields. Its schema is `v.object({ type: v.literal(…), …fields })`, so a page's `blocks` field is an array of a union told apart by `type`. Pages are therefore ordinary documents, and validation, references, asset resolution, drafts, versions and i18n need no special cases. Rendering happens in the site's components, so the CMS config never imports UI code.
 - **Adapters:** `/astro` (any Astro-renderable component; interactive blocks go through a one-line wrapper with a `client:` directive), `/react` (Server Component-safe; client components hydrate), and `/html` (an escaping `html` template). The built-ins are written once, as HTML, and every adapter uses them unless overridden. The component maps require every custom block type at the type level.
 - **Core additions:** `format: "path"` for text, `unique: true` for top-level text fields (checked against drafts and published copies, per type and locale), and an `icon` option on any schema (shown in the add-block menu and on block cards). Preview templates keep `/` in placeholder values, so `preview: "{path}"` works.

@@ -39,7 +39,7 @@ Use it through any field's `widget` option. On an optional field, put it on the 
       rating: v.optional(v.number({ integer: true, min: 1, max: 5, widget: Rating({ max: 5 }) })),
 ```
 
-The schema still validates the value on the server; a widget only changes how it's edited. Field presets are built the same way: `image()` from `vibe-cms/media` is `v.asset()` with the built-in asset picker widget, and `richText()` from `@vibe-cms/rich-text` is a schema with a Tiptap widget.
+The schema still validates the value on the server; a widget only changes how it's edited. Field presets are built the same way: `image()` from `vibe-cms/media` is `v.asset()` with the built-in asset picker widget, and `richText()` from `vibe-cms/rich-text` is a schema with a Tiptap widget.
 
 ## A React widget
 

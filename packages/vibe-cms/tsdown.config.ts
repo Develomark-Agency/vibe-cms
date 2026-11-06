@@ -9,9 +9,10 @@
  */
 import { defineConfig } from "tsdown";
 import pkg from "./package.json" with { type: "json" };
+import { SOURCE_EXPORTS } from "./scripts/source-exports.ts";
 
 const entry = [
-  ...Object.values(pkg.exports).filter(file => /\.tsx?$/.test(file)),
+  ...Object.entries(pkg.exports).filter(([key, file]) => /\.tsx?$/.test(file) && !SOURCE_EXPORTS.has(key)).map(([, file]) => file),
   ...Object.values(pkg.bin)
 ];
 
@@ -28,7 +29,7 @@ export default defineConfig({
   dts: { sourcemap: true },
   clean: true,
   // Dependencies resolve from the user's node_modules; only our own modules are compiled.
-  deps: { neverBundle: [/^node:/, /^vibe-cms(\/|$)/, /^virtual:/, /^cloudflare:/] },
+  deps: { neverBundle: [/^node:/, /\.astro$/, /^vibe-cms(\/|$)/, /^virtual:/, /^cloudflare:/] },
   tsconfig: "tsconfig.json",
   inputOptions: {
     // Unbundled, every module is its own file, so "use client" stays at the top of the ones that have it.

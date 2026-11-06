@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { validate } from "vibe-cms/schema";
-import { fromTiptap, toTiptap } from "../src/editor.admin.tsx";
-import { richText, renderRichText, toPlainText, type RichTextDoc } from "../src/index.ts";
+import { validate } from "../../src/schema/index.ts";
+import { fromTiptap, toTiptap } from "../../src/rich-text/editor.admin.tsx";
+import { richText, renderRichText, toPlainText, type RichTextDoc } from "../../src/rich-text/index.ts";
 
 const doc: RichTextDoc = [
   { kind: "h", level: 2, children: [{ kind: "text", text: "Hello" }] },

@@ -8,10 +8,8 @@ The user guides are in [`packages/vibe-cms/docs/`](./packages/vibe-cms/docs) and
 
 | Package | What |
 |---|---|
-| [`packages/vibe-cms`](./packages/vibe-cms) | The engine, `v` schema builder, query API, handler, HTTP client, `useContent`, the editor (React, Tailwind, shadcn/ui on Base UI), the panel shell, Vite plugin, CLI and the guides |
-| [`packages/rich-text`](./packages/rich-text) | `richText()` field preset: a schema built from primitives, a Tiptap widget, and an HTML renderer |
+| [`packages/vibe-cms`](./packages/vibe-cms) | The engine, `v` schema builder, query API, handler, HTTP client, `useContent`, the editor (React, Tailwind, shadcn/ui on Base UI), the panel shell, Vite plugin, CLI and the guides. Also `vibe-cms/rich-text` (the `richText()` field: a schema built from primitives, a Tiptap widget and an HTML renderer) and `vibe-cms/blocks` (pages built from blocks, with Astro, React and HTML renderers) |
 | [`apps/panel`](./apps/panel) | The agency panel: OIDC sign-in, the shared site list, the one-time-code handoff. A Worker with D1 |
-| [`packages/blocks`](./packages/blocks) | Pages built from blocks, with Astro, React and HTML renderers |
 | [`examples/schemas`](./examples/schemas) | Content types, one topic per file, and the queries that read them |
 | [`examples/plugins`](./examples/plugins) | One small plugin per feature: hooks, routes, editor pages and slots, widgets, cron, media, Durable Objects |
 | [`examples/worker`](./examples/worker), [`examples/astro`](./examples/astro) | Minimal sites: a plain Worker with Vite, and Astro on Cloudflare |

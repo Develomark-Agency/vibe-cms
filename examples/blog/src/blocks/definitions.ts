@@ -1,4 +1,4 @@
-import { defineBlock } from "@vibe-cms/blocks";
+import { defineBlock } from "vibe-cms/blocks";
 import { image } from "vibe-cms/media";
 import v from "vibe-cms/schema";
 

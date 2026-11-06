@@ -6,7 +6,7 @@ import type { Session } from "../server/index.ts";
 /**
  * Draft preview: the editor opens the site with a `vibe_preview` cookie, and every request carrying a
  * valid one renders inside this scope, where `vibe.client(env)` reads drafts. One store per isolate,
- * on a global symbol, so `@vibe-cms/blocks` and `field()` can check it without importing node APIs into browser bundles.
+ * on a global symbol, so `vibe-cms/blocks` and `field()` can check it without importing node APIs into browser bundles.
  */
 export interface PreviewScope {
   session: Session,

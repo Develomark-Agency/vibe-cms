@@ -13,6 +13,7 @@ import { cp, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
+import { SOURCE_EXPORTS } from "./source-exports.ts";
 
 const here = path.resolve(import.meta.dir, "..");
 const { values } = parseArgs({ options: { destination: { type: "string", default: process.cwd() } } });
@@ -44,8 +45,8 @@ function distBase(source: string) {
 
 const exportsMap: Record<string, unknown> = {};
 for(const [key, source] of Object.entries(pkg.exports as Record<string, string>)) {
-  if(!/\.tsx?$/.test(source)) {
-    // Stylesheets are shipped as written.
+  if(!/\.tsx?$/.test(source) || SOURCE_EXPORTS.has(key)) {
+    // Stylesheets, and the exports in SOURCE_EXPORTS, are shipped as written.
     exportsMap[key] = source;
     continue;
   }

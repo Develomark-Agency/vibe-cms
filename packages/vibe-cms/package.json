@@ -34,7 +34,15 @@
     "./vite": "./src/vite/index.ts",
     "./roles": "./src/roles.ts",
     "./panel": "./src/panel/index.ts",
-    "./panel/styles.css": "./src/panel/styles.css"
+    "./panel/styles.css": "./src/panel/styles.css",
+    "./rich-text": "./src/rich-text/index.ts",
+    "./rich-text/render": "./src/rich-text/render.ts",
+    "./blocks": "./src/blocks/index.ts",
+    "./blocks/html": "./src/blocks/html.ts",
+    "./blocks/react": "./src/blocks/react.tsx",
+    "./blocks/astro": "./src/blocks/astro.ts",
+    "./blocks/astro-runtime": "./src/blocks/astro-runtime.ts",
+    "./blocks/styles.css": "./src/blocks/styles.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
@@ -74,6 +82,10 @@
     "@simplewebauthn/server": "13",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-query": "^5.105.0",
+    "@tiptap/extension-image": "^3.32.1",
+    "@tiptap/pm": "^3.32.1",
+    "@tiptap/react": "^3.32.1",
+    "@tiptap/starter-kit": "^3.32.1",
     "@vitejs/plugin-react": "^6.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -98,7 +110,13 @@
     "zod": "^4.6.7"
   },
   "peerDependencies": {
-    "vite": "^8.0.0"
+    "vite": "^8.0.0",
+    "astro": ">=5"
+  },
+  "peerDependenciesMeta": {
+    "astro": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261029.1",

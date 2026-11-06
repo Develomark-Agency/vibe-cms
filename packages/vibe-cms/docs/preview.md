@@ -27,7 +27,7 @@ if(!isPreview()) await cache.put(request, response.clone());
 
 ## Blocks
 
-In preview, `<Blocks>` from `@vibe-cms/blocks/astro` marks where each block starts with an HTML comment (`<!--vibe-block:N-->`). Each block in the editor then has **Show in preview**, which scrolls the preview to that block and outlines it. The block is shown as last saved. The markers only exist in preview responses. The React `Blocks` doesn't add them yet.
+In preview, `<Blocks>` from `vibe-cms/blocks/astro` marks where each block starts with an HTML comment (`<!--vibe-block:N-->`). Each block in the editor then has **Show in preview**, which scrolls the preview to that block and outlines it. The block is shown as last saved. The markers only exist in preview responses. The React `Blocks` doesn't add them yet.
 
 ### Picking in the preview
 
@@ -43,7 +43,7 @@ The page on screen is never changed. With the picker off, nothing runs and nothi
 
 Limits:
 
-- Without `field()` marks (below), only blocks rendered by `<Blocks>` from `@vibe-cms/blocks/astro` can be picked. The React `Blocks` doesn't support it yet.
+- Without `field()` marks (below), only blocks rendered by `<Blocks>` from `vibe-cms/blocks/astro` can be picked. The React `Blocks` doesn't support it yet.
 - A field that doesn't change anything you can see (a boolean, a setting the component only uses for layout of things it renders the same) picks the block.
 - Where a block's list came from another query or was rebuilt (`blocks.filter(…)`), the picker can't tell its document, and opens the block in the open document's blocks instead, like **Show in preview**.
 - A variant whose changed value makes its component throw is skipped. So is a component that renders differently each time, as far as it does.
