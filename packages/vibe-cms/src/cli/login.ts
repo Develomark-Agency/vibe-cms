@@ -1,6 +1,9 @@
 import { Hono } from "hono";
+import { AsyncEntry } from "@napi-rs/keyring";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { styleText } from "node:util";
 import { command, flag, option, optional, positional, string } from "cmd-ts";
@@ -48,13 +51,26 @@ export function projectRoot(from = process.cwd()): string {
   }
 }
 
-function secrets() {
-  if(typeof Bun === "undefined" || !Bun.secrets) throw new Error("Logging in needs Bun 1.3 or later, which keeps logins in the OS keychain. Run the CLI with bunx.");
-  return Bun.secrets;
+/** Logins live in the OS keychain (Keychain, Credential Manager, or the Secret Service on Linux). */
+const keychain = {
+  get: (name: string) => new AsyncEntry(SERVICE, name).getPassword().then(value => value ?? null),
+  set: (name: string, value: string) => new AsyncEntry(SERVICE, name).setPassword(value),
+  delete: (name: string) => new AsyncEntry(SERVICE, name).deletePassword().then(() => undefined)
+};
+
+/** Serves `fetch` on a random loopback port, for the browser to come back to. */
+async function serveLoopback(fetch: (request: Request) => Response | Promise<Response>): Promise<{ port: number, stop(): void }> {
+  const server: Server = createServer(async (req, res) => {
+    const response = await fetch(new Request(`http://127.0.0.1${req.url ?? "/"}`, { method: req.method }));
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    res.end(Buffer.from(await response.arrayBuffer()));
+  });
+  await new Promise<void>((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
+  return { port: (server.address() as AddressInfo).port, stop: () => { server.close(); server.closeAllConnections(); } };
 }
 
 async function readLogin(root: string): Promise<Login | null> {
-  const stored = await secrets().get({ service: SERVICE, name: root });
+  const stored = await keychain.get(root);
   if(!stored) return null;
   const login = JSON.parse(stored) as Login;
   // The org's DNS record says where its hub is now; the stored address is the fallback.
@@ -63,7 +79,7 @@ async function readLogin(root: string): Promise<Login | null> {
 }
 
 function saveLogin(root: string, login: Login): Promise<void> {
-  return secrets().set({ service: SERVICE, name: root, value: JSON.stringify(login) });
+  return keychain.set(root, JSON.stringify(login));
 }
 
 async function metadata(hub: string): Promise<ServerMetadata> {
@@ -123,7 +139,7 @@ async function authorize(server: string, meta: ServerMetadata, clientName: strin
     return page("Logged in. You can close this tab and go back to the terminal.");
   });
   callback.notFound(() => new Response("Not found", { status: 404 }));
-  const loopback = headless ? null : Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: callback.fetch });
+  const loopback = headless ? null : await serveLoopback(callback.fetch);
   const redirectUri = headless?.redirectUri ?? `http://127.0.0.1:${loopback!.port}/callback`;
   try {
     const registered = await fetch(meta.registration_endpoint, {
@@ -157,7 +173,7 @@ async function authorize(server: string, meta: ServerMetadata, clientName: strin
       .finally(() => clearTimeout(timeout));
     return { clientId, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000 };
   } finally {
-    loopback?.stop(true);
+    loopback?.stop();
   }
 }
 
@@ -195,7 +211,6 @@ async function accessToken(root: string, login: Login, force = false): Promise<L
  * Throws with what to do when there is one but the hub refuses.
  */
 export async function hubSiteToken(site: string): Promise<string | undefined> {
-  if(typeof Bun === "undefined" || !Bun.secrets) return undefined;
   const root = projectRoot();
   let login = await readLogin(root);
   if(!login) return undefined;
@@ -236,13 +251,12 @@ export async function loginToSite(site: string, prefix: string, headless: boolea
   const origin = new URL(site).origin;
   const meta = await siteMetadata(origin, prefix);
   if(!meta) throw new Error(`${origin} doesn't sign the CLI in by itself. If it belongs to an org, run vibe-cms login <org> instead.`);
-  secrets();
   const login: SiteLogin = {
     site: origin,
     prefix,
     ...await authorize(origin, meta, `Vibe CMS CLI (${path.basename(projectRoot())})`, headless ? { redirectUri: `${origin}${prefix}/oauth/code` } : undefined)
   };
-  await secrets().set({ service: SERVICE, name: siteKey(origin, prefix), value: JSON.stringify(login) });
+  await keychain.set(siteKey(origin, prefix), JSON.stringify(login));
   return login;
 }
 
@@ -251,9 +265,8 @@ export async function loginToSite(site: string, prefix: string, headless: boolea
  * without a login. Site logins belong to the site, not the project, so every project can use them.
  */
 export async function siteLoginToken(site: string, prefix: string): Promise<string | undefined> {
-  if(typeof Bun === "undefined" || !Bun.secrets) return undefined;
   const key = siteKey(site, prefix);
-  const stored = await secrets().get({ service: SERVICE, name: key });
+  const stored = await keychain.get(key);
   if(!stored) return undefined;
   const login = JSON.parse(stored) as SiteLogin;
   if(login.expiresAt > Date.now() + 60_000) return login.accessToken;
@@ -262,10 +275,10 @@ export async function siteLoginToken(site: string, prefix: string): Promise<stri
   try {
     const tokens = await tokenRequest(meta.token_endpoint, { grant_type: "refresh_token", refresh_token: login.refreshToken, client_id: login.clientId });
     const next = { ...login, accessToken: tokens.access_token, refreshToken: tokens.refresh_token, expiresAt: Date.now() + tokens.expires_in * 1000 };
-    await secrets().set({ service: SERVICE, name: key, value: JSON.stringify(next) });
+    await keychain.set(key, JSON.stringify(next));
     return next.accessToken;
   } catch {
-    await secrets().delete({ service: SERVICE, name: key });
+    await keychain.delete(key);
     throw new Error(`Your login to ${login.site} expired or was disconnected. Run vibe-cms login --site ${login.site} again.`);
   }
 }
@@ -275,7 +288,7 @@ export async function siteLoginToken(site: string, prefix: string): Promise<stri
  * the site signs the CLI in itself. Undefined when it doesn't, or nobody's there to approve.
  */
 export async function loginIfInteractive(site: string, prefix: string): Promise<string | undefined> {
-  if(!process.stdin.isTTY || typeof Bun === "undefined" || !Bun.secrets) return undefined;
+  if(!process.stdin.isTTY) return undefined;
   if(!await siteMetadata(site, prefix)) return undefined;
   console.error(styleText("dim", `  Not logged in to ${new URL(site).origin}.`));
   return (await loginToSite(site, prefix, false)).accessToken;
@@ -329,7 +342,6 @@ async function loginToHub(value: string, headless: boolean): Promise<Login> {
   if(!org) throw new Error(`Expected a domain like my-agency.com or a URL, got "${value}"`);
   const origin = await resolveHub(org);
   const root = projectRoot();
-  secrets();
   const meta = await metadata(origin);
   const login: Login = {
     hub: origin,
@@ -345,7 +357,6 @@ async function loginToHub(value: string, headless: boolean): Promise<Login> {
  * logs in first when `hub` says where, which is how a brand new project gets its first one.
  */
 export async function hubPost(pathname: string, body: unknown, options: { hub?: string, headless?: boolean } = {}): Promise<Response> {
-  secrets();
   const root = projectRoot();
   let login = await readLogin(root);
   if(!login) {
@@ -376,7 +387,7 @@ export const logoutCommand = command({
   async handler({ site, prefix }) {
     if(site) {
       const key = siteKey(site, prefix);
-      const stored = await secrets().get({ service: SERVICE, name: key });
+      const stored = await keychain.get(key);
       if(!stored) {
         console.log(`  Not logged in to ${new URL(site).origin}`);
         return;
@@ -386,7 +397,7 @@ export const logoutCommand = command({
       const revoked = meta?.revocation_endpoint
         ? await fetch(meta.revocation_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: login.refreshToken, client_id: login.clientId }) }).then(r => r.ok, () => false)
         : false;
-      await secrets().delete({ service: SERVICE, name: key });
+      await keychain.delete(key);
       console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged out")} of ${styleText("cyan", login.site)}`);
       if(!revoked) console.log(styleText("yellow", `  Couldn't revoke the login at ${login.site}. Disconnect it under Connected apps in the site's editor.`));
       return;
@@ -402,7 +413,7 @@ export const logoutCommand = command({
     const revoked = meta?.revocation_endpoint
       ? await fetch(meta.revocation_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: login.refreshToken, client_id: login.clientId }) }).then(r => r.ok, () => false)
       : false;
-    await secrets().delete({ service: SERVICE, name: root });
+    await keychain.delete(root);
     console.log(`  ${styleText("green", "✓")} ${styleText("bold", "Logged out")} of ${styleText("cyan", login.hub)}`);
     if(!revoked) console.log(styleText("yellow", `  Couldn't revoke the login at ${login.hub}. Remove "Vibe CMS CLI" under Connected agents there.`));
   }

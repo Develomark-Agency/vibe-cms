@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { PANEL_MARKER, type HubRecord } from "./state.ts";
 
 export interface ExecResult {
@@ -9,15 +10,22 @@ export interface ExecResult {
 /** Runs `wrangler` with these arguments. `stream` shows its output as it runs, for the deploy. */
 export type Exec = (args: string[], options?: { cwd?: string, stream?: boolean }) => Promise<ExecResult>;
 
-/** Wrangler through bunx, so it uses the person's own login and nothing here handles credentials by hand. */
-export async function wranglerExec(args: string[], { cwd, stream }: { cwd?: string, stream?: boolean } = {}): Promise<ExecResult> {
-  const proc = Bun.spawn(["bunx", "wrangler", ...args], { cwd, stdin: stream ? "inherit" : "ignore", stdout: stream ? "inherit" : "pipe", stderr: stream ? "inherit" : "pipe", env: { ...process.env, WRANGLER_SEND_METRICS: "false" } });
-  const [stdout, stderr, code] = await Promise.all([
-    stream ? "" : new Response(proc.stdout as ReadableStream).text(),
-    stream ? "" : new Response(proc.stderr as ReadableStream).text(),
-    proc.exited
-  ]);
-  return { code, stdout, stderr };
+/** Wrangler through npx, so it uses the person's own login and nothing here handles credentials by hand. */
+export function wranglerExec(args: string[], { cwd, stream }: { cwd?: string, stream?: boolean } = {}): Promise<ExecResult> {
+  const proc = spawn("npx", ["--yes", "wrangler", ...args], {
+    cwd,
+    stdio: stream ? "inherit" : ["ignore", "pipe", "pipe"],
+    // npx is a .cmd script on Windows, which only runs through a shell.
+    shell: process.platform === "win32",
+    env: { ...process.env, WRANGLER_SEND_METRICS: "false" }
+  });
+  let stdout = "", stderr = "";
+  proc.stdout?.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+  proc.stderr?.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+  return new Promise((resolve, reject) => {
+    proc.on("error", reject);
+    proc.on("close", code => resolve({ code: code ?? 1, stdout, stderr }));
+  });
 }
 
 /** The command as the person would type it, for showing before it runs. */

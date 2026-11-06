@@ -16,7 +16,7 @@ const keygen = command({
   name: "keygen",
   description: "Generate the hub's signing key (HUB_SIGNING_KEY)",
   args: {},
-  examples: [{ description: "Store a new key straight into the hub's secrets", command: "bunx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY" }],
+  examples: [{ description: "Store a new key straight into the hub's secrets", command: "npx vibe-cms hub keygen | wrangler secret put HUB_SIGNING_KEY" }],
   async handler() {
     const key = await generateHubKey();
     process.stdout.write(`${key}\n`);

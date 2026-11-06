@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { styleText } from "node:util";

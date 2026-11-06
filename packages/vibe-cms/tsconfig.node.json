@@ -1,10 +1,10 @@
 {
-  // The CLI, the Vite plugin and backups run in Bun or Node, so they're checked again without the DOM lib:
-  // a browser-only API there is a bug.
+  // The CLI, the Vite plugin and backups run in Node (or Bun), so they're checked again with only Node's
+  // types: a browser- or Bun-only API there is a bug.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ESNext"],
-    "types": ["bun"]
+    "types": ["node"]
   },
-  "include": ["src/cli", "src/vite", "src/backups", "scripts", "src/css.d.ts"]
+  "include": ["src/cli", "src/vite", "src/backups", "src/css.d.ts"]
 }

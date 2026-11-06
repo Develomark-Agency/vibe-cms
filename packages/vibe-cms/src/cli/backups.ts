@@ -164,7 +164,9 @@ export const importCommand = command({
       if(values.dryRun) return;
       if(!values.yes) {
         if(!process.stdin.isTTY) throw new BackupError("Pass --yes to import without a terminal to confirm in");
-        const answer = prompt(`Replace ${values.site}'s content with this file's? [y/N]`);
+        const { createInterface } = await import("node:readline/promises");
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await rl.question(`Replace ${values.site}'s content with this file's? [y/N] `).finally(() => rl.close());
         if(answer?.trim().toLowerCase() !== "y") return;
       }
       // An import that stopped part-way left the site as it was, and its export already exists.

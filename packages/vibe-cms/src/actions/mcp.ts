@@ -50,7 +50,7 @@ export interface McpServer {
  */
 export const CONTENT_INSTRUCTIONS = `Workflow:
 - Call schema_list for the content types and locales, then schema_get for a type before writing its documents: it returns JSON Schema for \`data\`.
-- Content types are defined in the site's code (vibe-cms.config.ts). These tools can't add or change fields; that's a code change (\`bunx vibe-cms docs schemas\` in the site's repository).
+- Content types are defined in the site's code (vibe-cms.config.ts). These tools can't add or change fields; that's a code change (\`npx vibe-cms docs schemas\` in the site's repository).
 - documents_create and documents_update save drafts. Drafts save even when invalid and return \`issues\`; documents_publish (or \`publish: true\`) needs a valid document.
 - documents_update replaces the draft's fields: read the document with documents_get, change what you need, send all of \`data\` back, and pass its updatedAt as baseUpdatedAt so you don't overwrite someone else's edit (that fails with CONFLICT).
 - Media fields take \`{ "asset": "<id>", ...per-usage fields such as alt }\`. Upload with assets_upload first: \`file\` is \`{ name, type?, base64 }\` (type being its MIME type), and the input's own \`type\` and \`field\` (content type and field name) check the file against that field.
