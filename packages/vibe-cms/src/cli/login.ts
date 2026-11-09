@@ -53,6 +53,11 @@ export function projectRoot(from = process.cwd()): string {
 
 /** Logins live in the OS keychain (Keychain, Credential Manager, or the Secret Service on Linux). */
 const reads = new Map<string, Promise<string | null>>();
+/** Forgets what was read, for when another process may have changed the keychain. */
+export function forgetKeychainReads() {
+  reads.clear();
+}
+
 const keychain = {
   // macOS asks for your password per read unless the item trusts this binary, so each one is read once per process.
   get: (name: string) => {

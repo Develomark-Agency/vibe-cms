@@ -1,7 +1,7 @@
 import { Box, Text, useApp, useWindowSize } from "ink";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ActionDescription } from "../../actions/describe.ts";
-import { hubSites } from "../login.ts";
+import { forgetKeychainReads, hubSites } from "../login.ts";
 import { discoverSites, type Discovery } from "./discover.ts";
 import { startPanel, stopAllPanels, type PanelOptions, type PanelState } from "./panel.ts";
 import { authorize, siteActions, siteName, type Auth, type Site } from "./site.ts";
@@ -164,6 +164,8 @@ export function App({ home, version, initialSite }: { home: (nav: Nav) => ReactN
     await suspendTerminal(async () => {
       code = await runInTerminal(args, options);
     });
+    // The command ran in another process, which may have logged in or out.
+    forgetKeychainReads();
     if(args[0] === "login" || args[0] === "logout") {
       await connect(siteRef.current);
       void loadOrg();
