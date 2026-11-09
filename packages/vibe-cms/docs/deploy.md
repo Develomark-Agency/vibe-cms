@@ -184,6 +184,8 @@ Also good to know:
 
 `dev` must be false in production. It defaults to `import.meta.env.DEV`, which Vite sets only for `vite dev`. Without Vite, set it from a variable that you never set in production (`vibe-cms docs wrangler`).
 
+`VIBE_ENV` names the deployment: unset or `production` for the live site, `staging` (or any other name) for a copy that search engines should skip. `vibe-cms docs staging` covers deploying a staging site and copying production's content into it.
+
 ### The site's own descriptor
 
 `https://<site>/.well-known/vibe-cms` describes the site to panels: its id, name, accent, icon, its org and the panel's address, a pending org move, and the editor's URL. The editor only opens inside the panel; `https://<site>/_vibe/admin/` on its own links to the site's page there.

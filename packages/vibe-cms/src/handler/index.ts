@@ -14,6 +14,7 @@ import { RoleStore } from "./roles.ts";
 import { announceClaim, announceSetup, signInConfig, type SignInEnv } from "./signin.ts";
 import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
+import { environmentOf, PRODUCTION, robotsResponse, withNoindex, type EnvironmentEnv } from "./environment.ts";
 import { decoratePreview, PICK_HEADER, PREVIEW_COOKIE, PREVIEW_TTL, previewCookie, previewScope, recordSources, wantsPreview, type PreviewScope } from "./preview.ts";
 
 export type * from "./platform.ts";
@@ -104,6 +105,11 @@ export interface VibeHandler<C extends AnyConfig, E> {
   client(env: E): QueryClient<C>,
   /** The site's ID, name, accent and icon as editors set them on the editor's Site page, and its detected favicon (URLs are root-relative). */
   site(env: E): Promise<SiteSettings>,
+  /**
+   * The deployment's environment, from `VIBE_ENV`: `production` when unset (`development` under `dev`).
+   * Anything else is kept out of search engines. See `vibe-cms docs staging`.
+   */
+  environment(env: E): string,
   /** The config it was created with. */
   config: C
 }
@@ -313,18 +319,31 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     }
   }
 
+  function environment(env: E): string {
+    return environmentOf(env as EnvironmentEnv | undefined, dev);
+  }
+
+  /** Your site's pages, or the CMS's routes, with search engines kept away from anything but production. */
+  async function respond(request: Request, env: E, ctx: ExecutionContext, handlers: WorkerHandlers<E>): Promise<Response> {
+    if(environment(env) === PRODUCTION) return route(request, env, ctx, handlers);
+    if(new URL(request.url).pathname === "/robots.txt") return robotsResponse();
+    return withNoindex(await route(request, env, ctx, handlers));
+  }
+
+  async function route(request: Request, env: E, ctx: ExecutionContext, handlers: WorkerHandlers<E>): Promise<Response> {
+    if(match(request)) return handle(request, env, ctx);
+    ctx?.waitUntil?.(announceNewSite(request, env));
+    if(!handlers.fetch) return new Response("Not found", { status: 404 });
+    const preview = await previewSession(request, env);
+    if(!preview) return handlers.fetch(request, env, ctx);
+    const renew = previewCookie(preview.token, PREVIEW_TTL, new URL(request.url).protocol === "https:");
+    return previewScope.run(preview, async () => decoratePreview(await handlers.fetch!(request, env, ctx), prefix, renew));
+  }
+
   function vibe(handlers: WorkerHandlers<E> = {}): WorkerExport<E> {
     siteHandler = handlers.fetch;
     return {
-      async fetch(request, env, ctx) {
-        if(match(request)) return handle(request, env, ctx);
-        ctx?.waitUntil?.(announceNewSite(request, env));
-        if(!handlers.fetch) return new Response("Not found", { status: 404 });
-        const preview = await previewSession(request, env);
-        if(!preview) return handlers.fetch(request, env, ctx);
-        const renew = previewCookie(preview.token, PREVIEW_TTL, new URL(request.url).protocol === "https:");
-        return previewScope.run(preview, async () => decoratePreview(await handlers.fetch!(request, env, ctx), prefix, renew));
-      },
+      fetch: (request, env, ctx) => respond(request, env, ctx, handlers),
       async scheduled(event, env, ctx) {
         await Promise.all([scheduled(event, env, ctx), handlers.scheduled?.(event, env, ctx)]);
       },
@@ -336,5 +355,5 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     };
   }
 
-  return Object.assign(vibe, { match, handle, scheduled, queue, client, site, config });
+  return Object.assign(vibe, { match, handle, scheduled, queue, client, site, environment, config });
 }
