@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import { useState } from "react";
 import { useNav, useSession, type Session } from "../app.tsx";
+import { normalizePrefix, normalizeSite } from "../site.ts";
+import { siteMetadata } from "../../login.ts";
 import { checkValues, shellQuote, type Field, type FormValues } from "../fields.ts";
 import { copy, useSticky } from "../system.ts";
 import { accent, Form, useFlash, useHints, useKeys, useSize } from "../ui.tsx";
@@ -20,6 +22,8 @@ export interface TerminalCommand {
   fields: Field[],
   defaults?: (session: Session) => FormValues,
   args: (values: FormValues, session: Session) => string[],
+  /** Looked at before the terminal is taken over: a problem to show on the form instead of running. */
+  precheck?: (values: FormValues) => Promise<string | undefined>,
   submitLabel?: string
 }
 
@@ -60,6 +64,12 @@ const definitions: TerminalCommand[] = [
       { key: "headless", label: "No browser", kind: "boolean", required: false, placeholder: "open a browser", description: "Print a link instead, and paste the code it shows" }
     ],
     defaults: s => ({ site: s.site?.url ?? "", prefix: s.site && s.site.prefix !== "/_vibe" ? s.site.prefix : "" }),
+    precheck: async v => {
+      const site = normalizeSite(text(v.site));
+      if(!site) return undefined;
+      if(await siteMetadata(site, normalizePrefix(text(v.prefix))).catch(() => null)) return undefined;
+      return `${site} doesn't sign the CLI in by itself. If it belongs to an org, use Account › Log in to your org instead.`;
+    },
     args: v => ["login", "--site", text(v.site), ...option("--prefix", v.prefix), ...toggle("--headless", v.headless)]
   },
   {
@@ -141,6 +151,8 @@ export function CommandScreen({ command }: { command: TerminalCommand }) {
     const issue = checkValues(command.fields, values);
     if(issue) return setProblem(issue);
     setProblem(undefined);
+    const blocked = await command.precheck?.(values);
+    if(blocked) return setProblem(blocked);
     setLast(await session.runCommand(args));
   }
 
