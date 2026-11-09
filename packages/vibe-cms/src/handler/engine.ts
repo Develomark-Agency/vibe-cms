@@ -119,6 +119,9 @@ interface DetectedSite {
   checked: number
 }
 
+/** What `readAsset` reads without being told a larger limit. */
+const READ_ASSET_MAX_BYTES = 10 * 1024 * 1024;
+
 const SITE_KEY = "site";
 const DETECTED_KEY = "site_detected";
 const DETECT_EVERY = 24 * 60 * 60 * 1000;
@@ -1133,6 +1136,35 @@ export class Engine {
     const usage = await this.orm.select({ id: documents.id, type: documents.type, locale: documents.locale }).from(documents)
       .where(or(like(documents.draft, pattern), like(documents.published, pattern))).limit(50);
     return { ...this.toAsset(row), usage };
+  }
+
+  /**
+   * A file's content, as a `File` named and typed like the asset. For plugin actions and hooks that
+   * process an uploaded file. It reads the whole file into memory, so `maxBytes` (10 MB unless you raise it)
+   * refuses bigger ones: `streamAsset` is for large files. Needs read access to media.
+   */
+  async readAsset(id: string, options: { maxBytes?: number } = {}): Promise<File> {
+    require(this.state, this.scope.session, { action: "read", scope: "media" });
+    const row = await this.assetRow(id);
+    if(!row) throw new HttpError(404, "Asset not found");
+    const maxBytes = options.maxBytes ?? READ_ASSET_MAX_BYTES;
+    if(row.size > maxBytes) throw new HttpError(413, `The file is ${row.size} bytes; reading is limited to ${maxBytes}`);
+    const object = await this.storage.get(row.key);
+    if(!object) throw new HttpError(404, "The file's content is gone");
+    return new File([await new Response(object.body).arrayBuffer()], row.filename, { type: row.mime });
+  }
+
+  /**
+   * A file's content as a stream, for files too large to hold in memory (a Worker has little of it): read
+   * it in chunks, or pipe it on. Needs read access to media. `readAsset` is the simpler way for small files.
+   */
+  async streamAsset(id: string): Promise<{ stream: ReadableStream<Uint8Array>, name: string, type: string, size: number }> {
+    require(this.state, this.scope.session, { action: "read", scope: "media" });
+    const row = await this.assetRow(id);
+    if(!row) throw new HttpError(404, "Asset not found");
+    const object = await this.storage.get(row.key);
+    if(!object) throw new HttpError(404, "The file's content is gone");
+    return { stream: object.body as ReadableStream<Uint8Array>, name: row.filename, type: row.mime, size: row.size };
   }
 
   async updateAsset(id: string, patch: { folder?: string | null, filename?: string }) {

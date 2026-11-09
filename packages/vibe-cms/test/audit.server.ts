@@ -49,6 +49,38 @@ export default defineServer<typeof AuditPlugin, typeof config>(async ({ options 
         return { touched: true };
       }
     }),
+    // Reads an uploaded file through the engine.
+    words: defineAction({
+      summary: "Count words in a file",
+      description: "The number of words in an uploaded text file.",
+      readOnly: true,
+      mcp: true,
+      input: z.object({ asset: z.string(), maxBytes: z.number().optional() }),
+      handler: async ({ input, engine }) => {
+        const file = await engine.readAsset(input.asset, { maxBytes: input.maxBytes });
+        return { name: file.name, type: file.type, words: (await file.text()).split(/\s+/).filter(Boolean).length };
+      }
+    }),
+    // The same file, read in chunks: no size limit.
+    streamedBytes: defineAction({
+      summary: "Count the bytes in a file",
+      description: "The number of bytes in an uploaded file, read as a stream.",
+      readOnly: true,
+      input: z.object({ asset: z.string() }),
+      handler: async ({ input, engine }) => {
+        const { stream, size } = await engine.streamAsset(input.asset);
+        const reader = stream.getReader();
+        let bytes = 0;
+        let chunks = 0;
+        for(;;) {
+          const { done, value } = await reader.read();
+          if(done) break;
+          bytes += value.byteLength;
+          chunks++;
+        }
+        return { bytes, size, chunks };
+      }
+    }),
     // A schema from a library that isn't zod: only Standard Schema and Standard JSON Schema.
     shout: defineAction({
       summary: "Shout",

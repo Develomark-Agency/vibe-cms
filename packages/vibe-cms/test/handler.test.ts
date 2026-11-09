@@ -205,6 +205,24 @@ describe("plugin actions", () => {
     expect((await t.api("/api/actions/audit.echo", { method: "POST", json: { text: "hi" } })).status).toBe(401);
   });
 
+  test("an action reads an uploaded file through the engine", async () => {
+    const form = new FormData();
+    form.set("file", new File(["one two  three\nfour"], "notes.txt", { type: "text/plain" }));
+    const asset = (await t.api("/api/assets", { method: "POST", body: form })).body;
+    const counted = await t.api("/api/actions/audit.words", { method: "POST", json: { asset: asset.id } });
+    expect(counted.body).toMatchObject({ name: "notes.txt", words: 4 });
+    expect(counted.body.type).toStartWith("text/plain");
+
+    expect((await t.api("/api/actions/audit.words", { method: "POST", json: { asset: asset.id, maxBytes: 5 } })).status).toBe(413);
+    expect((await t.api("/api/actions/audit.words", { method: "POST", json: { asset: "nope" } })).status).toBe(404);
+
+    // Streaming has no limit to trip over: the chunks add up to the whole file.
+    const streamed = await t.api("/api/actions/audit.streamedBytes", { method: "POST", json: { asset: asset.id } });
+    expect(streamed.body).toMatchObject({ bytes: 19, size: 19 });
+    expect(streamed.body.chunks).toBeGreaterThan(0);
+    expect((await t.api("/api/actions/audit.streamedBytes", { method: "POST", json: { asset: "nope" } })).status).toBe(404);
+  });
+
   test("inputs from other schema libraries work", async () => {
     expect((await t.api("/api/actions/audit.shout", { method: "POST", json: { word: "hi" } })).body).toEqual({ shouted: "HI" });
     expect((await t.api("/api/actions/audit.shout", { method: "POST", json: { word: 1 } })).status).toBe(400);
