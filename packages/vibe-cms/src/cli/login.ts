@@ -78,6 +78,13 @@ async function readLogin(root: string): Promise<Login | null> {
   return login;
 }
 
+/** This project's hub login, if it has one: which hub, and the org it was found through. */
+export async function projectLogin(): Promise<{ hub: string, org?: string, root: string } | null> {
+  const root = projectRoot();
+  const login = await readLogin(root).catch(() => null);
+  return login ? { hub: login.hub, org: login.org, root } : null;
+}
+
 function saveLogin(root: string, login: Login): Promise<void> {
   return keychain.set(root, JSON.stringify(login));
 }
@@ -99,7 +106,7 @@ function base64url(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64url");
 }
 
-function openBrowser(url: string) {
+export function openBrowser(url: string) {
   const [cmd, ...args] = process.platform === "darwin" ? ["open", url] : process.platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
   spawn(cmd!, args, { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 }
@@ -241,7 +248,7 @@ function siteKey(site: string, prefix: string): string {
   return `site:${new URL(site).origin}${prefix}`;
 }
 
-async function siteMetadata(site: string, prefix: string): Promise<ServerMetadata | null> {
+export async function siteMetadata(site: string, prefix: string): Promise<ServerMetadata | null> {
   const response = await fetch(`${new URL(site).origin}${prefix}/.well-known/oauth-authorization-server`).catch(() => null);
   return response?.ok ? await response.json() as ServerMetadata : null;
 }

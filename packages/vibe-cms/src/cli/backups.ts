@@ -14,7 +14,7 @@ import { connection, siteToken } from "./actions.ts";
 
 /** `vibe-cms export` and `vibe-cms import`: a site's content and media, as one `.vibe` file. */
 
-function bytes(n: number): string {
+export function bytes(n: number): string {
   if(n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
   if(n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
   if(n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
@@ -85,7 +85,7 @@ function defaultName(manifest: BackupManifest, suffix = ""): string {
 }
 
 /** Takes a snapshot of the live site and writes it as one file. The temporary folder is gone either way. */
-async function exportSite(call: ActionCaller, file: string | undefined, dir: string, onProgress: (p: Progress) => void, suffix?: string) {
+export async function exportSite(call: ActionCaller, file: string | undefined, dir: string, onProgress: (p: Progress) => void, suffix?: string) {
   const work = await mkdtemp(path.join(tmpdir(), "vibe-export-"));
   try {
     const store = folderStore(work);

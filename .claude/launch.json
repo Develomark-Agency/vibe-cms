@@ -19,7 +19,7 @@
         "packages/vibe-cms/src/cli/index.ts",
         "admin"
       ],
-      "port": 5173
+      "port": 5183
     },
     {
       "name": "hosted-panel",

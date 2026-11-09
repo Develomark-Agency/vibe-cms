@@ -44,7 +44,7 @@ const adminDev = command({
   name: "dev",
   description: "Run a local panel for development sites",
   args: {
-    port: option({ long: "port", short: "p", type: Port, defaultValue: () => 5173, defaultValueIsSerializable: true, description: "Port to serve the panel on" }),
+    port: option({ long: "port", short: "p", type: Port, defaultValue: () => 5183, defaultValueIsSerializable: true, description: "Port to serve the panel on" }),
     site: option({ long: "site", type: optional(Url), description: "Open this site once the panel loads" }),
     name: option({ long: "name", type: optional(Text), description: "Your agency's name, shown in the panel" }),
     accent: option({ long: "accent", type: optional(HexColor), description: "Your agency's accent colour" }),
@@ -75,6 +75,10 @@ const adminDev = command({
       logLevel: "warn"
     });
     await server.listen();
+    // Started by the TUI in the background: its end of stdin closes when the TUI goes, however it goes.
+    if(process.env.VIBE_CMS_EXIT_WITH_PARENT) {
+      process.stdin.on("end", () => process.exit(0)).on("close", () => process.exit(0)).resume();
+    }
     const url = `${server.resolvedUrls?.local[0] ?? `http://localhost:${port}/`}${site ? `?site=${encodeURIComponent(site)}` : ""}`;
     console.log(`\n  ${brand}  ${styleText("dim", "local panel")}\n`);
     console.log(`  ${styleText("green", "➜")}  ${styleText("bold", "Panel")}  ${styleText("cyan", url)}`);
@@ -178,7 +182,7 @@ const buildAdminCommand = command({
   }
 });
 
-await run(subcommands({
+const cli = subcommands({
   name: "vibe-cms",
   version: pkg.version,
   description: "Guides, a local panel, build tools, and every CMS action against a running site",
@@ -195,7 +199,17 @@ await run(subcommands({
     actions: listActionsCommand,
     ...actionCommands()
   }
-}), adminArgs(process.argv.slice(2)));
+});
+
+const argv = process.argv.slice(2);
+// `vibe-cms` on its own at a terminal opens the TUI; `vibe-cms --help` lists the commands. Commands the
+// TUI runs for you come back through here with arguments, so they never open another one.
+if(!argv.length && process.stdin.isTTY && process.stdout.isTTY) {
+  const { runTui } = await import("./tui/index.tsx");
+  await runTui(pkg.version);
+} else {
+  await run(cli, adminArgs(argv));
+}
 
 /** `vibe-cms admin --site …` is the local panel, as it was before `admin deploy`: it means `admin dev`. */
 function adminArgs(args: string[]) {

@@ -326,7 +326,7 @@ The site keeps its org in its database (`vibe_meta`), with a history of each cha
 
 ```sh
 bunx vibe-cms admin
-# → http://localhost:5173/?site=http://localhost:8787
+# → http://localhost:5183/?site=http://localhost:8787
 ```
 
 A local panel avoids browser restrictions on public pages calling `localhost`, and works offline. Its site list is kept in `localStorage`. In dev, the local site skips token verification, so no identity provider is needed. The editor can also be opened directly at `http://localhost:8787/_vibe/admin` in development.
@@ -344,7 +344,7 @@ portless client-b bun run dev     # https://client-b.test
 
 Why it helps:
 
-- **Cross-site behaves like production.** `localhost:5173` and `localhost:8787` are different origins but the *same site*, so cookie and iframe behavior differs from production, where the panel and each site are on different domains. `panel.test` and `client-a.test` are different sites, like production. (`.localhost` subdomains probably are too, but browsers special-case `localhost`, so `.test` is the safer choice.)
+- **Cross-site behaves like production.** `localhost:5183` and `localhost:8787` are different origins but the *same site*, so cookie and iframe behavior differs from production, where the panel and each site are on different domains. `panel.test` and `client-a.test` are different sites, like production. (`.localhost` subdomains probably are too, but browsers special-case `localhost`, so `.test` is the safer choice.)
 - **HTTPS everywhere.** Browsers treat `http://localhost` as secure inconsistently (e.g. `Secure` cookies in Safari vs. Chrome). Real HTTPS removes that class of browser-specific bugs.
 - **Stable URLs.** The panel's site list stores URLs, and ports can change between runs; `client-a.test` doesn't. Fixed HTTPS names also suit identity providers that require HTTPS redirect URLs.
 

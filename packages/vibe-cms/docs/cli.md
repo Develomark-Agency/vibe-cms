@@ -2,12 +2,25 @@
 
 The `vibe-cms` command: these guides, a local panel, building the editor, and every CMS action against a running site.
 
-Run it with `bunx vibe-cms` (or `npx vibe-cms`) in a project that depends on vibe-cms. `--help` works on every command.
+Run it with `bunx vibe-cms` (or `npx vibe-cms`) in a project that depends on vibe-cms. `--help` works on every command, and `vibe-cms --help` lists them.
+
+## The TUI
+
+`vibe-cms` with no arguments, at a terminal, opens a full-screen interface that does everything below: pick a site, browse and run its actions (plugins' included) from forms generated from their inputs, read results as coloured JSON, export and import with progress bars, read and search the guides, generate a hub key and find claim links. Every screen shows the command it amounts to, and ⌃Y copies it.
+
+- The site picker lists the Vibe CMS sites running on this machine: it reads the listening ports (`lsof`, or `ss` on Linux, `netstat` on Windows) and asks each for its `/.well-known/vibe-cms`, so sites on any port and CMS path are found, with the folder each was started in. With no `VIBE_SITE` and exactly one site running, the TUI starts on it.
+- `VIBE_SITE` picks the starting site; recent sites are remembered in `~/.config/vibe-cms/tui.json` (`$XDG_CONFIG_HOME`, or `$VIBE_CMS_HOME`), addresses only.
+- It signs in like the commands do (`VIBE_TOKEN`, a development session, a site login, this project's hub login), but never at the terminal on its own: when a site signs the CLI in itself, ⌃L on the actions list logs in.
+- `p` on the home screen starts the local panel (`admin dev`, on port 5183) in the background, against the site you're on; once it's running, `p` again opens it in a browser. The header shows it while it runs; Local panel has its settings, its output, and stop and restart. It stops when you quit, and exits by itself if the TUI is killed.
+- The header names the site you're on, from its `/.well-known/vibe-cms`.
+- Logging in and out, `admin deploy`, `admin attach` and `build-admin` run as the commands themselves, with the terminal to themselves; the TUI comes back when they finish.
+- Keys are in the footer: ↑↓ and Enter to move and open, Esc to go back, ⌃R to run a form from any field, q to quit from the home screen.
+- Piped, in CI, or with any argument, `vibe-cms` behaves as it always has.
 
 | Command | What |
 |---|---|
 | `vibe-cms docs [topic]` | Print a guide. `vibe-cms docs topics` lists them, `vibe-cms docs search <words>` finds lines across them. |
-| `vibe-cms admin [dev] [--site <url>] [--port 5173]` | A local panel for development sites, kept in the browser. `--name`, `--accent` and `--icon` white-label it. |
+| `vibe-cms admin [dev] [--site <url>] [--port 5183]` | A local panel for development sites, kept in the browser. `--name`, `--accent` and `--icon` white-label it. |
 | `vibe-cms admin attach <claim link or site>` | Attach a newly deployed site to your org's panel (below). |
 | `vibe-cms admin claim-link <site>` | Print a new site's claim link, if you missed it in its logs (below). |
 | `vibe-cms admin deploy` | A wizard that deploys the agency panel to Cloudflare, or redeploys, reconfigures or finds one (below). |
