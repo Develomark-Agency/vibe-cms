@@ -52,10 +52,15 @@ export function projectRoot(from = process.cwd()): string {
 }
 
 /** Logins live in the OS keychain (Keychain, Credential Manager, or the Secret Service on Linux). */
+const reads = new Map<string, Promise<string | null>>();
 const keychain = {
-  get: (name: string) => new AsyncEntry(SERVICE, name).getPassword().then(value => value ?? null),
-  set: (name: string, value: string) => new AsyncEntry(SERVICE, name).setPassword(value),
-  delete: (name: string) => new AsyncEntry(SERVICE, name).deletePassword().then(() => undefined)
+  // macOS asks for your password per read unless the item trusts this binary, so each one is read once per process.
+  get: (name: string) => {
+    if(!reads.has(name)) reads.set(name, new AsyncEntry(SERVICE, name).getPassword().then(value => value ?? null, error => { reads.delete(name); throw error; }));
+    return reads.get(name)!;
+  },
+  set: (name: string, value: string) => { reads.delete(name); return new AsyncEntry(SERVICE, name).setPassword(value); },
+  delete: (name: string) => { reads.delete(name); return new AsyncEntry(SERVICE, name).deletePassword().then(() => undefined); }
 };
 
 /** Serves `fetch` on a random loopback port, for the browser to come back to. */
