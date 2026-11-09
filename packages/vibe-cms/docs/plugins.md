@@ -14,6 +14,7 @@ A plugin is how a site adds behaviour to the CMS itself: code that runs when con
 | Media | Check or transform uploads, extract metadata (duration, colours, EXIF) | `vibe-cms docs server-hooks` |
 | Background work | Cron jobs and queue consumers: syncing content out to other systems, reports, cleanup | `vibe-cms docs server-hooks` |
 | HTTP | Routes under `/_vibe/plugins/<name>/` for forms, search, webhooks from other services, or data for the editor | `vibe-cms docs plugin-routes` |
+| Actions | Named operations with typed input, run over REST and the CLI, and offered to AI agents as tools when you choose | `vibe-cms docs plugin-actions` |
 | Editor | Whole pages with nav links, document sidebars and actions, list columns, commands, field decorators | `vibe-cms docs admin-extensions` |
 | Fields | Custom editor widgets for a field (a map picker, a colour swatch, a lookup in another system) | `vibe-cms docs widgets` |
 | Cloudflare | Its own bindings (KV, queues, Durable Objects, Workflows, secrets), supplied by the site | Below |
@@ -39,7 +40,7 @@ The examples in this topic come from `examples/plugins` in the vibe-cms reposito
 | `slugs` | Filling and deriving fields (`content.beforeValidate`, `content.beforeWrite`) |
 | `rules` | Refusing writes and deletes, reading drafts with `cms` |
 | `webhook` | `content.afterWrite`, plugin options, a binding contract |
-| `stats` | HTTP routes, an editor page with a nav link (`vibe-cms docs plugin-routes`) |
+| `stats` | HTTP routes, an editor page with a nav link (`vibe-cms docs plugin-routes`), an action for agents (`vibe-cms docs plugin-actions`) |
 | `editor` | Document sidebar and actions, list columns, commands, field decorators (`vibe-cms docs admin-extensions`) |
 | `scheduled` | `cron` and `queues` |
 | `media` | `media.beforeUpload` and `media.analyze` |
@@ -111,7 +112,7 @@ The context:
 
 `defineServer<typeof Plugin>` types `options` and `bindings`. A site's own plugin can add `typeof config` as a second type argument to type documents in hooks against the site's schemas; a plugin written for any site leaves it out and gets plain JSON (`DocumentData`). A server entry may import the config itself, as the one above does, to query its collections.
 
-Every hook is described in `vibe-cms docs server-hooks`; routes in `vibe-cms docs plugin-routes`.
+Every hook is described in `vibe-cms docs server-hooks`; routes in `vibe-cms docs plugin-routes`; actions in `vibe-cms docs plugin-actions`.
 
 ## The admin entry
 

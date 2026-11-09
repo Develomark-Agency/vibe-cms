@@ -15,6 +15,8 @@ Run it with `bunx vibe-cms` (or `npx vibe-cms`) in a project that depends on vib
 | `vibe-cms export --site <url> [--file x.vibe]` | Save the site's content and media as one `.vibe` file (`vibe-cms docs backups`). |
 | `vibe-cms import <file.vibe> --site <url>` | Replace the site's content and media with the file's, after a check and a safety export. `--dry-run` shows what would change. |
 | `vibe-cms <group> <action> --site <url>` | Run an action (below). |
+| `vibe-cms action <name> --input <json> --site <url>` | Run any action by name, including a plugin's. |
+| `vibe-cms actions --site <url>` | List a site's actions, plugins' included, and which agents get as tools. |
 
 ## Actions
 
@@ -44,6 +46,13 @@ Flags:
 - Objects (`--data`) take JSON, or `@file.json` to read it from a file.
 - Files (`--file`) take a path.
 - `--site` (or `VIBE_SITE`) is the site's origin; `--prefix` if it isn't `/_vibe`.
+
+Actions that plugins add have no commands of their own. Run them by name, with the input as JSON or `@file.json` (`vibe-cms docs plugin-actions`):
+
+```bash
+bunx vibe-cms actions --site http://localhost:1337
+bunx vibe-cms action stats.longest --input '{"limit":3}' --site http://localhost:1337
+```
 
 Output is the action's result as JSON on stdout, so it pipes into `jq`. Failures print the error code, message and data on stderr and exit 1 (codes: `vibe-cms docs agents`).
 

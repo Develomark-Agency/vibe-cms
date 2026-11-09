@@ -103,6 +103,7 @@ Details that matter:
 - Listing any action for a type also allows reading it. The Roles page shows each type (and the media library) as a level that includes the ones before it, No access › Read › Write › Publish (or Upload for media), with Delete as its own checkbox.
 - `delete` is never implied; list it explicitly.
 - Rules are checked on the site for every request, whether it comes from the editor, the CLI, MCP or the panel's agents.
+- Actions that plugins add are checked too: they need a signed-in user, read-only connections only run those marked `readOnly`, and an action can ask for a permission of its own (`vibe-cms docs plugin-actions`).
 - Rules naming content types the site doesn't have are ignored at runtime and refused when saving.
 
 ## Checking access from code

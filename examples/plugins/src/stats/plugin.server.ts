@@ -1,5 +1,6 @@
 import { desc, eq } from "vibe-cms/query";
-import { defineServer } from "vibe-cms/server";
+import { defineAction, defineServer } from "vibe-cms/server";
+import { z } from "zod";
 import config from "../../vibe-cms.config.ts";
 import type { StatsPlugin } from "./index.ts";
 
@@ -30,5 +31,33 @@ export default defineServer<typeof StatsPlugin, typeof config>(({ cms }) => ({
       const posts = await cms.query(post).findMany({ orderBy: [desc(post.wordCount)], limit });
       return Response.json(posts.map(p => ({ title: p.title, slug: p.slug })));
     }
+  },
+  instructions: "Call stats_longest to find the longest published posts, and stats_countWords to count the words in an uploaded text file.",
+  // Actions are served by name as `stats.longest`, never anonymously: over REST (`POST /_vibe/api/actions/stats.longest`),
+  // the CLI (`vibe-cms action stats.longest --input '{"limit":3}'`), and, since this one says `mcp: true`, to agents as `stats_longest`.
+  actions: {
+    longest: defineAction({
+      summary: "Longest posts",
+      description: "The published posts with the most words, longest first.",
+      readOnly: true,
+      mcp: true,
+      input: z.object({ limit: z.number().int().min(1).max(20).default(5).describe("How many posts") }),
+      handler: async ({ input }) => {
+        const posts = await cms.query(post).findMany({ orderBy: [desc(post.wordCount)], limit: input.limit });
+        return posts.map(p => ({ title: p.title, slug: p.slug, words: p.wordCount ?? 0 }));
+      }
+    }),
+    // Files aren't action input: an agent uploads with `assets_upload` and passes the asset's ID.
+    countWords: defineAction({
+      summary: "Count words in a text file",
+      description: "The number of words in an uploaded text file.",
+      readOnly: true,
+      mcp: true,
+      input: z.object({ asset: z.string().describe("An asset's ID, from assets_upload or assets_list") }),
+      handler: async ({ input, engine }) => {
+        const file = await engine.readAsset(input.asset);
+        return { name: file.name, words: (await file.text()).split(/\s+/).filter(Boolean).length };
+      }
+    })
   }
 }));

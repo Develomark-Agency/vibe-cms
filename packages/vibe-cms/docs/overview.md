@@ -39,7 +39,7 @@ Everything lives under the prefix (`/_vibe` unless `prefix` is set in the config
 |---|---|
 | `/_vibe/admin/` | The editor |
 | `/_vibe/api/query` | Public content queries (`POST`, CORS-enabled); drafts need a token |
-| `/_vibe/api/actions/<name>` | Any action by name, e.g. `documents.publish` (`GET /_vibe/api/actions` lists them) |
+| `/_vibe/api/actions/<name>` | Any action by name, e.g. `documents.publish`, including ones plugins add (`GET /_vibe/api/actions` lists them) |
 | `/_vibe/api/mcp` | The site's MCP server for agents |
 | `/_vibe/plugins/<plugin>/…` | Plugin HTTP routes |
 | `/_vibe/media/<asset id>.<ext>` | Uploaded files |
@@ -70,7 +70,7 @@ Run `vibe-cms docs topics` for the full list. The main ones:
 
 - Content: `vibe-cms docs config`, `vibe-cms docs schemas`, `vibe-cms docs media`, `vibe-cms docs references`, `vibe-cms docs localization`, `vibe-cms docs rich-text`, `vibe-cms docs blocks`, `vibe-cms docs schema-changes`
 - Reading: `vibe-cms docs queries`, `vibe-cms docs http-client`
-- Extending: `vibe-cms docs plugins`, `vibe-cms docs server-hooks`, `vibe-cms docs plugin-routes`, `vibe-cms docs admin-extensions`, `vibe-cms docs widgets`
+- Extending: `vibe-cms docs plugins`, `vibe-cms docs server-hooks`, `vibe-cms docs plugin-routes`, `vibe-cms docs plugin-actions`, `vibe-cms docs admin-extensions`, `vibe-cms docs widgets`
 - Running: `vibe-cms docs getting-started`, `vibe-cms docs deploy`, `vibe-cms docs permissions`, `vibe-cms docs backups`
 - Automation: `vibe-cms docs agents`, `vibe-cms docs cli`
 

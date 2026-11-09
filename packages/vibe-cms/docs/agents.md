@@ -44,7 +44,9 @@ Connect the agent to the **agency panel**: one MCP server for every site in it, 
 2. The agent opens the panel in a browser; the user approves it (optionally read only) and signs in with the identity provider.
 3. The agent calls `sites_list`, then any tool with that site's `id` as `site`.
 
-Each call runs as that user on the site, so the site's role rules apply (`vibe-cms docs permissions`); a `FORBIDDEN` error means the user can't do it. Read-only connections only see read-only tools. Users can disconnect agents under **AI agents**.
+Each call runs as that user on the site, so the site's role rules apply (`vibe-cms docs permissions`); a `FORBIDDEN` error means the user can't do it. Read-only connections only see read-only tools, plus `site_action_call`, which for them runs only plugin actions that read.
+
+Actions a site's plugins offer to agents aren't tools of their own here: the panel serves many sites, each with its own plugins. The agent calls `site_actions_list` with a site's `id` to see that site's extras, with their inputs and the plugins' notes, then runs one with `site_action_call` (`site`, `action`, `input`). The site decides what its plugins offer (`vibe-cms docs plugin-actions`). Users can disconnect agents under **AI agents**.
 
 The site's own `/_vibe/api/mcp` points agents at the hub.
 
@@ -58,7 +60,7 @@ Add the site's own MCP endpoint, `https://<site>/_vibe/api/mcp`, as a custom con
 
 ## Tools
 
-One tool per action, with dots as underscores: `documents.publish` → `documents_publish`. The panel adds `sites_list` and a `site` argument on every tool, and `sites_attach` (a newly deployed site's claim link in, the site added to the panel out; not offered to read-only connections, `vibe-cms docs cli`).
+One tool per action, with dots as underscores: `documents.publish` → `documents_publish`. A plugin's actions are tools too when the plugin opts them in (`stats.longest` → `stats_longest`), on the site's own endpoint; through the panel, see above. The panel adds `sites_list` and a `site` argument on every tool, and `sites_attach` (a newly deployed site's claim link in, the site added to the panel out; not offered to read-only connections, `vibe-cms docs cli`).
 
 | Group | Tools |
 |---|---|

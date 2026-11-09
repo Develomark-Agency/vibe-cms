@@ -51,7 +51,7 @@ bunx vibe-cms docs search beforeWrite
 | Setting up | `overview`, `getting-started`, `astro`, `vite`, `wrangler`, `deploy` |
 | Content types | `config`, `schemas`, `media`, `references`, `localization`, `rich-text`, `blocks`, `schema-changes` |
 | Reading content | `queries`, `http-client` |
-| Extending | `plugins`, `server-hooks`, `plugin-routes`, `admin-extensions`, `widgets` |
+| Extending | `plugins`, `server-hooks`, `plugin-routes`, `plugin-actions`, `admin-extensions`, `widgets` |
 | Access and automation | `permissions`, `agents`, `cli` |
 
 ## For AI agents

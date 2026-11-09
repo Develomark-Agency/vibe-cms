@@ -44,6 +44,8 @@ bun --bun vibe-cms documents list --type post --site http://localhost:1337
 bun --bun vibe-cms assets upload --file ./cover.jpg --folder posts --site http://localhost:1337
 ```
 
+Plugins can add actions of their own, run by name (`vibe-cms action <name>`) and, when the plugin opts in, offered to agents as tools (`vibe-cms docs plugin-actions`).
+
 Development sites let local agents and the CLI in as the developer. For deployed sites, connect agents to the panel instead: `https://<panel host>/mcp` covers every site in it, with OAuth sign-in and each user's own permissions (see [`apps/panel`](./apps/panel#ai-agents)).
 
 ## Commands

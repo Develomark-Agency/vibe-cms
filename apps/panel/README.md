@@ -74,6 +74,8 @@ The panel is also an MCP server for every site in it: `https://<panel host>/mcp`
 2. The user approves it (optionally read only) and signs in with the identity provider once more, so the agent gets a provider session of its own: signing out of the panel doesn't disconnect it, and disconnecting it doesn't sign anyone out.
 3. The agent calls `sites_list`, then any action with a `site` argument. The panel gets a site session for the user through the same one-time-code handoff the editor uses, so each site still decides what that user may do.
 
+Actions that a site's plugins add (`vibe-cms docs plugin-actions`) aren't tools of their own, since every site can have different ones. The agent calls `site_actions_list` with a site to see what that site offers agents, then `site_action_call` to run one. The panel only forwards actions the site marks for agents.
+
 ## The CLI
 
 `vibe-cms login my-agency.com` (or the panel's URL) connects the CLI the same way, for one project, and keeps the login in the OS keychain. `vibe-cms export`, `vibe-cms import` and every action command then get a site session from `POST /site-token` for whichever site they run against. `vibe-cms logout` revokes the connection (`POST /oauth/revoke`) and forgets it. A connection approved read-only can't get site tokens, since a site session can do whatever the user may.

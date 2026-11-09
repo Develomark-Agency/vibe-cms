@@ -36,7 +36,7 @@ The curried `definePlugin<B>()(...)` form exists because TypeScript can't infer 
 
 ### Server and admin entries
 
-- `server` runs inside the Worker: hooks, routes, background jobs. It may touch secrets and bindings.
+- `server` runs inside the Worker: hooks, routes, actions (named operations for REST, the CLI and, when opted in, agents: `docs/plugin-actions.md`), background jobs. It may touch secrets and bindings.
 - `admin` runs in the browser: widgets, slots, pages.
 
 They are separate because they run in different runtimes, not because of who sees them. The `.server` / `.admin` file convention keeps each side out of the other's bundle (see [build.md](./build.md)).

@@ -18,6 +18,7 @@ A server entry returns an object of hooks (see `vibe-cms docs plugins` for the e
 | `media.beforeUpload` | transform | before an upload is stored | rename, pick the folder, set `reject` to refuse |
 | `media.analyze` | register | on upload, by MIME pattern | return metadata for the asset |
 | `routes` | register | on `/_vibe/plugins/<name>/…` requests | answer HTTP (`vibe-cms docs plugin-routes`) |
+| `actions` | register | when called by name, or by an agent | named operations for REST, the CLI and agents (`vibe-cms docs plugin-actions`) |
 | `cron` | register | on the Worker's `scheduled` event, by cron expression | run jobs |
 | `queues` | register | on the Worker's `queue` event, by queue name | consume messages |
 
