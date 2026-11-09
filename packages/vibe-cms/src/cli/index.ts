@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { styleText } from "node:util";
 import { command, extendType, flag, number, option, optional, positional, run, string, subcommands } from "cmd-ts";
 import pkg from "../../package.json" with { type: "json" };
-import { actionCommands } from "./actions.ts";
+import { actionCommands, listActionsCommand, runActionCommand } from "./actions.ts";
 import { exportCommand, importCommand } from "./backups.ts";
 import { docs } from "./docs.ts";
 import { locateBundle } from "./deploy/bundle.ts";
@@ -191,6 +191,8 @@ await run(subcommands({
     logout: logoutCommand,
     export: exportCommand,
     import: importCommand,
+    action: runActionCommand,
+    actions: listActionsCommand,
     ...actionCommands()
   }
 }), adminArgs(process.argv.slice(2)));

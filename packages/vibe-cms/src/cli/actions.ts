@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { styleText } from "node:util";
-import { array, command, flag, multioption, option, optional, string, subcommands } from "cmd-ts";
+import { array, command, flag, multioption, option, optional, positional, string, subcommands } from "cmd-ts";
 import { isActionError } from "../actions/errors.ts";
 import { coreActions } from "../actions/core.ts";
 import { listActions, type ActionEntry } from "../actions/define.ts";
@@ -100,15 +100,82 @@ function actionCommand(action: ActionEntry) {
       try {
         console.log(JSON.stringify(await call(action.name, fromText(action.input, text)), null, 2));
       } catch (error) {
-        if(!isActionError(error)) throw error;
-        console.error(`${styleText("red", "✗")} ${styleText("bold", error.code)} ${error.message}`);
-        if(error.data !== undefined) console.error(styleText("dim", JSON.stringify(error.data, null, 2)));
-        if(error.code === "UNAUTHORIZED" && !token) console.error(styleText("dim", "Log in with vibe-cms login <your org> (or --site <url> for a site without an org), or pass --token."));
-        process.exitCode = 1;
+        reportFailure(error, token);
       }
     }
   });
 }
+
+/** Prints an action's refusal and sets the exit code; anything else is a bug and throws. */
+function reportFailure(error: unknown, token: string | undefined) {
+  if(!isActionError(error)) throw error;
+  console.error(`${styleText("red", "✗")} ${styleText("bold", error.code)} ${error.message}`);
+  if(error.data !== undefined) console.error(styleText("dim", JSON.stringify(error.data, null, 2)));
+  if(error.code === "UNAUTHORIZED" && !token) console.error(styleText("dim", "Log in with vibe-cms login <your org> (or --site <url> for a site without an org), or pass --token."));
+  process.exitCode = 1;
+}
+
+/** `vibe-cms action seo.audit --input '{"type":"post"}'`: any action by name, including a plugin's, with its input as JSON. */
+export const runActionCommand = command({
+  name: "action",
+  description: "Run any action by its name, as a plugin adds them (seo.audit). Built-in actions have commands of their own. `vibe-cms actions` lists what a site has.",
+  args: {
+    ...connection,
+    name: positional({ type: string, displayName: "name", description: "The action's name, like seo.audit" }),
+    input: option({ long: "input", short: "i", type: optional(string), description: "The input as JSON, or @file.json. Files go as { name, type?, base64 }" })
+  },
+  async handler(values) {
+    let input: unknown = {};
+    try {
+      if(values.input) input = JSON.parse(await jsonArgument(values.input));
+    } catch (error) {
+      console.error(`${styleText("red", "✗")} --input isn't valid JSON: ${(error as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    let token: string | undefined;
+    try {
+      token = await siteToken(values);
+    } catch (error) {
+      console.error(`${styleText("red", "✗")} ${(error as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      console.log(JSON.stringify(await httpCaller({ url: values.site, prefix: values.prefix, token })(values.name, input), null, 2));
+    } catch (error) {
+      reportFailure(error, token);
+    }
+  }
+});
+
+/** `vibe-cms actions`: the site's actions, plugins' included, and whether agents get them as tools. */
+export const listActionsCommand = command({
+  name: "actions",
+  description: "List a site's actions: built in and from its plugins, and which are MCP tools for agents",
+  args: connection,
+  async handler(values) {
+    let token: string | undefined;
+    try {
+      token = await siteToken(values);
+    } catch (error) {
+      console.error(`${styleText("red", "✗")} ${(error as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    const response = await fetch(`${values.site.replace(/\/$/, "")}${values.prefix}/api/actions`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+    if(!response.ok) {
+      console.error(`${styleText("red", "✗")} The site answered ${response.status}`);
+      process.exitCode = 1;
+      return;
+    }
+    const { actions } = await response.json() as { actions: Array<{ name: string, title: string, mcp: boolean, plugin?: string }> };
+    const width = Math.max(...actions.map(action => action.name.length));
+    for(const action of actions) {
+      console.log(`${action.name.padEnd(width)}  ${action.title}${action.mcp ? "" : styleText("dim", "  (not an MCP tool)")}`);
+    }
+  }
+});
 
 /** Subcommand groups (`documents`, `assets`, …), each with a command per action. */
 export function actionCommands(actions: ActionEntry[] = listActions(coreActions)) {
