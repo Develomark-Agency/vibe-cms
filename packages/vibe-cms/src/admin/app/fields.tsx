@@ -1,6 +1,6 @@
 import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, ChevronsDownUpIcon, ChevronsUpDownIcon, CopyIcon, GripVerticalIcon, LocateFixedIcon, PlusIcon, Trash2Icon, XIcon, CalendarIcon } from "lucide-react";
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { IMPL, loadLazy, type WidgetDescriptor } from "../../descriptor.ts";
 import type {
   AnySchema,
@@ -29,7 +29,7 @@ import { Textarea } from "../components/ui/textarea.tsx";
 import { cn } from "../lib/utils.ts";
 import { Tip } from "../components/ui/tooltip.tsx";
 import type { FieldDescriptor, WidgetContext, WidgetImpl } from "../index.ts";
-import { humanize, useAdmin } from "./context.tsx";
+import { humanize, sharedContext, useAdmin } from "./context.tsx";
 import { setDragChip } from "./drag-chip.ts";
 import { navIcons } from "./icons.ts";
 import { focusPreviewBlock, getPreview, subscribePreview } from "./preview.ts";
@@ -268,7 +268,7 @@ export function slugify(input: string): string {
   return input.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-export const FormValueContext = createContext<DocumentData | null>(null);
+export const FormValueContext = sharedContext<DocumentData | null>("vibe-cms:form-value-context", null);
 
 function useFormValue() {
   return useContext(FormValueContext);

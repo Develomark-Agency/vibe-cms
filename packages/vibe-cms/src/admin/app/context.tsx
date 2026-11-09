@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, type Context } from "react";
 import type { AnyConfig, Collection, CollectionSettings } from "../../config.ts";
 import type { ObjectSchema } from "../../schema/types.ts";
 import type { AdminClient, AdminPlugin } from "../index.ts";
@@ -21,7 +21,17 @@ export interface AdminContextValue {
   setLocale(locale: string): void
 }
 
-export const AdminContext = createContext<AdminContextValue | null>(null);
+/**
+ * Shared across module copies. A bundler can load this file twice (Vite pre-bundling `vibe-cms/media`
+ * and its lazy widgets in a consuming project), and two contexts would leave one copy without a provider.
+ */
+export function sharedContext<T>(key: string, initial: T): Context<T> {
+  const registry = globalThis as unknown as Record<symbol, Context<T> | undefined>;
+  const symbol = Symbol.for(key);
+  return registry[symbol] ??= createContext<T>(initial);
+}
+
+export const AdminContext = sharedContext<AdminContextValue | null>("vibe-cms:admin-context", null);
 
 export function useAdmin(): AdminContextValue {
   const value = useContext(AdminContext);
