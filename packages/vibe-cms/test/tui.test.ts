@@ -5,6 +5,7 @@ import path from "node:path";
 import { coreActions } from "../src/actions/core.ts";
 import { listActions } from "../src/actions/define.ts";
 import { describeActions } from "../src/actions/describe.ts";
+import { adminPrefix } from "../src/cli/login.ts";
 import { loadTopics } from "../src/cli/docs.ts";
 import { onePerSite, parseAddress, parseParents, parseLsof, parseNetstat, parseSs, probe } from "../src/cli/tui/discover.ts";
 import { actionCommandLine, checkValues, fieldsFromSchema, toInput } from "../src/cli/tui/fields.ts";
@@ -156,5 +157,14 @@ describe("tui local sites", () => {
 describe("tui local panel", () => {
   test("runs as admin dev with the options given", () => {
     expect(panelArgs({ port: "5183", site: "http://localhost:4321", name: " ", accent: "#dd843c" })).toEqual(["admin", "dev", "--port", "5183", "--site", "http://localhost:4321", "--accent", "#dd843c"]);
+  });
+});
+
+describe("tui org sites", () => {
+  test("the CMS path comes from the site's admin address", () => {
+    expect(adminPrefix("https://client.com/_vibe/admin")).toBe("/_vibe");
+    expect(adminPrefix("https://client.com/cms/admin/")).toBe("/cms");
+    expect(adminPrefix("https://client.com/admin")).toBe("/_vibe");
+    expect(adminPrefix("nonsense")).toBe("/_vibe");
   });
 });

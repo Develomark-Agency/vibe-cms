@@ -237,6 +237,43 @@ export async function hubSiteToken(site: string): Promise<string | undefined> {
   return undefined;
 }
 
+/** A site on this project's hub, as the hub lists it for you. */
+export interface HubSite {
+  url: string,
+  prefix: string,
+  name: string
+}
+
+/**
+ * The sites this project's hub login can see, or undefined without a login. Throws with what went
+ * wrong when there is one but the hub refuses or can't be reached.
+ */
+export async function hubSites(): Promise<{ org?: string, sites: HubSite[] } | undefined> {
+  const root = projectRoot();
+  let login = await readLogin(root);
+  if(!login) return undefined;
+  for(const retry of [false, true]) {
+    login = await accessToken(root, login, retry);
+    const response = await fetch(`${login.hub}/site-list`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${login.accessToken}` },
+      signal: AbortSignal.timeout(10_000)
+    }).catch(() => null);
+    if(!response) throw new Error(`Couldn't reach ${login.hub}`);
+    if(response.status === 401 && !retry) continue;
+    const data = await response.json().catch(() => ({})) as { sites?: { url: string, name: string, admin: string }[], error?: string };
+    if(!response.ok || !data.sites) throw new Error(data.error ?? `${login.hub} answered ${response.status}`);
+    return { org: login.org, sites: data.sites.map(site => ({ url: new URL(site.url).origin, name: site.name, prefix: adminPrefix(site.admin) })) };
+  }
+  return undefined;
+}
+
+/** Where the CMS is mounted, from the site's admin address (`https://x.com/_vibe/admin` → `/_vibe`). */
+export function adminPrefix(admin: string): string {
+  const pathname = URL.canParse(admin) ? new URL(admin).pathname : "";
+  return pathname.replace(/\/+$/, "").replace(/\/admin$/, "") || "/_vibe";
+}
+
 // --- Sites that sign people in themselves ---------------------------------------------------
 
 interface SiteLogin extends Authorized {

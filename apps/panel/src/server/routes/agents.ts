@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { PanelError } from "vibe-cms/panel";
 import { handleMcp, siteToken } from "../mcp.ts";
-import { canSeeSite, hubAccess } from "../access.ts";
+import { canSeeSite, hubAccess, visibleSiteIds } from "../access.ts";
 import { attachSite } from "../sites.ts";
 import {
   authorize,
@@ -29,7 +29,7 @@ import type { AppEnv } from "../context.ts";
 export const agents = new Hono<AppEnv>();
 
 // Browsers reach these from other origins (an agent's web client), so they answer preflights.
-for(const path of ["/mcp", "/oauth/token", "/oauth/register", "/oauth/revoke", "/site-token", "/site-attach", "/.well-known/*"]) {
+for(const path of ["/mcp", "/oauth/token", "/oauth/register", "/oauth/revoke", "/site-token", "/site-list", "/site-attach", "/.well-known/*"]) {
   agents.options(path, () => corsPreflight());
 }
 
@@ -55,6 +55,20 @@ agents.post("/site-token", async c => {
   const grant = await grantForRequest(c.req.raw, c.env);
   if(!grant) return c.json({ error: "Log in again: this access token is unknown or expired" }, 401, { "www-authenticate": "Bearer" });
   return siteTokenRoute(c.req.raw, c.env, grant);
+});
+
+/**
+ * `POST /site-list` with an OAuth access token: the sites the connection's user can see, for clients
+ * that offer a choice of them, like the CLI. Read-only connections may list.
+ */
+agents.post("/site-list", async c => {
+  const grant = await grantForRequest(c.req.raw, c.env);
+  if(!grant) return c.json({ error: "Log in again: this access token is unknown or expired" }, 401, { "www-authenticate": "Bearer" });
+  const [session] = await db(c.env).select().from(t.sessions).where(eq(t.sessions.id, grant.payload));
+  if(!session) throw new PanelError(401, "This connection's sign-in is gone. Log in again.");
+  const visible = await visibleSiteIds(c.env, await hubAccess(c.env, session));
+  const rows = await db(c.env).select({ id: t.sites.id, url: t.sites.url, name: t.sites.name, admin: t.sites.admin }).from(t.sites).orderBy(t.sites.name);
+  return c.json({ sites: rows.filter(row => visible === "all" || visible.has(row.id)) }, 200, { "cache-control": "no-store" });
 });
 
 /**

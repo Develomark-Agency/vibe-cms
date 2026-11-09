@@ -295,6 +295,18 @@ describe("the CLI: site tokens and revocation", () => {
     expect((await siteTokenFor("vpa_nope", a)).status).toBe(401);
   });
 
+  test("a connection lists the sites its user can see, read-only ones too", async () => {
+    for(const readOnly of [false, true]) {
+      const { access_token: token } = await connectWithTokens({ readOnly });
+      const response = await panel("/site-list", { method: "POST", headers: { authorization: `Bearer ${token}` } });
+      expect(response.status).toBe(200);
+      const { sites } = await response.json() as { sites: { id: string, url: string, admin: string }[] };
+      expect(sites.map(s => s.url)).toContain("https://site-a.test");
+      expect(sites.find(s => s.id === a)?.admin).toBeString();
+    }
+    expect((await panel("/site-list", { method: "POST", headers: { authorization: "Bearer vpa_nope" } })).status).toBe(401);
+  });
+
   test("read-only connections can't get site tokens", async () => {
     const { access_token: token } = await connectWithTokens({ readOnly: true });
     expect((await siteTokenFor(token, a)).status).toBe(403);

@@ -1,11 +1,15 @@
 import { Box, Text, useApp, useWindowSize } from "ink";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ActionDescription } from "../../actions/describe.ts";
+import { hubSites } from "../login.ts";
 import { discoverSites, type Discovery } from "./discover.ts";
 import { startPanel, stopAllPanels, type PanelOptions, type PanelState } from "./panel.ts";
 import { authorize, siteActions, siteName, type Auth, type Site } from "./site.ts";
 import { readSettings, rememberSite, runInTerminal } from "./system.ts";
 import { accent, ActiveContext, HintsContext, SizeContext, type Hint } from "./ui.tsx";
+
+/** The sites on this project's org hub: none without a login, or why they couldn't be listed. */
+export type OrgSites = "loading" | { state: "none" } | { state: "error", message: string } | { state: "ok", org?: string, sites: Site[] };
 
 /** What every screen shares: the site, the session on it, its actions, and the terminal. */
 export interface Session {
@@ -20,6 +24,10 @@ export interface Session {
   local: Discovery | "scanning",
   /** Looks for local sites again. */
   scan(): Promise<Discovery>,
+  /** The sites on the org this project is logged in to. */
+  org: OrgSites,
+  /** Asks the hub for its sites again. */
+  loadOrg(): Promise<void>,
   connect(site: Site): Promise<void>,
   reconnect(): Promise<void>,
   /** The local panel running in the background, if one is. */
@@ -81,6 +89,7 @@ export function App({ home, version, initialSite }: { home: (nav: Nav) => ReactN
   const [auth, setAuth] = useState<Auth | null>(null);
   const [actions, setActions] = useState<{ list: ActionDescription[], fromSite: boolean }>({ list: [], fromSite: false });
   const [recent, setRecent] = useState<Site[]>([]);
+  const [org, setOrg] = useState<OrgSites>("loading");
   const [local, setLocal] = useState<Discovery | "scanning">("scanning");
   const [hints, setHints] = useState<Hint[]>([]);
   const [panel, setPanel] = useState<PanelState>({ status: "stopped", log: [] });
@@ -123,6 +132,7 @@ export function App({ home, version, initialSite }: { home: (nav: Nav) => ReactN
   useEffect(() => {
     void readSettings().then(settings => setRecent(settings.sites));
     void connect(initialSite ?? null);
+    void loadOrg();
     // Without VIBE_SITE, the one site running here is the obvious one to work on.
     void scan().then(found => {
       if(!initialSite && !siteRef.current && found.ok && found.sites.length === 1) {
@@ -130,6 +140,16 @@ export function App({ home, version, initialSite }: { home: (nav: Nav) => ReactN
         void connect({ url: only!.url, prefix: only!.prefix });
       }
     });
+  }, []);
+
+  const loadOrg = useCallback(async () => {
+    setOrg("loading");
+    try {
+      const listed = await hubSites();
+      setOrg(listed ? { state: "ok", org: listed.org, sites: listed.sites } : { state: "none" });
+    } catch (error) {
+      setOrg({ state: "error", message: (error as Error).message });
+    }
   }, []);
 
   const scan = useCallback(async () => {
@@ -144,9 +164,12 @@ export function App({ home, version, initialSite }: { home: (nav: Nav) => ReactN
     await suspendTerminal(async () => {
       code = await runInTerminal(args, options);
     });
-    if(args[0] === "login" || args[0] === "logout") await connect(siteRef.current);
+    if(args[0] === "login" || args[0] === "logout") {
+      await connect(siteRef.current);
+      void loadOrg();
+    }
     return code;
-  }, [suspendTerminal, connect]);
+  }, [suspendTerminal, connect, loadOrg]);
 
   const runPanel = useCallback((options: PanelOptions) => {
     panelRef.current?.stop();
@@ -170,6 +193,8 @@ export function App({ home, version, initialSite }: { home: (nav: Nav) => ReactN
     recent,
     local,
     scan,
+    org,
+    loadOrg,
     connect: next => connect(next),
     reconnect: () => connect(siteRef.current),
     panel,

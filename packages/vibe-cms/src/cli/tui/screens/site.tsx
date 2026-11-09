@@ -26,6 +26,7 @@ export function SiteScreen({ then }: { then?: () => void }) {
   // Sites come and go while you work: look again each time this screen opens.
   useEffect(() => {
     if(session.local !== "scanning") void session.scan();
+    void session.loadOrg();
   }, []);
 
   function choose(site: Site) {
@@ -47,7 +48,10 @@ export function SiteScreen({ then }: { then?: () => void }) {
       if(typing) setTyping(false);
       else nav.pop();
     } else if(!typing && input === "n") setTyping(true);
-    else if(!typing && input === "r" && session.local !== "scanning") void session.scan();
+    else if(!typing && input === "r" && session.local !== "scanning") {
+      void session.scan();
+      void session.loadOrg();
+    }
   });
 
   function isCurrent(site: Site) {
@@ -70,7 +74,23 @@ export function SiteScreen({ then }: { then?: () => void }) {
       hint: [where, site.folder].filter(Boolean).join("  ") + (isCurrent(site) ? "  · current" : "")
     });
   }
-  const recent = session.recent.filter(site => !local.some(l => l.url === site.url && l.prefix === site.prefix));
+  const same = (a: Site, b: Site) => a.url === b.url && a.prefix === b.prefix;
+  const org = session.org;
+  const orgSites = typeof org === "object" && org.state === "ok" ? org.sites : [];
+  if(org === "loading" || org.state !== "none") {
+    const title = typeof org === "object" && org.state === "ok" && org.org ? org.org.toUpperCase() : "YOUR ORG";
+    items.push({ id: "gap:org", label: " ", heading: true }, { id: "h:org", label: title, heading: true });
+    if(org === "loading") items.push({ id: "h:org-loading", label: "  Looking…", heading: true });
+    else if(org.state === "error") items.push({ id: "h:org-error", label: `  ${org.message}`, heading: true });
+    else if(!org.sites.length) items.push({ id: "h:org-none", label: "  No sites on the org yet, or none you can see.", heading: true });
+  }
+  for(const site of orgSites) {
+    const id = `org:${site.url}${site.prefix}`;
+    sites.set(id, site);
+    const where = site.url.replace(/^https:\/\//, "") + (site.prefix === "/_vibe" ? "" : site.prefix);
+    items.push({ id, label: site.name || where, hint: [site.name ? where : undefined, isCurrent(site) ? "current" : undefined].filter(Boolean).join("  ") || undefined });
+  }
+  const recent = session.recent.filter(site => !local.some(l => same(l, site)) && !orgSites.some(o => same(o, site)));
   items.push({ id: "gap:recent", label: " ", heading: true }, { id: "h:recent", label: "RECENT", heading: true });
   for(const site of recent) {
     const id = `recent:${site.url}${site.prefix}`;
