@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { defineConfig } from "vibe-cms";
+import { defineConfig, definePlugin } from "vibe-cms";
+import { defineAction } from "vibe-cms/server";
 import { createHandler } from "vibe-cms/handler";
 import v from "vibe-cms/schema";
 import { createD1 } from "../../../packages/vibe-cms/test/helpers.ts";
@@ -50,8 +51,45 @@ export async function idToken(claims: Record<string, unknown> = {}) {
     .sign(keys.privateKey);
 }
 
+/** Any object as an action's input: a schema with just Standard Schema and Standard JSON Schema, no library. */
+const anyObject = {
+  "~standard": {
+    version: 1 as const,
+    vendor: "mock",
+    types: undefined as unknown as { input: Record<string, unknown>, output: Record<string, unknown> },
+    validate: (value: unknown) => ({ value: (value ?? {}) as Record<string, unknown> }),
+    jsonSchema: { input: () => ({ type: "object" }), output: () => ({ type: "object" }) }
+  }
+};
+
+/** Plugin actions on every mock site: one that reads and is offered to agents, one that writes and is, one that isn't. */
+export const calls: string[] = [];
+const ToolsPlugin = definePlugin()(() => ({
+  name: "tools",
+  options: {},
+  server: async () => ({
+    default: () => ({
+      instructions: "Echo first.",
+      actions: {
+        echo: defineAction({ summary: "Echo", description: "Returns its input.", readOnly: true, mcp: true, input: anyObject, handler: ({ input }) => ({ echoed: input }) }),
+        bump: defineAction({
+          summary: "Bump",
+          description: "Records a call.",
+          mcp: true,
+          handler: () => {
+            calls.push("bump");
+            return { bumped: true };
+          }
+        }),
+        secret: defineAction({ summary: "Secret", description: "For scripts only.", handler: () => ({ secret: true }) })
+      }
+    })
+  })
+}));
+
 export function site(org = ORG, siteEnv: Record<string, unknown> = {}) {
   const config = defineConfig({
+    plugins: [ToolsPlugin()],
     schemas: { post: v.object({ title: v.text() }) }
   });
   const vibe = createHandler(config, { dev: false, bindings: (env: { DB: ReturnType<typeof createD1> }) => ({ db: env.DB }) });

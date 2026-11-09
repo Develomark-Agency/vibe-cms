@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { handle } from "../src/server/index.ts";
 import { pkceChallenge, randomString } from "../src/server/oidc.ts";
-import { assignRoles, env, idp, installMock, ISSUER, panel, removeMock, signIn, site, siteId, sites } from "./mock.ts";
+import { assignRoles, calls, env, idp, installMock, ISSUER, panel, removeMock, signIn, site, siteId, sites } from "./mock.ts";
 
 beforeAll(installMock);
 afterAll(removeMock);
@@ -131,6 +131,41 @@ describe("connecting an agent", () => {
     expect((await call(token, "documents_list", { site: "nope", type: "post" })).content[0].text).toStartWith("[NOT_FOUND]");
   });
 
+  test("a site's plugin actions are listed and run through two meta-tools, not as tools of their own", async () => {
+    const { access_token: token } = await connectWithTokens();
+    const names = (await mcp(token, "tools/list")).body.result.tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("site_actions_list");
+    expect(names.some((name: string) => name.startsWith("tools_"))).toBe(false);
+
+    const listed = (await call(token, "site_actions_list", { site: a })).structuredContent;
+    expect(listed.actions.map((action: { name: string }) => action.name)).toEqual(["tools.echo", "tools.bump"]);
+    expect(listed.instructions).toEqual({ tools: "Echo first." });
+
+    const echoed = await call(token, "site_action_call", { site: a, action: "tools.echo", input: { hi: 1 } });
+    expect(echoed.structuredContent).toEqual({ echoed: { hi: 1 } });
+
+    // Built in actions have their own tools; ones the plugin keeps from agents aren't reachable here.
+    for(const action of ["tools.secret", "documents.list", "tools.nope"]) {
+      expect((await call(token, "site_action_call", { site: a, action })).content[0].text).toStartWith("[NOT_FOUND]");
+    }
+    expect((await call(token, "site_action_call", { site: "nope", action: "tools.echo" })).content[0].text).toStartWith("[NOT_FOUND]");
+    expect((await call(token, "site_action_call", { site: a })).content[0].text).toStartWith("[BAD_REQUEST]");
+  });
+
+  test("a read-only agent only runs plugin actions that read", async () => {
+    const { access_token: token } = await connectWithTokens({ readOnly: true });
+    const names = (await mcp(token, "tools/list")).body.result.tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("site_action_call");
+    expect(names).toContain("site_actions_list");
+
+    const listed = (await call(token, "site_actions_list", { site: a })).structuredContent;
+    expect(listed.actions.map((action: { name: string }) => action.name)).toEqual(["tools.echo"]);
+    expect((await call(token, "site_action_call", { site: a, action: "tools.echo" })).isError).toBeUndefined();
+    calls.length = 0;
+    expect((await call(token, "site_action_call", { site: a, action: "tools.bump" })).content[0].text).toStartWith("[FORBIDDEN]");
+    expect(calls).toEqual([]);
+  });
+
   test("signing out of the panel leaves the agent connected; disconnecting it doesn't sign anyone out", async () => {
     const { access_token: token } = await connectWithTokens();
     await panel("/auth/logout", { method: "POST" });
@@ -149,7 +184,8 @@ describe("connecting an agent", () => {
     const { access_token: token, scope } = await connectWithTokens({ readOnly: true });
     expect(scope).toBe("content:read");
     const { tools } = (await mcp(token, "tools/list")).body.result;
-    expect(tools.every((t: { annotations: { readOnlyHint: boolean } }) => t.annotations.readOnlyHint)).toBe(true);
+    // site_action_call is the one exception: it only runs plugin actions that say they read.
+    expect(tools.filter((t: { annotations: { readOnlyHint: boolean } }) => !t.annotations.readOnlyHint).map((t: { name: string }) => t.name)).toEqual(["site_action_call"]);
     expect(tools.map((t: { name: string }) => t.name)).toContain("documents_list");
     const refused = await call(token, "documents_create", { site: a, type: "post", data: { title: "No" } });
     expect(refused.content[0].text).toStartWith("[FORBIDDEN]");
