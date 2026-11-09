@@ -1,14 +1,15 @@
 /**
- * `bun release --version x.x.x`: bumps packages/vibe-cms to that version, commits, tags `vX.Y.Z` and pushes.
- * The tag triggers .github/workflows/release.yml, which compiles the package (`bun run package`: the panel, then
+ * `bun release --version x.x.x`: pushes HEAD and waits for CI to pass on it, then bumps packages/vibe-cms to that
+ * version, commits, tags `vX.Y.Z` and pushes. The tag triggers .github/workflows/release.yml, which compiles the package (`bun run package`: the panel, then
  * tsdown into dist), smoke-tests it under Node and opens a *draft* GitHub release
  * for you to review and publish on GitHub.
  *
- * Flags: --version <x.y.z> (required), --no-push (commit and tag locally only),
- * --skip-ci-check (don't require a passing CI run on HEAD; the release workflow doesn't re-run the tests).
+ * Flags: --version <x.y.z> (required), --no-push (commit and tag locally only; no push, so no CI wait),
+ * --skip-ci-check (don't push and wait for CI first; the release workflow doesn't re-run the tests).
  */
 import { parseArgs } from "node:util";
 import path from "node:path";
+import { waitForCi } from "./wait-for-ci";
 
 const root = path.resolve(import.meta.dir, "..");
 const pkgPath = path.join(root, "packages/vibe-cms/package.json");
@@ -40,13 +41,16 @@ if(await git("tag", "--list", tag)) fail(`Tag ${tag} already exists.`);
 const branch = await git("branch", "--show-current");
 if(!branch) fail("Not on a branch (detached HEAD).");
 
-// The release workflow doesn't re-run typecheck and tests, so make sure CI passed on the commit being released.
-if(!values["skip-ci-check"]) {
-  const sha = await git("rev-parse", "HEAD");
-  const proc = Bun.spawn(["gh", "run", "list", "--workflow", "ci.yml", "--commit", sha, "--json", "conclusion", "--jq", "map(.conclusion) | join(\",\")"], { cwd: root, stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  if(code) fail(`Couldn't check CI with gh (${err.trim() || `exit ${code}`}). Fix that or pass --skip-ci-check.`);
-  if(!out.trim().split(",").includes("success")) fail(`CI hasn't passed on ${sha.slice(0, 7)} (got: ${out.trim() || "no runs"}). Push it and wait for CI, or pass --skip-ci-check.`);
+// The release workflow doesn't re-run typecheck and tests, so push the commit being released and wait for CI to
+// pass on it before bumping. (Skipped with --no-push, which never leaves your machine, or --skip-ci-check.)
+if(!values["skip-ci-check"] && !values["no-push"]) {
+  console.log(`Pushing ${branch} so CI can run on it...`);
+  await git("push", "origin", branch);
+  try {
+    await waitForCi(await git("rev-parse", "HEAD"));
+  } catch(e) {
+    fail(`${(e as Error).message} Nothing was bumped or tagged. Pass --skip-ci-check to release anyway.`);
+  }
 }
 
 pkg.version = version;
