@@ -1,9 +1,12 @@
 import { getOpenAPIMeta, openapi } from "@orpc/openapi";
-import { defineMeta, ORPCError, os, walkProcedureContractsSync, type AnyProcedure, type AnyRouter, type ErrorMapItem, type RouterClient } from "@orpc/server";
+import { call, defineMeta, ORPCError, os, walkProcedureContractsSync, type AnyProcedure, type AnyRouter, type ErrorMapItem, type RouterClient } from "@orpc/server";
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { z } from "zod";
 import { HttpError } from "../config.ts";
+import type { Permit } from "../handler/auth.ts";
 import type { Engine } from "../handler/engine.ts";
 import { codeForStatus, type ActionError, type ActionErrorCode } from "./errors.ts";
+import type { ActionInput } from "./inputs.ts";
 
 /** What an action runs against: the engine for this request's session. */
 export interface ActionContext {
@@ -17,7 +20,14 @@ export interface ActionAnnotations {
   /** May lose data, e.g. purging the trash. Deleting into the trash isn't destructive. */
   destructive?: boolean,
   /** Repeating it with the same input changes nothing more. */
-  idempotent?: boolean
+  idempotent?: boolean,
+  /**
+   * Whether agents get it as an MCP tool. Built-in actions are tools unless `false`; a plugin's
+   * actions only when `true`. Every action stays reachable by name over REST and the CLI.
+   */
+  mcp?: boolean,
+  /** A plugin action's permission, checked before it runs, on top of needing a signed-in user: `{ action: "write", scope: "site" }`. */
+  permit?: Permit
 }
 
 const [annotationsMeta, getAnnotations] = defineMeta<"vibe/annotations", ActionAnnotations>("vibe/annotations", (incoming, current) => ({ ...current, ...incoming }));
@@ -107,6 +117,42 @@ export function base({ summary, description, ...annotations }: ActionMeta) {
   return builder.meta(openapi({ summary, description }), annotationsMeta(annotations));
 }
 
+/** What a plugin's `actions` holds for each action: made by {@link defineAction}. */
+export type ActionDefinition = AnyProcedure;
+
+/** What a handler is called with: the input, parsed by the schema, and the signed-in user's view of the site. */
+export type ActionHandlerArgs<S extends ActionInput | undefined> = S extends ActionInput
+  ? { input: StandardSchemaV1.InferOutput<S>, engine: Engine }
+  : { engine: Engine };
+
+/** What {@link defineAction} takes: the metadata every action declares, its input schema and its handler. */
+export interface ActionConfig<S extends ActionInput | undefined> extends ActionMeta {
+  /** Any schema with Standard Schema and Standard JSON Schema, such as zod 4's. Left out, the action takes no input. */
+  input?: S,
+  handler: (args: ActionHandlerArgs<S>) => unknown
+}
+
+/**
+ * Defines an action for a plugin's `actions`. See `vibe-cms docs plugin-actions`.
+ *
+ * ```ts
+ * defineAction({
+ *   summary: "Longest posts",
+ *   description: "The published posts with the most words.",
+ *   readOnly: true,
+ *   mcp: true,
+ *   input: z.object({ limit: z.number().default(5) }),
+ *   handler: ({ input }) => …
+ * })
+ * ```
+ */
+export function defineAction<S extends ActionInput | undefined = undefined>(config: ActionConfig<S>): ActionDefinition {
+  const { input, handler, ...meta } = config;
+  const builder = base(meta);
+  const withInput = (input ? builder.input(input as never) : builder) as unknown as { handler(run: (args: { input: unknown, context: ActionContext }) => unknown): ActionDefinition };
+  return withInput.handler(({ input: parsed, context }) => handler({ input: parsed, engine: context.engine } as ActionHandlerArgs<S>));
+}
+
 /** Groups actions into a router: `router({ list, get })`. Plain objects work too, but this checks that everything in it is an action or another router. */
 export function router<T extends AnyRouter>(routes: T) {
   return os.$context<ActionContext>().router(routes);
@@ -123,21 +169,25 @@ export interface ActionEntry {
   title: string,
   description: string,
   annotations: ActionAnnotations,
-  input: z.ZodType,
-  procedure: AnyProcedure
+  input: ActionInput,
+  procedure: AnyProcedure,
+  /** The plugin that provides it; absent for built-in actions. */
+  plugin?: string,
+  /** Whether it's offered as an MCP tool: see {@link ActionAnnotations.mcp}. */
+  mcp: boolean
 }
 
 /** An action's input schema (an empty object when it takes none). */
-export function inputSchemaOf(procedure: AnyProcedure): z.ZodType {
+export function inputSchemaOf(procedure: AnyProcedure): ActionInput {
   const schemas = procedure["~orpc"].inputSchemas as unknown;
-  return ((Array.isArray(schemas) ? schemas[0] : schemas) ?? z.object({})) as z.ZodType;
+  return ((Array.isArray(schemas) ? schemas[0] : schemas) ?? z.object({})) as ActionInput;
 }
 
 /** What an action takes, as callers write it. */
 export type ActionInputOf<P extends AnyProcedure> = NonNullable<Parameters<RouterClient<P>>[0]>;
 
-/** Every action in a router, in declaration order. Surfaces (REST, MCP, CLI) are generated from this. */
-export function listActions(router: ActionRouter): ActionEntry[] {
+/** Every action in a router, in declaration order. Surfaces (REST, MCP, CLI) are generated from this. `plugin` marks them as that plugin's. */
+export function listActions(router: ActionRouter, plugin?: string): ActionEntry[] {
   const entries: ActionEntry[] = [];
   walkProcedureContractsSync(router, (contract, path) => {
     const procedure = contract as AnyProcedure;
@@ -145,14 +195,17 @@ export function listActions(router: ActionRouter): ActionEntry[] {
     const docs = getOpenAPIMeta(procedure);
     // Surfaces show these (MCP tool lists, CLI help, the actions listing), so an action can't go without.
     if(!docs?.summary || !docs.description) throw new Error(`Action ${name} needs .meta(openapi({ summary, description }))`);
+    const annotations = getAnnotations(procedure) ?? {};
     entries.push({
       name,
       path,
       title: docs.summary,
       description: docs.description,
-      annotations: getAnnotations(procedure) ?? {},
+      annotations,
       input: inputSchemaOf(procedure),
-      procedure
+      procedure,
+      ...(plugin ? { plugin } : {}),
+      mcp: plugin ? annotations.mcp === true : annotations.mcp !== false
     });
   });
   return entries;
@@ -161,4 +214,23 @@ export function listActions(router: ActionRouter): ActionEntry[] {
 /** The same, by name. */
 export function indexActions(router: ActionRouter): Map<string, ActionEntry> {
   return new Map(listActions(router).map(entry => [entry.name, entry]));
+}
+
+/**
+ * Runs an action for a caller: a plugin's needs a signed-in user the connection allows (read-only
+ * connections only run `readOnly` actions) and its `permit`, since nothing in its handler checks them.
+ * Built-in actions check through the engine. Failures are the shared {@link ActionError}s.
+ */
+export async function runAction(entry: ActionEntry, ctx: ActionContext, input: unknown): Promise<unknown> {
+  try {
+    if(entry.plugin) ctx.engine.authorize(entry.annotations, entry.annotations.permit);
+    return await call(entry.procedure, input, { context: ctx });
+  } catch (error) {
+    if(error instanceof HttpError) {
+      // Declared, as the failures inside an action are, so surfaces report it as the action's refusal.
+      // oRPC marks `defined` itself for what a procedure throws; this one is thrown before it runs.
+      throw Object.assign(fromHttpError(error), { defined: true });
+    }
+    throw error;
+  }
 }

@@ -1,3 +1,4 @@
+import type { ActionDefinition } from "../actions/define.ts";
 import type { PluginDescriptor } from "../descriptor.ts";
 import type { AnyConfig, CollectionMarker } from "../config.ts";
 import type { QueryClient } from "../query/index.ts";
@@ -112,6 +113,15 @@ export interface ServerHooks<D extends ContentTypes = ContentTypes> {
    * See `vibe-cms docs plugin-routes`.
    */
   routes?: Record<string, (request: Request, context: RouteContext) => Response | Promise<Response>>,
+  /**
+   * register: actions by name, each made with `defineAction`. They're namespaced by the plugin's
+   * name (`seo.audit`) and run by name over REST (`POST /_vibe/api/actions/seo.audit`) and the CLI, always for a
+   * signed-in user. Agents get one as an MCP tool only when it's declared `mcp: true`.
+   * See `vibe-cms docs plugin-actions`.
+   */
+  actions?: Record<string, ActionDefinition>,
+  /** register: how agents should use this plugin's MCP tools, added to the site's MCP instructions. */
+  instructions?: string,
   /** register: cron jobs keyed by schedule. The schedule must also be a trigger on the Worker. */
   cron?: Record<string, () => void | Promise<void>>,
   /** register: queue consumers keyed by queue name. */
@@ -169,3 +179,5 @@ export function defineServer<P extends (...args: any[]) => PluginDescriptor<any,
 ): ServerPlugin<BindingsOf<P>, OptionsOf<P>, ContentTypesOf<C>> {
   return plugin;
 }
+
+export { defineAction, type ActionConfig, type ActionDefinition, type ActionHandlerArgs } from "../actions/define.ts";

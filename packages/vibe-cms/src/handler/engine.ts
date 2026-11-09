@@ -19,7 +19,7 @@ import type {
 import { findReferences, isAssetValue, isRecord, pickUnionOption, schemaAt, shapeMismatches, validate, type Issue } from "../schema/validate.ts";
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
-import { can, require } from "./auth.ts";
+import { can, require, type Permit } from "./auth.ts";
 import { detectFavicon, type SiteFetch } from "./favicon.ts";
 import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
@@ -674,6 +674,17 @@ export class Engine {
     this.afterWrite({ type: input.type, id, locale, action, valid: issues.length === 0, doc });
     if(input.publish) return this.publish(input.type, id, locale);
     return { ...(await this.getDocument(input.type, id, locale)), issues };
+  }
+
+  /**
+   * Gate for plugin actions, whose handlers don't pass through the engine's own checks: needs a session,
+   * refuses non-`readOnly` actions to read-only connections, and applies the action's `permit`.
+   */
+  authorize(action: { readOnly?: boolean }, permit?: Permit): Session {
+    const session = this.scope.session;
+    if(!session) throw new HttpError(401, "Sign in required");
+    if(session.readOnly && !action.readOnly) throw new HttpError(403, "This connection is read only");
+    return permit ? require(this.state, session, permit) : session;
   }
 
   private writer(permit: Parameters<typeof require>[2]): Session | null {

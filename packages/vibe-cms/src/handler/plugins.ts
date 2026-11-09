@@ -1,3 +1,6 @@
+import { coreActions } from "../actions/core.ts";
+import { listActions, type ActionEntry } from "../actions/define.ts";
+import { inputJsonSchema } from "../actions/describe.ts";
 import { loadLazy, IMPL, type PluginDescriptor } from "../descriptor.ts";
 import type { ServerContext, ServerHooks, ServerPlugin } from "../server/index.ts";
 
@@ -10,7 +13,15 @@ export type HookArgs<K extends keyof ServerHooks> = NonNullable<ServerHooks[K]> 
 
 type TransformHook = "content.beforeValidate" | "content.beforeWrite" | "content.beforeDelete" | "content.read" | "media.beforeUpload";
 
+/** Every action the site serves: the built-in ones and each plugin's, by name. */
+export interface ActionRegistry {
+  list: ActionEntry[],
+  index: Map<string, ActionEntry>
+}
+
 export class PluginHost {
+  private registry: ActionRegistry | undefined;
+
   constructor(readonly plugins: LoadedPlugin[]) {}
 
   static async load(
@@ -27,7 +38,46 @@ export class PluginHost {
       }
       loaded.push({ name: plugin.name, hooks: await define(context(plugin)) });
     }
-    return new PluginHost(loaded);
+    const host = new PluginHost(loaded);
+    // Fail at boot, not on the first call, if an action is malformed or a name is taken.
+    host.actions();
+    return host;
+  }
+
+  /** Plugins' notes on using their MCP tools, by plugin name: only for plugins that offer some. */
+  mcpInstructions(): Record<string, string> {
+    const { list } = this.actions();
+    return Object.fromEntries(this.plugins.flatMap(plugin => plugin.hooks.instructions && list.some(action => action.plugin === plugin.name && action.mcp) ? [[plugin.name, plugin.hooks.instructions]] : []));
+  }
+
+  /** Built-in actions, then each plugin's under its name: `seo.audit`. Built once. */
+  actions(): ActionRegistry {
+    if(this.registry) return this.registry;
+    const list = listActions(coreActions);
+    const groups = new Set(Object.keys(coreActions));
+    for(const plugin of this.plugins) {
+      if(!plugin.hooks.actions) continue;
+      if(groups.has(plugin.name)) throw new Error(`vibe-cms: plugin "${plugin.name}" has actions, but its name is taken by built-in actions`);
+      for(const [key, action] of Object.entries(plugin.hooks.actions)) {
+        if(typeof action !== "object" || action === null || !("~orpc" in action)) throw new Error(`vibe-cms: plugin "${plugin.name}" action "${key}" isn't an action: make it with defineAction`);
+      }
+      const added = listActions({ [plugin.name]: plugin.hooks.actions }, plugin.name);
+      for(const entry of added) {
+        // Agents and listings need the input described, so find out now whether it can be.
+        try {
+          inputJsonSchema(entry.input, { files: "json" });
+        } catch (error) {
+          throw new Error(`vibe-cms: action "${entry.name}": ${(error as Error).message}`);
+        }
+      }
+      list.push(...added);
+    }
+    const index = new Map<string, ActionEntry>();
+    for(const entry of list) {
+      if(index.has(entry.name)) throw new Error(`vibe-cms: two actions are named "${entry.name}"`);
+      index.set(entry.name, entry);
+    }
+    return this.registry = { list, index };
   }
 
   /** Transforming hooks run in config order, each mutating `output`. */

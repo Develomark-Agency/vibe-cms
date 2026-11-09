@@ -1,8 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { call } from "@orpc/server";
-import type { ActionContext, ActionEntry } from "./define.ts";
+import { runAction, type ActionContext, type ActionEntry } from "./define.ts";
 import { describeActions, filesFromJson } from "./describe.ts";
 import { isActionError } from "./errors.ts";
 
@@ -107,7 +106,7 @@ export function errorResult(error: { code: string, message: string, data?: unkno
 /** Runs an action for a tool call: its output, or the failure, as a tool result. Anything but an action's own error is a bug and keeps throwing. */
 export async function runTool(action: ActionEntry, ctx: ActionContext, args: Record<string, unknown>): Promise<ToolResult> {
   try {
-    return textResult(await call(action.procedure, filesFromJson(action.input, args), { context: ctx }));
+    return textResult(await runAction(action, ctx, filesFromJson(action.input, args)));
   } catch (error) {
     if(isActionError(error)) return errorResult(error);
     throw error;

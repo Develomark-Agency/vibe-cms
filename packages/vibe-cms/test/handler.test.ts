@@ -192,6 +192,41 @@ describe("documents", () => {
   });
 });
 
+describe("plugin actions", () => {
+  test("run by name over REST, namespaced, for signed-in users only", async () => {
+    const echoed = await t.api("/api/actions/audit.echo", { method: "POST", json: { text: "hi" } });
+    expect(echoed.body).toEqual({ text: "hi", tag: "t" });
+    expect((await t.api("/api/actions/audit.touch", { method: "POST", json: {} })).body).toEqual({ touched: true });
+    expect(calls).toContain("touch");
+    expect((await t.api("/api/actions/echo", { method: "POST", json: { text: "hi" } })).status).toBe(404);
+    expect((await t.api("/api/actions/audit.echo", { method: "POST", json: { text: 1 } })).status).toBe(400);
+
+    t.setToken("");
+    expect((await t.api("/api/actions/audit.echo", { method: "POST", json: { text: "hi" } })).status).toBe(401);
+  });
+
+  test("inputs from other schema libraries work", async () => {
+    expect((await t.api("/api/actions/audit.shout", { method: "POST", json: { word: "hi" } })).body).toEqual({ shouted: "HI" });
+    expect((await t.api("/api/actions/audit.shout", { method: "POST", json: { word: 1 } })).status).toBe(400);
+  });
+
+  test("the listing says which are tools for agents", async () => {
+    const { body } = await t.api("/api/actions");
+    const byName = Object.fromEntries(body.actions.map((action: { name: string }) => [action.name, action]));
+    expect(byName["audit.echo"]).toMatchObject({ mcp: true, plugin: "audit", annotations: { readOnly: true } });
+    expect(byName["audit.touch"]).toMatchObject({ mcp: false, plugin: "audit" });
+    expect(byName["documents.list"].mcp).toBe(true);
+    expect(byName["documents.list"].plugin).toBeUndefined();
+    expect(body.instructions).toEqual({ audit: "Use echo to check the connection." });
+    expect(byName["audit.shout"].input.properties.word).toEqual({ type: "string" });
+
+    t.setToken("");
+    const anonymous = await t.api("/api/actions");
+    expect(anonymous.body.actions.some((action: { plugin?: string }) => action.plugin)).toBe(false);
+    expect(anonymous.body.instructions).toBeUndefined();
+  });
+});
+
 describe("search", () => {
   async function search(query: string) {
     const { status, body } = await t.api("/api/actions/documents.search", { method: "POST", json: { query } });
@@ -919,6 +954,25 @@ describe("mcp", () => {
     expect(tools.trash_purge.annotations.destructiveHint).toBe(true);
     expect(tools.documents_list.annotations.readOnlyHint).toBe(true);
     expect(tools.assets_upload.inputSchema.properties.file.required).toEqual(["name", "base64"]);
+  });
+
+  test("plugin actions are tools only when they opt in", async () => {
+    const init = await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+    expect(init.body.result.instructions).toContain("audit plugin:\nUse echo to check the connection.");
+    const names = (await mcp("tools/list")).body.result.tools.map((tool: { name: string }) => tool.name);
+    expect(names).toContain("audit_echo");
+    expect(names).not.toContain("audit_touch");
+    const echoed = await mcp("tools/call", { name: "audit_echo", arguments: { text: "hi" } });
+    expect(echoed.body.result.structuredContent).toEqual({ text: "hi", tag: "t" });
+    expect((await mcp("tools/call", { name: "audit_touch", arguments: {} })).body.error.code).toBe(-32602);
+  });
+
+  test("a plugin action with another schema library is a tool with its schema", async () => {
+    const tools = Object.fromEntries((await mcp("tools/list")).body.result.tools.map((tool: { name: string }) => [tool.name, tool]));
+    expect(tools.audit_shout.inputSchema.properties.word).toEqual({ type: "string" });
+    const shouted = await mcp("tools/call", { name: "audit_shout", arguments: { word: "hi" } });
+    expect(shouted.body.result.structuredContent).toEqual({ shouted: "HI" });
+    expect((await mcp("tools/call", { name: "audit_shout", arguments: { word: 1 } })).body.result.content[0].text).toStartWith("[BAD_REQUEST]");
   });
 
   test("tools run actions and report failures as tool errors", async () => {

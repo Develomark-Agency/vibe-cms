@@ -25,5 +25,5 @@ mcp.all("/mcp", async c => {
     );
   }
   const scoped = new Engine(state, { origin: url.origin, session: agent, trusted: false, ctx });
-  return handleMcp(c.req.raw, { engine: scoped });
+  return handleMcp(c.req.raw, { engine: scoped }, state.plugins);
 });

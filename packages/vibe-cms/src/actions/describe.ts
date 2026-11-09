@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ActionAnnotations, ActionEntry } from "./define.ts";
-import { inputFields, isFileSchema } from "./inputs.ts";
+import { inputFields, isFileSchema, isZod, type ActionInput } from "./inputs.ts";
 
 /** An action as `GET /_vibe/api/actions` lists it: name, title, description, annotations, input JSON Schema. */
 export interface ActionDescription {
@@ -8,6 +8,10 @@ export interface ActionDescription {
   title: string,
   description: string,
   annotations: ActionAnnotations,
+  /** Whether agents get it as an MCP tool. */
+  mcp: boolean,
+  /** The plugin it comes from, if any. */
+  plugin?: string,
   input: Record<string, unknown>
 }
 
@@ -34,10 +38,16 @@ const jsonFileSchema = {
 };
 
 /**
- * An action's input as JSON Schema. `files: "json"` describes file fields as
- * {@link JsonFile} objects, for surfaces that only carry JSON (MCP).
+ * An action's input as JSON Schema. Zod inputs (the built-in actions') can describe file fields:
+ * `files: "json"` gives them as {@link JsonFile} objects, for surfaces that only carry JSON (MCP).
+ * Any other input describes itself through Standard JSON Schema.
  */
-export function inputJsonSchema(schema: z.ZodType, options: { files?: "binary" | "json" } = {}): Record<string, unknown> {
+export function inputJsonSchema(schema: ActionInput, options: { files?: "binary" | "json" } = {}): Record<string, unknown> {
+  if(!isZod(schema)) {
+    const convert = schema["~standard"].jsonSchema?.input;
+    if(typeof convert !== "function") throw new Error("the input schema doesn't implement Standard JSON Schema (`~standard.jsonSchema`), so it can't be described to agents");
+    return convert({ target: "draft-2020-12" });
+  }
   return z.toJSONSchema(schema, {
     io: "input",
     target: "draft-2020-12",
@@ -57,12 +67,14 @@ export function describeActions(actions: ActionEntry[], options: { files?: "bina
     title: action.title,
     description: action.description,
     annotations: action.annotations,
+    mcp: action.mcp,
+    ...(action.plugin ? { plugin: action.plugin } : {}),
     input: inputJsonSchema(action.input, options)
   }));
 }
 
-/** Turns {@link JsonFile} values back into `File`s before the input is validated. */
-export function filesFromJson(schema: z.ZodType, input: unknown): unknown {
+/** Turns {@link JsonFile} values back into `File`s before the input is validated. Only built-in (zod) inputs have file fields. */
+export function filesFromJson(schema: ActionInput, input: unknown): unknown {
   if(typeof input !== "object" || input === null) return input;
   const out: Record<string, unknown> = { ...input };
   for(const [key, info] of inputFields(schema)) {

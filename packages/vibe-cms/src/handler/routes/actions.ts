@@ -1,9 +1,9 @@
-import { createRouterClient, call, type AnyProcedure, type RouterClient } from "@orpc/server";
+import { createRouterClient, type AnyProcedure, type RouterClient } from "@orpc/server";
 import { Hono } from "hono";
 import { validator } from "hono/validator";
 import { HttpError } from "../../config.ts";
 import { coreActions, type CoreActions } from "../../actions/core.ts";
-import { indexActions, inputSchemaOf, listActions, type ActionInputOf } from "../../actions/define.ts";
+import { inputSchemaOf, runAction, type ActionInputOf } from "../../actions/define.ts";
 import { describeActions, filesFromJson } from "../../actions/describe.ts";
 import { fromText } from "../../actions/inputs.ts";
 import { formValues, jsonBody, jsonObject, queryValues, type SiteEnv } from "../http.ts";
@@ -13,8 +13,6 @@ import { formValues, jsonBody, jsonObject, queryValues, type SiteEnv } from "../
  * input comes from. Mounted under `/api`.
  */
 export const actions = new Hono<{ Bindings: SiteEnv["Bindings"], Variables: SiteEnv["Variables"] & { actions: RouterClient<CoreActions> } }>();
-
-const index = indexActions(coreActions);
 
 actions.use("*", async (c, next) => {
   c.set("actions", createRouterClient(coreActions, { context: { engine: c.get("engine") } }));
@@ -46,17 +44,23 @@ function body<P extends AnyProcedure, const K extends keyof ActionInputOf<P> = n
 const a = coreActions;
 
 actions
-  .get("/actions", c => c.json({ actions: describeActions(listActions(coreActions)) }))
-  // Any action by name: `POST /_vibe/api/actions/documents.list` with its input as JSON or multipart.
+  // What plugins add is for signed-in users: the built-in actions are the same on every site.
+  .get("/actions", c => {
+    const { plugins } = c.env.state;
+    const signedIn = c.get("session") !== null;
+    const list = plugins.actions().list.filter(action => signedIn || !action.plugin);
+    return c.json({ actions: describeActions(list), ...(signedIn ? { instructions: plugins.mcpInstructions() } : {}) });
+  })
+  // Any action by name, plugins' included: `POST /_vibe/api/actions/documents.list` with its input as JSON or multipart.
   .post(
     "/actions/:name",
     async c => {
       const name = c.req.param("name");
-      const action = index.get(name);
+      const action = c.env.state.plugins.actions().index.get(name);
       if(!action) throw new HttpError(404, `No action "${name}"`);
       const type = c.req.header("content-type") ?? "";
       const input = type.includes("multipart/form-data") ? fromText(action.input, formValues(await c.req.raw.formData())) : filesFromJson(action.input, await jsonBody(c.req.raw));
-      return c.json(await call(action.procedure, input, { context: { engine: c.get("engine") } }));
+      return c.json(await runAction(action, { engine: c.get("engine") }, input));
     }
   )
   .all("/actions/:name", () => { throw new HttpError(405, "Use POST"); })

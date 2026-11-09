@@ -1,4 +1,16 @@
+import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec";
 import { z } from "zod";
+
+/**
+ * What an action takes: any schema library that implements Standard Schema (to validate) and Standard
+ * JSON Schema (to describe the input to agents and listings), such as zod 4.
+ */
+export type ActionInput = StandardSchemaV1 & StandardJSONSchemaV1;
+
+/** Whether a schema is zod's. The text surfaces below (CLI flags, query strings, forms) read zod's internals, so they only know zod inputs. */
+export function isZod(schema: ActionInput): schema is ActionInput & z.ZodType {
+  return typeof schema === "object" && schema !== null && "_zod" in schema;
+}
 
 /** How a surface that only has text (query strings, form fields, CLI flags) should read a field. */
 export type FieldKind = "string" | "number" | "boolean" | "strings" | "file" | "json";
@@ -59,8 +71,9 @@ export function fieldInfo(schema: z.ZodType): FieldInfo {
   return { kind, optional, nullable, description };
 }
 
-/** The fields of an action's input object. */
-export function inputFields(schema: z.ZodType): Array<[string, FieldInfo]> {
+/** The fields of an action's input object. None for inputs that aren't zod: the text surfaces can't read them. */
+export function inputFields(schema: ActionInput): Array<[string, FieldInfo]> {
+  if(!isZod(schema)) return [];
   const shape = (schema as unknown as { shape?: Record<string, z.ZodType> }).shape ?? {};
   return Object.entries(shape).map(([key, field]) => [key, fieldInfo(field)]);
 }
@@ -69,7 +82,9 @@ export function inputFields(schema: z.ZodType): Array<[string, FieldInfo]> {
  * Turns text values into the types an action's input expects. Values that don't
  * convert are passed through as they are, for the input's validation to report.
  */
-export function fromText(schema: z.ZodType, values: Record<string, string | string[] | File | undefined>): Record<string, unknown> {
+export function fromText(schema: ActionInput, values: Record<string, string | string[] | File | undefined>): Record<string, unknown> {
+  // Not zod: nothing says what its fields are, so the values go in as they came, for its own validation.
+  if(!isZod(schema)) return { ...values };
   const out: Record<string, unknown> = {};
   for(const [key, info] of inputFields(schema)) {
     const raw = values[key];
