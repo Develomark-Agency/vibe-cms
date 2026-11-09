@@ -37,5 +37,14 @@ export const migrations: Migration[] = [
     statements: [
       "CREATE TABLE IF NOT EXISTS `vibe_roles` (\n\t`name` text PRIMARY KEY NOT NULL,\n\t`rules` text NOT NULL,\n\t`updated_by` text,\n\t`updated_at` integer NOT NULL\n);"
     ]
+  },
+  {
+    tag: "0002_adorable_blonde_phantom",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS `vibe_activity` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`at` integer NOT NULL,\n\t`actor` text NOT NULL,\n\t`actor_name` text,\n\t`via` text NOT NULL,\n\t`client` text,\n\t`on_behalf_of` text,\n\t`action` text NOT NULL,\n\t`target_type` text,\n\t`target_id` text,\n\t`target_label` text,\n\t`locale` text,\n\t`ok` integer NOT NULL,\n\t`error` text,\n\t`summary` text\n);",
+      "CREATE INDEX IF NOT EXISTS `vibe_activity_at` ON `vibe_activity` (`at`);",
+      "CREATE INDEX IF NOT EXISTS `vibe_activity_actor` ON `vibe_activity` (`actor`,`at`);",
+      "CREATE INDEX IF NOT EXISTS `vibe_activity_target` ON `vibe_activity` (`target_id`,`at`);"
+    ]
   }
 ];

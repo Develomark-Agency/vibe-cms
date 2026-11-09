@@ -10,7 +10,9 @@ import type { ActionInput } from "./inputs.ts";
 
 /** What an action runs against: the engine for this request's session. */
 export interface ActionContext {
-  engine: Engine
+  engine: Engine,
+  /** The plugin whose action this is, for the activity log; set by {@link runAction}. */
+  plugin?: string
 }
 
 /** Hints for surfaces that show or gate actions, matching MCP's tool annotations. */
@@ -27,7 +29,12 @@ export interface ActionAnnotations {
    */
   mcp?: boolean,
   /** A plugin action's permission, checked before it runs, on top of needing a signed-in user: `{ action: "write", scope: "site" }`. */
-  permit?: Permit
+  permit?: Permit,
+  /**
+   * `"read"` records a sensitive read in the activity log (a backup download, a user list). Every action
+   * that changes something is recorded anyway; ordinary reads aren't.
+   */
+  audit?: "read"
 }
 
 const [annotationsMeta, getAnnotations] = defineMeta<"vibe/annotations", ActionAnnotations>("vibe/annotations", (incoming, current) => ({ ...current, ...incoming }));
@@ -83,9 +90,77 @@ export function fromHttpError(error: HttpError): ActionError {
   return new ORPCError(codeForStatus(error.status), { message: error.message, ...(error.details === undefined ? {} : { data: error.details }) }) as ActionError;
 }
 
+/** Groups whose actions act on the group itself rather than a content type. */
+const NOT_CONTENT = new Set(["assets", "folders", "trash", "site", "backups", "schema", "activity"]);
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
+}
+
+/** What an entry is about, from the action's input and what the engine noted while it ran. */
+/** What the target is called, from what the action returned: a document's title, a file's or trash item's name. */
+function labelOf(engine: ActionContext["engine"], output: unknown): string | undefined {
+  if(typeof output !== "object" || output === null) return undefined;
+  const value = output as Record<string, unknown>;
+  if(typeof value.type === "string" && "draft" in value) return engine.titleOf(value.type, (value.draft ?? value.published) as never);
+  if(typeof value.filename === "string") return value.filename;
+  if(typeof value.label === "string") return value.label;
+  return undefined;
+}
+
+function target(path: string[], input: unknown, notes: Record<string, unknown>) {
+  const fields = typeof input === "object" && input !== null ? input as Record<string, unknown> : {};
+  const group = path[0] ?? "";
+  const { id: notedId, locale: notedLocale, label: notedLabel, ...rest } = notes;
+  const summary: Record<string, unknown> = { ...rest };
+  for(const key of ["ver", "at", "publish", "folder"] as const) if(fields[key] !== undefined && summary[key] === undefined) summary[key] = fields[key];
+  if(group === "site") summary.fields = Object.keys(fields);
+  return {
+    targetType: NOT_CONTENT.has(group) ? group : text(fields.type) ?? group,
+    targetId: text(fields.id) ?? text(notedId) ?? text(fields.path) ?? text(fields.from) ?? null,
+    locale: text(fields.locale) ?? text(notedLocale) ?? null,
+    targetLabel: text(notedLabel) ?? null,
+    summary
+  };
+}
+
+/**
+ * Records the activity entry for an action that ran: every action that changes something, sensitive reads
+ * (`audit: "read"`) and refused permission checks. Input that failed its schema and anonymous requests
+ * aren't recorded.
+ */
+function recordAction(context: ActionContext, path: string[], procedure: AnyProcedure, input: unknown, error?: unknown, output?: unknown) {
+  const annotations = getAnnotations(procedure) ?? {};
+  const code = error === undefined ? undefined : error instanceof ORPCError ? String(error.code) : "INTERNAL_SERVER_ERROR";
+  const notes = context.engine.takeNotes();
+  const recorded = !annotations.readOnly || annotations.audit === "read";
+  if(code === "BAD_REQUEST" || code === "UNAUTHORIZED") return;
+  if(!recorded && code !== "FORBIDDEN") return;
+  const name = path.join(".");
+  const about = target(path, input, notes);
+  context.engine.recordActivity({
+    action: context.plugin ? `plugin:${name}` : name,
+    ok: code === undefined,
+    ...(code ? { error: code } : {}),
+    ...about,
+    targetLabel: about.targetLabel ?? labelOf(context.engine, output) ?? null
+  });
+}
+
 const builder = os
   .$context<ActionContext>()
   .errors(errorMap)
+  .use(async ({ next, context, path, procedure }, input) => {
+    context.engine.takeNotes();
+    try {
+      const result = await next();
+      recordAction(context, path, procedure, input, undefined, (result as { output?: unknown }).output);
+      return result;
+    } catch (error) {
+      recordAction(context, path, procedure, input, error instanceof HttpError ? fromHttpError(error) : error);
+      throw error;
+    }
+  })
   .use(async ({ next }) => {
     try {
       return await next();
@@ -223,8 +298,15 @@ export function indexActions(router: ActionRouter): Map<string, ActionEntry> {
  */
 export async function runAction(entry: ActionEntry, ctx: ActionContext, input: unknown): Promise<unknown> {
   try {
-    if(entry.plugin) ctx.engine.authorize(entry.annotations, entry.annotations.permit);
-    return await call(entry.procedure, input, { context: ctx });
+    if(entry.plugin) {
+      try {
+        ctx.engine.authorize(entry.annotations, entry.annotations.permit);
+      } catch (error) {
+        if(error instanceof HttpError && error.status === 403) ctx.engine.recordActivity({ action: `plugin:${entry.name}`, ok: false, error: "FORBIDDEN", targetType: entry.plugin });
+        throw error;
+      }
+    }
+    return await call(entry.procedure, input, { context: entry.plugin ? { ...ctx, plugin: entry.plugin } : ctx, path: entry.path });
   } catch (error) {
     if(error instanceof HttpError) {
       // Declared, as the failures inside an action are, so surfaces report it as the action's refusal.

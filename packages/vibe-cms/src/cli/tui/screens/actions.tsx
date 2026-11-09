@@ -4,6 +4,7 @@ import Fuse from "fuse.js";
 import { Box, Text } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import { httpCaller } from "../../../actions/client.ts";
+import { CLI_CALLER } from "../../caller.ts";
 import type { ActionDescription } from "../../../actions/describe.ts";
 import { isActionError } from "../../../actions/errors.ts";
 import { useNav, useSession } from "../app.tsx";
@@ -162,7 +163,7 @@ export function ActionRunScreen({ action }: { action: ActionDescription }) {
     }
     setMode("running");
     const started = performance.now();
-    const call = httpCaller({ url: session.site.url, prefix: session.site.prefix, token: session.auth?.token });
+    const call = httpCaller({ url: session.site.url, prefix: session.site.prefix, token: session.auth?.token, ...CLI_CALLER });
     try {
       const value = await call(action.name, input);
       setOutcome({ ok: true, value, ms: performance.now() - started });

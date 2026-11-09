@@ -42,6 +42,7 @@ function bodyExcerpt(row: { title: string | null, excerpt: string | null }, quer
   return inTitle || !row.excerpt?.includes("\u0001") ? null : row.excerpt;
 }
 import { MAX_TEXT_EDIT_BYTES, textKind } from "../text-files.ts";
+import { activityRow, DEFAULT_ACTIVITY_DAYS, listActivity, pruneActivity, recordActivity, type ActivityFilter, type ActivityInput, type ActivityScope } from "./activity.ts";
 
 export interface EngineState {
   config: AnyConfig,
@@ -72,7 +73,9 @@ export interface RequestScope {
   session: Session | null,
   /** In-process callers (site code, server plugins) may read drafts without a session. */
   trusted: boolean,
-  ctx?: ExecutionContext
+  ctx?: ExecutionContext,
+  /** The channel this request came through, for the activity log. Defaults to `rest`, or `plugin` for trusted in-process callers. */
+  activity?: ActivityScope
 }
 
 export type Doc = DocumentData & { id: string, $meta: DocumentMeta };
@@ -251,6 +254,36 @@ export class Engine {
 
   get config() {
     return this.state.config;
+  }
+
+  /** What the running action reports for its activity entry, besides what the dispatcher sees. */
+  private notes: Record<string, unknown> = {};
+
+  /** Adds to the running action's activity summary: changed fields, a version number. Never content. */
+  note(values: Record<string, unknown>) {
+    Object.assign(this.notes, values);
+  }
+
+  /** Notes what the running action's activity entry calls its target, and passes it through. */
+  private noteLabel(label: string): string {
+    this.note({ label });
+    return label;
+  }
+
+  /** The summary so far, cleared for the next action. */
+  takeNotes(): Record<string, unknown> {
+    const notes = this.notes;
+    this.notes = {};
+    return notes;
+  }
+
+  get activityScope(): ActivityScope {
+    return this.scope.activity ?? { via: this.scope.trusted ? "plugin" : "rest" };
+  }
+
+  /** Records an activity entry for this request's actor and channel. */
+  recordActivity(input: ActivityInput, scope: ActivityScope = this.activityScope) {
+    return recordActivity(this.db, [activityRow(scope, this.scope.session, input)], this.scope.ctx);
   }
 
   get db() {
@@ -668,6 +701,7 @@ export class Engine {
     const now = Math.max(Date.now(), (existing?.updated_at ?? 0) + 1);
     const draft = JSON.stringify(doc);
     const updatedBy = session?.sub ?? null;
+    this.note({ id, locale, fields: changedFields(existing ? JSON.parse(existing.draft) as DocumentData : {}, doc) });
     await this.orm.insert(documents)
       .values({ id, type: input.type, locale, draft, schema_hash: this.state.schemaHash, created_at: now, updated_at: now, updated_by: updatedBy })
       .onConflictDoUpdate({
@@ -795,6 +829,7 @@ export class Engine {
     if(issues.length) throw new HttpError(422, "Fix the highlighted fields before publishing", { issues });
     const data = JSON.stringify(doc);
     const ver = await this.appendVersion(id, locale, data, session);
+    this.note({ ver, locale });
     const now = Math.max(Date.now(), row.updated_at + 1);
     await this.orm.update(documents)
       .set({ draft: data, published: data, published_ver: ver, published_at: now, updated_at: now, updated_by: session?.sub ?? null })
@@ -845,7 +880,7 @@ export class Engine {
       const locale = this.locale(options.locale);
       const rows = await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.locale, locale)));
       if(!rows.length) throw new HttpError(404, "Translation not found");
-      const trash = this.trashStatement({ kind: "document", type, itemId: id, locale, label: this.documentLabel(type, rows), payload: rows, session });
+      const trash = this.trashStatement({ kind: "document", type, itemId: id, locale, label: this.noteLabel(this.documentLabel(type, rows)), payload: rows, session });
       await this.batch([
         trash.statement,
         this.orm.delete(documents).where(and(eq(documents.id, id), eq(documents.locale, locale))),
@@ -862,7 +897,7 @@ export class Engine {
     await this.state.plugins.transform("content.beforeDelete", { type, id, session: session ?? undefined }, output);
     if(output.cancel) throw new HttpError(409, output.cancel);
     const rows = await this.orm.select().from(documents).where(eq(documents.id, id));
-    const trash = this.trashStatement({ kind: "document", type, itemId: id, locale: null, label: this.documentLabel(type, rows), payload: rows, session });
+    const trash = this.trashStatement({ kind: "document", type, itemId: id, locale: null, label: this.noteLabel(this.documentLabel(type, rows)), payload: rows, session });
     // Pending schedules are dropped: a restored document shouldn't publish itself on an old timetable.
     await this.batch([
       trash.statement,
@@ -877,7 +912,12 @@ export class Engine {
   private documentLabel(type: string, rows: DocumentRow[]): string {
     const row = rows.find(r => r.locale === this.defaultLocale) ?? rows[0];
     if(!row) return "Untitled";
-    const doc = JSON.parse(row.draft) as DocumentData;
+    return this.titleOf(type, JSON.parse(row.draft) as DocumentData);
+  }
+
+  /** A document's title, as the editor shows it: the configured title field, else the first likely text field. */
+  titleOf(type: string, doc: DocumentData | null): string {
+    if(!doc || !this.config.schemas[type]) return "Untitled";
     const shape = getSchema(this.config, type).shape;
     const configured = this.config.collections?.[type]?.title;
     const field = configured ?? ["title", "name", "label", "heading"].find(key => shape[key] && unwrap(shape[key]).type === "text")
@@ -971,6 +1011,7 @@ export class Engine {
         ]);
         const row = await this.getRow(item.id, item.locale);
         this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "publish", valid: Boolean(row?.published), doc: row?.published ? JSON.parse(row.published) as DocumentData : null });
+        await this.recordActivity({ action: "documents.publish", ok: true, targetType: item.type, targetId: item.id, locale: item.locale, targetLabel: this.titleOf(item.type, row?.published ? JSON.parse(row.published) as DocumentData : null), summary: { ver: item.ver, scheduled: item.run_at } }, { via: "cron", system: "cron", onBehalfOf: item.created_by });
       } else if(item.action === "unpublish") {
         await this.batch([
           this.orm.update(documents).set({ published: null, published_ver: null, published_at: null })
@@ -978,6 +1019,7 @@ export class Engine {
           this.orm.delete(schedules).where(and(eq(schedules.id, item.id), eq(schedules.locale, item.locale), eq(schedules.action, "unpublish")))
         ]);
         this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "unpublish", valid: false, doc: null });
+        await this.recordActivity({ action: "documents.unpublish", ok: true, targetType: item.type, targetId: item.id, locale: item.locale, summary: { scheduled: item.run_at } }, { via: "cron", system: "cron", onBehalfOf: item.created_by });
       }
     }
     return due.length;
@@ -1228,7 +1270,7 @@ export class Engine {
     if(used) throw new HttpError(409, "This file is used by a document");
     if((await this.storedSite()).icon === id) throw new HttpError(409, "This file is the site's icon");
     // The R2 object stays until the trash is purged, so restoring brings back the same URL.
-    const trash = this.trashStatement({ kind: "asset", type: null, itemId: id, locale: null, label: row.filename, payload: row, session });
+    const trash = this.trashStatement({ kind: "asset", type: null, itemId: id, locale: null, label: this.noteLabel(row.filename), payload: row, session });
     await this.batch([trash.statement, this.orm.delete(assets).where(eq(assets.id, id))]);
     return { deleted: true, trash: trash.id };
   }
@@ -1379,7 +1421,9 @@ export class Engine {
 
   /** Deletes for good: the row, the document's history or the file's bytes. */
   async purgeTrash(id: string): Promise<{ purged: true }> {
-    await this.purge(await this.trashRow(id));
+    const row = await this.trashRow(id);
+    this.noteLabel(row.label);
+    await this.purge(row);
     return { purged: true };
   }
 
@@ -1399,7 +1443,28 @@ export class Engine {
 
   /** Called from the `scheduled` handler. */
   async purgeExpiredTrash(now = Date.now()): Promise<number> {
-    return (await this.emptyTrash({ olderThan: now - this.trashDays * 86_400_000 })).purged;
+    const { purged } = await this.emptyTrash({ olderThan: now - this.trashDays * 86_400_000 });
+    if(purged) await this.recordActivity({ action: "trash.purgeExpired", ok: true, targetType: "trash", summary: { purged, days: this.trashDays } }, { via: "cron", system: "cron" });
+    return purged;
+  }
+
+  /**
+   * The activity log, newest first. People with `viewActivity` (and owners) see everyone's; everyone else
+   * only their own, so `actor` defaults to them and naming someone else is refused.
+   */
+  async listActivity(filter: ActivityFilter) {
+    const session = this.scope.session;
+    if(!session) throw new HttpError(401, "Sign in required");
+    if(!can(this.state, session, { action: "read", scope: "activity" })) {
+      if(filter.actor && filter.actor !== session.sub) throw new HttpError(403, "Not allowed to see other people's activity");
+      filter = { ...filter, actor: session.sub };
+    }
+    return listActivity(this.db, filter);
+  }
+
+  /** Deletes activity entries older than the config's `activity.days` (90 by default). Called from the `scheduled` handler. */
+  async pruneActivity(now = Date.now()): Promise<void> {
+    await pruneActivity(this.db, this.config.activity?.days ?? DEFAULT_ACTIVITY_DAYS, now);
   }
 
   private async purge(row: TrashRow) {
@@ -1620,4 +1685,10 @@ export function mapAssets(schema: AnySchema, value: unknown, fn: (value: unknown
     default:
       return value;
   }
+}
+
+/** Top-level fields whose value differs, for the activity log: which fields changed, never what to. */
+function changedFields(before: DocumentData, after: DocumentData): string[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...keys].filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key])).slice(0, 50);
 }

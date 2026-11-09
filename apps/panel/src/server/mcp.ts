@@ -116,7 +116,8 @@ async function siteRequest(env: Env, grant: GrantRow, session: SessionRow, site:
     const token = await siteToken(env, grant, session, site, fresh);
     const response = await fetch(`${apiBase(site)}${path}`, {
       method: init.method,
-      headers: { ...(init.body === undefined ? {} : { "content-type": "application/json" }), authorization: `Bearer ${token}` },
+      // The site's activity log records these as agent calls through the panel.
+      headers: { ...(init.body === undefined ? {} : { "content-type": "application/json" }), authorization: `Bearer ${token}`, "x-vibe-via": "mcp", "x-vibe-client": "vibe-panel" },
       body: init.body
     });
     if(response.status === 401 && !fresh) continue;

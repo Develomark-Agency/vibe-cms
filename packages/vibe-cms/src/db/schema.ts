@@ -40,6 +40,38 @@ export const versions = sqliteTable("vibe_versions", {
   created_at: integer().notNull()
 }, t => [primaryKey({ columns: [t.id, t.locale, t.ver] })]);
 
+/**
+ * Who did what, through which channel, and whether it worked: one row per action, written by the action
+ * dispatcher (and the few routes that aren't actions). Append-only; the cron trigger prunes old rows.
+ */
+export const activity = sqliteTable("vibe_activity", {
+  /** Time-ordered, so sorting by it sorts by time. */
+  id: text().primaryKey(),
+  at: integer().notNull(),
+  /** The user's `sub`, or `system:cron` / `system:hub`. */
+  actor: text().notNull(),
+  actor_name: text(),
+  via: text().notNull(),
+  client: text(),
+  on_behalf_of: text(),
+  /** `documents.publish`, `plugin:stats.reset`. */
+  action: text().notNull(),
+  target_type: text(),
+  target_id: text(),
+  /** What the target was called when it happened (a document's title, a file's name), so entries stay readable after it changes or goes. */
+  target_label: text(),
+  locale: text(),
+  ok: integer().notNull(),
+  /** The error code when not ok. */
+  error: text(),
+  /** Short JSON: changed field paths, a version number, a role name. Never content, secrets or personal data. */
+  summary: text()
+}, t => [
+  index("vibe_activity_at").on(t.at),
+  index("vibe_activity_actor").on(t.actor, t.at),
+  index("vibe_activity_target").on(t.target_id, t.at)
+]);
+
 export const schedules = sqliteTable("vibe_schedules", {
   id: text().notNull(),
   locale: text().notNull(),
@@ -159,3 +191,4 @@ export type VersionRow = typeof versions.$inferSelect;
 export type ScheduleRow = typeof schedules.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type TrashRow = typeof trash.$inferSelect;
+export type ActivityRow = typeof activity.$inferSelect;

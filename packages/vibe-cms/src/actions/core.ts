@@ -1,4 +1,5 @@
 import { router } from "./define.ts";
+import { activity } from "./core/activity.ts";
 import { assets } from "./core/assets.ts";
 import { backups } from "./core/backups.ts";
 import { documents } from "./core/documents.ts";
@@ -15,7 +16,8 @@ export const coreActions = router({
   folders,
   trash,
   site,
-  backups
+  backups,
+  activity
 });
 
 export type CoreActions = typeof coreActions;

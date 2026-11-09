@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { DEV_SESSION } from "../auth.ts";
+import { activityFromRequest } from "../activity.ts";
 import { Engine } from "../engine.ts";
 import { handleMcp } from "../mcp.ts";
 import * as oauth from "../oauth.ts";
@@ -24,6 +25,8 @@ mcp.all("/mcp", async c => {
       { status: 401, headers: { "www-authenticate": "Bearer" } }
     );
   }
-  const scoped = new Engine(state, { origin: url.origin, session: agent, trusted: false, ctx });
+  // The MCP client names itself in `initialize`, which this stateless server doesn't keep: its user agent stands in.
+  const activity = activityFromRequest(c.req.raw, "mcp");
+  const scoped = new Engine(state, { origin: url.origin, session: agent, trusted: false, ctx, activity: { ...activity, via: "mcp" } });
   return handleMcp(c.req.raw, { engine: scoped }, state.plugins);
 });

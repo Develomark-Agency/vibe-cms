@@ -271,7 +271,7 @@ export async function hubSites(): Promise<{ org?: string, sites: HubSite[] } | u
     }).catch(() => null);
     if(!response) throw new Error(`Couldn't reach ${login.hub}`);
     if(response.status === 401 && !retry) continue;
-    const data = (await response.json().catch(() => null) ?? {}) as { sites?: { url: string, name: string, admin: string }[], error?: string };
+    const data = (await response.json().catch(() => null) ?? {}) as { sites?: Array<{ url: string, name: string, admin: string }>, error?: string };
     if(response.status === 404 || response.status === 405) throw new Error(`${login.hub} doesn't have the site list yet. It arrives with the next release, so redeploy the hub from a build that includes it.`);
     if(!response.ok || !Array.isArray(data.sites)) throw new Error(data.error ?? `${login.hub} answered ${response.status}`);
     return { org: login.org, sites: data.sites.map(site => ({ url: new URL(site.url).origin, name: site.name, prefix: adminPrefix(site.admin) })) };

@@ -86,7 +86,7 @@ export interface WorkerExport<E> {
 export interface VibeHandler<C extends AnyConfig, E> {
   /**
    * Wraps your Worker's handlers. Requests under the prefix (`/_vibe`) and `/.well-known/vibe-cms` go to the
-   * CMS, the rest to `fetch`. `scheduled` runs scheduled publishing, trash purging and plugin cron jobs, then
+   * CMS, the rest to `fetch`. `scheduled` runs scheduled publishing, trash purging, activity pruning and plugin cron jobs, then
    * yours. `queue` runs the plugin consumer for that queue, else yours, else throws.
    */
   (handlers?: WorkerHandlers<E>): WorkerExport<E>,
@@ -244,10 +244,11 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
 
   async function scheduled(event: ScheduledEvent, env: E, ctx: ExecutionContext): Promise<void> {
     const s = await state(env);
-    const engine = new Engine(s, { origin: "", session: null, trusted: true, ctx });
+    const engine = new Engine(s, { origin: "", session: null, trusted: true, ctx, activity: { via: "cron", system: "cron" } });
     const jobs: Array<Promise<unknown>> = [
       engine.runSchedules(event.scheduledTime),
       engine.purgeExpiredTrash(event.scheduledTime),
+      engine.pruneActivity(event.scheduledTime),
       s.imageHealth?.refresh() ?? Promise.resolve()
     ];
     for(const plugin of s.plugins.plugins) {

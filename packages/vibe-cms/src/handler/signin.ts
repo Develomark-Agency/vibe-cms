@@ -17,6 +17,7 @@ import { count, eq, getTableColumns, like, lt, or, sql } from "drizzle-orm";
 import { createDb } from "../db/client.ts";
 import { challenges, invites, meta, passkeys, signins, users } from "../db/schema.ts";
 import { getMeta, newId, sha256 } from "./db.ts";
+import { activityRow, recordActivity } from "./activity.ts";
 import type { EngineState } from "./engine.ts";
 
 /**
@@ -333,6 +334,7 @@ async function signIn(state: State, url: URL, identity: Identity, userId?: strin
   await orm.delete(signins).where(lt(signins.expires_at, Date.now()));
   await orm.insert(signins).values({ hash: await sha256(token), identity: JSON.stringify(identity), expires_at: Date.now() + SIGNIN_TTL });
   if(userId) await orm.update(users).set({ last_sign_in_at: Date.now() }).where(eq(users.id, userId));
+  await recordActivity(state.db, [activityRow({ via: "ui" }, { sub: identity.sub, name: identity.name, roles: [] }, { action: "auth.signIn", ok: true, targetType: "user", targetId: userId ?? null })]);
   return signinCookie(state, url, token, SIGNIN_TTL / 1000);
 }
 
@@ -351,7 +353,11 @@ export async function resume(state: State, cookie: string | undefined): Promise<
 }
 
 export async function signOut(state: State, url: URL, cookie: string | undefined): Promise<string> {
-  if(cookie) await createDb(state.db).delete(signins).where(eq(signins.hash, await sha256(cookie)));
+  if(cookie) {
+    const identity = await cookieIdentity(state, cookie);
+    await createDb(state.db).delete(signins).where(eq(signins.hash, await sha256(cookie)));
+    if(identity) await recordActivity(state.db, [activityRow({ via: "ui" }, { sub: identity.sub, name: identity.name, roles: [] }, { action: "auth.signOut", ok: true, targetType: "user" })]);
+  }
   return signinCookie(state, url, "", 0);
 }
 

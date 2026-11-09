@@ -35,7 +35,11 @@ export interface HttpCallerOptions {
   /** A site session token. Development sites give one to `POST /_vibe/api/session { dev: true }`. */
   token?: string,
   fetch?: typeof fetch,
-  credentials?: RequestInit["credentials"]
+  credentials?: RequestInit["credentials"],
+  /** The channel the activity log records (`X-Vibe-Via`), e.g. `cli`. Attribution only: who acts is the token's user. */
+  via?: "ui" | "rest" | "cli" | "mcp",
+  /** The client's name and version for the activity log (`X-Vibe-Client`), e.g. `vibe-cms/0.2.9`. */
+  client?: string
 }
 
 /** Calls actions over `POST /_vibe/api/actions/<name>`: JSON, or multipart when the input holds a `File`. */
@@ -45,6 +49,8 @@ export function httpCaller(options: HttpCallerOptions): ActionCaller {
   return async (name, input) => {
     const headers = new Headers();
     if(options.token) headers.set("authorization", `Bearer ${options.token}`);
+    if(options.via) headers.set("x-vibe-via", options.via);
+    if(options.client) headers.set("x-vibe-client", options.client);
     const { body: payload, contentType } = encodeInput(input);
     if(contentType) headers.set("content-type", contentType);
     const response = await doFetch(`${base}${name}`, { method: "POST", headers, body: payload, credentials: options.credentials });

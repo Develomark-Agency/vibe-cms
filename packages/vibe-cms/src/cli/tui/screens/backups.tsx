@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import { Box, Text } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { httpCaller } from "../../../actions/client.ts";
+import { CLI_CALLER } from "../../caller.ts";
 import { folderStore } from "../../../backups/fs.ts";
 import { BackupError, planRestore, restoreSnapshot, unpackSnapshot, verifyRestore, type Progress } from "../../../backups/index.ts";
 import { bytes, exportSite, formatElapsed } from "../../backups.ts";
@@ -63,7 +64,7 @@ function problemsOf(error: unknown): string[] {
 
 async function callerFor(session: ReturnType<typeof useSession>) {
   if(!session.site) throw new Error("Choose a site first");
-  return httpCaller({ url: session.site.url, prefix: session.site.prefix, token: session.auth?.token });
+  return httpCaller({ url: session.site.url, prefix: session.site.prefix, token: session.auth?.token, ...CLI_CALLER });
 }
 
 const exportFields: Field[] = [

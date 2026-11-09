@@ -590,7 +590,7 @@ const LAYOUT = { duration: 0.3, ease: EASE };
  * decides slowly, the interface answers fast.
  * Motion animates from wherever each value currently is, so toggling mid-animation reverses smoothly.
  */
-function Collapse({ open, children }: { open: boolean, children: ReactNode }) {
+export function Collapse({ open, children }: { open: boolean, children: ReactNode }) {
   const duration = open ? 0.22 : 0.15;
   return (
     <MotionConfig reducedMotion="user">

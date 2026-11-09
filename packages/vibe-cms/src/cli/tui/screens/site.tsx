@@ -74,7 +74,9 @@ export function SiteScreen({ then }: { then?: () => void }) {
       hint: [where, site.folder].filter(Boolean).join("  ") + (isCurrent(site) ? "  · current" : "")
     });
   }
-  const same = (a: Site, b: Site) => a.url === b.url && a.prefix === b.prefix;
+  function same(a: Site, b: Site) {
+    return a.url === b.url && a.prefix === b.prefix;
+  }
   const org = session.org;
   const orgSites = typeof org === "object" && org.state === "ok" ? org.sites : [];
   if(org === "loading" || org.state !== "none") {

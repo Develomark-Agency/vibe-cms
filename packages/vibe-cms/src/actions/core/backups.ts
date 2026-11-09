@@ -20,14 +20,16 @@ const manifestInput = z.object({
 const backupsManifest = base({
   summary: "Describe a backup",
   description: "Starts a snapshot: the site's ID, content types with their schema hashes, and how many rows each table and how many files the backup has. Then read each table with `backups.export` and the files with `backups.files`. Most callers use `vibe-cms snapshot` or the panel, which do all of it.",
-  readOnly: true
+  readOnly: true,
+  audit: "read"
 })
   .handler(({ context: { engine } }) => snapshots.manifest(engine));
 
 const backupsExport = base({
   summary: "Read a backup table",
   description: "One page of a table's rows, as stored. Pass `next` back as `after` until it's null.",
-  readOnly: true
+  readOnly: true,
+  audit: "read"
 })
   .input(z.object({
     table: backupTable,
@@ -39,7 +41,8 @@ const backupsExport = base({
 const backupsFiles = base({
   summary: "List a backup's files",
   description: "One page of media files, trashed ones included, each with its size, etag and a signed download `url` good for an hour. Pass `next` back as `after` until it's null. `exists: false` means the bucket lost a file the library lists.",
-  readOnly: true
+  readOnly: true,
+  audit: "read"
 })
   .input(z.object({
     after: z.string().optional(),

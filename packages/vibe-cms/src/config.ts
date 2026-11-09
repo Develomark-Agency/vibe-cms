@@ -47,6 +47,8 @@ export interface RoleRules {
    * them; a restore replaces everything.
    */
   backups?: boolean | "take",
+  /** Seeing everyone's activity (the Activity page, `activity.list`). Everyone sees their own. */
+  viewActivity?: boolean,
   /** Per content type, or `"*"` for every type without its own rule (a type's rule replaces `"*"`). `delete` is never implied. */
   [type: string]: Action[] | boolean | "take" | { locales: string[] } | undefined
 }
@@ -89,6 +91,8 @@ export interface ConfigInput {
   prefix?: string,
   /** Deleted documents and files stay restorable this long, then the cron trigger purges them. Defaults to 30 days. */
   trash?: { days?: number },
+  /** Activity log entries are kept this long, then the cron trigger prunes them. Defaults to 90 days. See `vibe-cms docs activity`. */
+  activity?: { days?: number },
   /**
    * Scheduled backups: `true` lets the site's hub (`VIBE_ORG`) take snapshots and restore them as
    * itself, and nothing else. See `vibe-cms docs backups`.

@@ -37,7 +37,7 @@ const BACKUP_LEVELS: Array<{ value: "none" | "take" | "restore", label: string }
   { value: "restore", label: "Take and restore" }
 ];
 
-const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "*"]);
+const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "viewActivity", "*"]);
 
 function levelOf(actions: Action[] | undefined): Level {
   if(!actions?.length) return "none";
@@ -214,6 +214,10 @@ export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
 
           <Row title="Manage roles" description={types ? "Create, change and give out roles, but only up to what this role can do itself." : "Create, change and give out roles up to this role's own access."}>
             <Switch checked={rules.manageRoles === true} disabled={readOnly} aria-label="Manage roles" onCheckedChange={on => set("manageRoles", on || undefined)} />
+          </Row>
+
+          <Row title="See activity" description="Everyone's activity: who changed what, and through which channel. People always see their own.">
+            <Switch checked={rules.viewActivity === true} disabled={readOnly} aria-label="See activity" onCheckedChange={on => set("viewActivity", on || undefined)} />
           </Row>
 
           <ul className="border-t">

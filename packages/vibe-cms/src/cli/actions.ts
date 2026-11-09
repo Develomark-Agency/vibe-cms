@@ -7,6 +7,7 @@ import { coreActions } from "../actions/core.ts";
 import { listActions, type ActionEntry } from "../actions/define.ts";
 import { fromText, inputFields } from "../actions/inputs.ts";
 import { httpCaller } from "../actions/client.ts";
+import { CLI_CALLER } from "./caller.ts";
 import { hubSiteToken, loginIfInteractive, siteLoginToken } from "./login.ts";
 
 /**
@@ -96,7 +97,7 @@ function actionCommand(action: ActionEntry) {
         process.exitCode = 1;
         return;
       }
-      const call = httpCaller({ url: values.site, prefix: values.prefix, token });
+      const call = httpCaller({ url: values.site, prefix: values.prefix, token, ...CLI_CALLER });
       try {
         console.log(JSON.stringify(await call(action.name, fromText(action.input, text)), null, 2));
       } catch (error) {
@@ -142,7 +143,7 @@ export const runActionCommand = command({
       return;
     }
     try {
-      console.log(JSON.stringify(await httpCaller({ url: values.site, prefix: values.prefix, token })(values.name, input), null, 2));
+      console.log(JSON.stringify(await httpCaller({ url: values.site, prefix: values.prefix, token, ...CLI_CALLER })(values.name, input), null, 2));
     } catch (error) {
       reportFailure(error, token);
     }

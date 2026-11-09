@@ -3,7 +3,7 @@ import { navIcons } from "./icons.ts";
 import type { IconName } from "../../icons.ts";
 import type { SiteWarning } from "../../handler/images.ts";
 import { MetadataPromptHost } from "./upload-metadata.tsx";
-import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon, ShieldIcon } from "lucide-react";
+import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon, ShieldIcon, ActivityIcon } from "lucide-react";
 import { createContext, StrictMode, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Outlet, useRouteError, type RouteObject } from "react-router";
@@ -33,6 +33,7 @@ import { UsersPage } from "./users.tsx";
 import { RolesPage } from "./roles.tsx";
 import { ConnectApp, ConnectionsPage, takeConnectRequest } from "./connect.tsx";
 import { TrashPage } from "./trash.tsx";
+import { ActivityPage } from "./activity.tsx";
 import { createAdminRouter, Link, match, navigate, useLocation, useNavigationGuard, useNavigationSync, usePageTransitions, useParams } from "./router.tsx";
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
 import { openPick, type PreviewPick } from "./reveal.ts";
@@ -172,6 +173,7 @@ function adminRoutes(plugins: Required<AdminPlugin>): RouteObject[] {
       { path: "users", element: <Allowed when={a => a.canManageUsers}><UsersPage /></Allowed> },
       { path: "roles", element: <Allowed when={a => a.canManageRoles}><RolesPage /></Allowed> },
       { path: "connections", element: <Allowed when={a => a.canConnect}><ConnectionsPage /></Allowed> },
+      { path: "activity", element: <ActivityPage /> },
       { path: "trash", element: <Allowed when={a => a.canTrash}><TrashPage /></Allowed> },
       ...Object.entries(plugins.pages).map(([pattern, entry]): RouteObject => ({ path: pattern, element: <PluginRoute component={entry.component} /> })),
       { path: "*", element: <NotFound /> }
@@ -327,6 +329,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
         ...(session.permissions.site ? [{ key: "site", to: "/settings", label: "Site", icon: <SlidersHorizontalIcon /> } satisfies NavItem] : []),
         ...(canManageUsers ? [{ key: "users", to: "/users", label: "Users", icon: <UsersIcon /> } satisfies NavItem] : []),
         ...(canManageRoles ? [{ key: "roles", to: "/roles", label: "Roles", icon: <ShieldIcon /> } satisfies NavItem] : []),
+        { key: "activity", to: "/activity", label: "Activity", icon: <ActivityIcon /> } satisfies NavItem,
         ...singletons.map((type): NavItem => ({
           key: `content:${type}`,
           to: `/content/${type}`,
@@ -363,7 +366,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
       <main data-scroll-root className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto bg-background md:rounded-t-[20px] md:shadow-(--shadow-card)">
         {/* Sticky inside the scrolling panel rather than fixed to the window, so it stays clear of the scrollbar, whatever its width. */}
         {/* Not on pages that aren't per language, where it would sit over their sticky actions. */}
-        {config.locales!.length > 1 && path !== "/roles" && path !== "/users" && (
+        {config.locales!.length > 1 && path !== "/roles" && path !== "/users" && path !== "/activity" && (
           <div className="pointer-events-none sticky top-0 z-30 hidden h-0 justify-end md:flex">
             <div className="pointer-events-auto mt-2.5 mr-2.5">
               <LocaleMenu locale={locale} setLocale={setLocale} />
@@ -553,6 +556,7 @@ function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boo
     { id: "dashboard", group: "Go to", label: "Dashboard", icon: <HomeIcon />, run: () => go("/") },
     ...types.map((type): PaletteCommand => ({ id: `go-${type}`, group: "Go to", label: collectionLabel(config, type), icon: <Icon name={collectionSettings(config, type).icon} />, run: () => go(`/content/${type}`) })),
     ...(session.permissions.media.read ? [{ id: "media", group: "Go to", label: "Media", icon: <ImageIcon />, run: () => go("/media") } satisfies PaletteCommand] : []),
+    { id: "activity", group: "Go to", label: "Activity", icon: <ActivityIcon />, run: () => go("/activity") },
     ...(session.permissions.media.delete || types.some(t => session.permissions.types[t]?.delete) ? [{ id: "trash", group: "Go to", label: "Trash", icon: <Trash2Icon />, run: () => go("/trash") } satisfies PaletteCommand] : []),
     { id: "preview", group: "Site", label: "Preview drafts", icon: <AppWindowIcon />, run: () => {
       onOpenChange(false);

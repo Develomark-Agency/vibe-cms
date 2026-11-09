@@ -220,6 +220,12 @@ actions
     async c => c.json(await c.var.actions.folders.delete(c.req.valid("query") as ActionInputOf<typeof a.folders.delete>))
   )
 
+  .get(
+    "/activity",
+    coerceQuery(a.activity.list),
+    async c => c.json(await c.var.actions.activity.list(c.req.valid("query")))
+  )
+
   .get("/trash", async c => c.json(await c.var.actions.trash.list()))
   .delete("/trash", async c => c.json(await c.var.actions.trash.empty()))
   .get("/trash/:id", async c => c.json(await c.var.actions.trash.get(c.req.param())))

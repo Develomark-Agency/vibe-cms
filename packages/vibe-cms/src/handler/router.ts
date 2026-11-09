@@ -4,6 +4,7 @@ import { HttpError } from "../config.ts";
 import { fromHttpError } from "../actions/define.ts";
 import { errorBody, isActionError } from "../actions/errors.ts";
 import { announceClaim, announceSetup } from "./signin.ts";
+import { activityFromRequest } from "./activity.ts";
 import { Engine } from "./engine.ts";
 import { errorResponse, json, readSession, type SiteEnv } from "./http.ts";
 import { actions } from "./routes/actions.ts";
@@ -88,7 +89,7 @@ export function createRouter(prefix: string) {
     }
     const session = await readSession(c.req.raw, c.env);
     c.set("session", session);
-    c.set("engine", new Engine(state, { origin: url.origin, session, trusted: false, ctx }));
+    c.set("engine", new Engine(state, { origin: url.origin, session, trusted: false, ctx, activity: activityFromRequest(c.req.raw) }));
     await next();
   });
 

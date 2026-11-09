@@ -43,7 +43,9 @@ export interface Permissions {
   /** May invite people and change their roles (sites that sign people in themselves). */
   users: boolean,
   /** May edit the site's roles: owners and roles with `all`. */
-  roles: boolean
+  roles: boolean,
+  /** May see everyone's activity (`viewActivity`); everyone sees their own. Missing from older sites. */
+  activity?: boolean
 }
 
 export interface SessionState {
@@ -100,6 +102,7 @@ export function setUnauthorizedHandler(handler: () => void) {
 export async function request<T>(prefix: string, path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if(token) headers.set("authorization", `Bearer ${token}`);
+  headers.set("x-vibe-via", "ui");
   let body = init.body;
   if(init.json !== undefined) {
     headers.set("content-type", "application/json");
@@ -121,7 +124,7 @@ export async function request<T>(prefix: string, path: string, init: RequestInit
 /** The site's own routes, typed by the server's (`SiteApi`). Carries the session token and reports expiry like `request`. */
 function createSiteApi(prefix: string) {
   return hc<SiteApi>(`${location.origin}${prefix}/api`, {
-    headers: (): Record<string, string> => (token ? { authorization: `Bearer ${token}` } : {}),
+    headers: (): Record<string, string> => ({ "x-vibe-via": "ui", ...(token ? { authorization: `Bearer ${token}` } : {}) }),
     init: { credentials: "same-origin" },
     async fetch(input: RequestInfo | URL, init?: RequestInit) {
       const response = await fetch(input, init);

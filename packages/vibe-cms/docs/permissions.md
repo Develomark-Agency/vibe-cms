@@ -97,6 +97,7 @@ A role is an object of rules; a user may do anything any of their roles allows.
 | `backups: "take"` | Taking snapshots (`vibe-cms docs backups`), which reads every draft and file. Not implied by anything but `all`. |
 | `backups: true` | Taking and restoring them. A restore replaces everything. |
 | `manageRoles: true` | Creating, changing and giving out roles up to the person's own access (above). |
+| `viewActivity: true` | Seeing everyone's activity (`vibe-cms docs activity`). Everyone always sees their own. Not implied by anything but `all`. |
 
 Details that matter:
 

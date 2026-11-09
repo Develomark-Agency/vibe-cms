@@ -8,6 +8,7 @@ import { styleText } from "node:util";
 import { command, flag, option, optional, positional, string } from "cmd-ts";
 import type { ActionCaller } from "../actions/client.ts";
 import { httpCaller } from "../actions/client.ts";
+import { CLI_CALLER } from "./caller.ts";
 import { folderStore } from "../backups/fs.ts";
 import { BackupError, packSnapshot, planRestore, restoreSnapshot, takeSnapshot, unpackSnapshot, verifyRestore, type BackupManifest, type Progress } from "../backups/index.ts";
 import { connection, siteToken } from "./actions.ts";
@@ -63,7 +64,7 @@ async function caller(values: { site: string, token?: string, prefix: string }) 
     console.error(`${styleText("red", "✗")} ${error.message}`);
     process.exit(1);
   });
-  return httpCaller({ url: values.site, prefix: values.prefix, token });
+  return httpCaller({ url: values.site, prefix: values.prefix, token, ...CLI_CALLER });
 }
 
 function fail(error: unknown): never {

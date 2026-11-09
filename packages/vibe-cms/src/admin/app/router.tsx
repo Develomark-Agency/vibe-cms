@@ -60,9 +60,9 @@ const SCROLL_KEY = "vibe-admin:scroll";
 const scrolls = new Map<string, number>(readScrolls());
 let shownKey: string | undefined;
 
-function readScrolls(): [string, number][] {
+function readScrolls(): Array<[string, number]> {
   try {
-    return JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? "[]") as [string, number][];
+    return JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? "[]") as Array<[string, number]>;
   } catch {
     return [];
   }

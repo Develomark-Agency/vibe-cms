@@ -150,9 +150,10 @@ export interface Permit {
   locale?: string,
   /**
    * `"media"` for the asset library, `"site"` for the site's name, accent and icon, `"backups"` for taking
-   * and restoring backups, `"users"` for who may sign in to a site without an org (owners and `all` roles).
+   * and restoring backups, `"users"` for who may sign in to a site without an org (owners and `all` roles),
+   * `"activity"` for seeing everyone's activity (`viewActivity`).
    */
-  scope?: "content" | "media" | "site" | "backups" | "users"
+  scope?: "content" | "media" | "site" | "backups" | "users" | "activity"
 }
 
 export function can(access: Access, session: Session | null, permit: Permit): boolean {
@@ -173,6 +174,7 @@ function allows(rules: RoleRules, { action, type, locale, scope }: Permit): bool
   // Who may sign in, and as what: role managers too, limited to roles within their own (signin.ts).
   if(scope === "users") return rules.manageRoles === true;
   if(scope === "site") return rules.siteSettings === true;
+  if(scope === "activity") return rules.viewActivity === true;
   // Restoring (`write`) needs `true`; taking a snapshot (`read`) also `"take"`.
   if(scope === "backups") return rules.backups === true || (rules.backups === "take" && action === "read");
   if(scope === "media") {
@@ -231,6 +233,7 @@ export function permissionSummary(access: Access, session: Session) {
     locales: writeLocales,
     site: can(access, session, { action: "write", scope: "site" }),
     users: can(access, session, { action: "write", scope: "users" }),
+    activity: can(access, session, { action: "read", scope: "activity" }),
     roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true || access.roles.map[role]?.manageRoles === true)
   };
 }
