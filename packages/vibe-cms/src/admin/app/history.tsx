@@ -45,9 +45,9 @@ export function HistoryPage({ type, id, tab }: { type: string, id: string, tab: 
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
-        {/* Shared with the sibling tab (`data-shared`), so it holds still while the content changes over. */}
-        <div className="flex min-w-0 flex-1 items-center gap-2" data-shared="title">
+      {/* The same bar on both tabs (`data-shared`), so it stays put while only the content changes over. */}
+      <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6" data-shared="bar">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <Button variant="ghost" size="icon-sm" className="-ml-1.5 rounded-[8px] md:-ml-3.5" aria-label="Back to the editor" nativeButton={false} render={<Link to={editorPath} />}>
             <ChevronLeftIcon />
           </Button>
@@ -56,7 +56,7 @@ export function HistoryPage({ type, id, tab }: { type: string, id: string, tab: 
             <p className="truncate text-xs text-muted-foreground">History</p>
           </div>
         </div>
-        <div data-shared="actions">
+        <div>
           <Segmented<Tab> label="History" value={tab} onChange={setTab} options={[{ value: "versions", label: "Versions" }, { value: "activity", label: "Activity" }]} />
         </div>
       </header>
@@ -97,20 +97,34 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
     placeholderData: keepPreviousData,
     queryFn: () => cms.actions.documents.version({ type, id, locale, ver: previous! })
   });
+  // Worked out only once both versions of this pair have arrived; until then the last pair stays on
+  // screen, heading and all, rather than comparing the new version with the old one's neighbour.
+  const ready = Boolean(current.data && !current.isPlaceholderData && (previous === null || (before.data && !before.isPlaceholderData)));
+  const computed = useMemo(() => {
+    if(!ready) return null;
+    const a = previous === null ? {} : withPositionalKeys(schema, structuredClone(before.data!.data as DocumentData));
+    const b = withPositionalKeys(schema, structuredClone(current.data!.data as DocumentData));
+    return {
+      ver: selected,
+      previous,
+      data: current.data!,
+      changes: diff(schema, a, b).map(change => ({ ...change, status: "clean" }) as CheckedChange)
+    };
+  }, [ready, current.data, before.data, previous, schema, selected]);
+  const [last, setLast] = useState<typeof computed>(null);
+  useEffect(() => {
+    if(computed) setLast(computed);
+  }, [computed]);
+  const view = computed ?? last;
+  const changes = view?.changes ?? [];
   // The changes cascade in once, when the page first shows a version; later picks swap in place.
   const [shown, setShown] = useState(false);
   useEffect(() => {
-    if(current.data && !shown) {
+    if(view && !shown) {
       const timer = setTimeout(() => setShown(true), 600);
       return () => clearTimeout(timer);
     }
-  }, [current.data, shown]);
-  const changes = useMemo<CheckedChange[]>(() => {
-    if(!current.data || (previous !== null && !before.data)) return [];
-    const a = previous === null ? {} : withPositionalKeys(schema, structuredClone(before.data!.data as DocumentData));
-    const b = withPositionalKeys(schema, structuredClone(current.data.data as DocumentData));
-    return diff(schema, a, b).map(change => ({ ...change, status: "clean" }));
-  }, [current.data, before.data, previous, schema]);
+  }, [view, shown]);
 
   async function restore() {
     if(selected === null) return;
@@ -159,13 +173,13 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
       <section className="flex min-w-0 flex-col gap-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
-            <h2 className="text-base font-semibold">Version {selected}{liveVer === selected ? " · live" : ""}</h2>
+            <h2 className="text-base font-semibold">Version {view?.ver ?? selected}{liveVer === (view?.ver ?? selected) ? " · live" : ""}</h2>
             <p className="text-sm text-muted-foreground">
-              {current.data ? `Published ${formatDate(current.data.createdAt)} by ${displayUser(current.data.author, session)}` : " "}
+              {view ? `Published ${formatDate(view.data.createdAt)} by ${displayUser(view.data.author, session)}` : " "}
             </p>
           </div>
           <Segmented<"changes" | "whole"> label="Show" value={whole ? "whole" : "changes"} onChange={value => setWhole(value === "whole")}
-            options={[{ value: "changes", label: previous === null ? "What it set" : `Changes from ${previous}` }, { value: "whole", label: "Whole version" }]} />
+            options={[{ value: "changes", label: (view?.previous ?? previous) === null ? "What it set" : `Changes from ${view?.previous ?? previous}` }, { value: "whole", label: "Whole version" }]} />
           {canRestore && (
             <Button variant="outline" size="sm" disabled={restoring || !current.data} onClick={() => void restore()}>
               {restoring ? <Spinner /> : <RotateCcwIcon />} Restore
@@ -173,15 +187,16 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
           )}
         </div>
 
-        {!current.data ? <Delayed><Skeleton className="h-40 w-full" /></Delayed>
-          : whole ? (
+        {/* Changes and the whole version are different views: switching between them arrives like new content. */}
+        {!view ? <Delayed><Skeleton className="h-40 w-full" /></Delayed> : <div key={whole ? "whole" : "changes"} className={cn(shown && "rise-in")}>{
+          whole ? (
             <div className="pointer-events-none flex flex-col gap-6 rounded-[16px] p-5 elevated">
               {Object.entries(schema.shape).map(([key, field]) => (
-                <Field key={key} schema={field} name={key} path={[key]} value={(current.data.data as DocumentData)[key]} issues={[]} readOnly doc={{ type, id }} onChange={() => {}} />
+                <Field key={key} schema={field} name={key} path={[key]} value={(view.data.data as DocumentData)[key]} issues={[]} readOnly doc={{ type, id }} onChange={() => {}} />
               ))}
             </div>
           ) : !changes.length ? (
-            <p className="rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Published with no changes from version {previous}.</p>
+            <p className="rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Published with no changes from version {view.previous}.</p>
           ) : (
             <ul className={cn("flex flex-col divide-y overflow-hidden rounded-[16px] well", !shown && "stagger")}>
               {changes.map((change, i) => (
@@ -191,7 +206,7 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
                 </li>
               ))}
             </ul>
-          )}
+          )}</div>}
       </section>
     </div>
   );

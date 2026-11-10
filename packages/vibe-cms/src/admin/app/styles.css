@@ -299,7 +299,12 @@
   [data-shared="title"] { view-transition-name: page-title; }
   [data-shared="summary"] { view-transition-name: page-summary; }
   [data-shared="actions"] { view-transition-name: page-actions; }
+  /* A whole header bar shared by sibling pages (a page's own tabs): it's the same bar, so it doesn't fade at all. */
+  [data-shared="bar"] { view-transition-name: page-bar; }
 }
+
+::view-transition-old(page-bar) { animation: none; opacity: 0; }
+::view-transition-new(page-bar) { animation: none; }
 
 ::view-transition-old(*.changed) {
   animation: 100ms ease-out both vibe-fade-out;
