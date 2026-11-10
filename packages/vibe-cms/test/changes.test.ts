@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import v from "../src/schema/index.ts";
 import { blocks, defineBlock } from "../src/blocks/index.ts";
 import { Text } from "../src/blocks/builtins.ts";
-import { assignKeys, check, diff, merge, withPositionalKeys, type Branch } from "../src/changes/index.ts";
+import { assignKeys, changedBlocks, check, diff, merge, withPositionalKeys, type Branch } from "../src/changes/index.ts";
 
 const Hero = defineBlock({ type: "hero", label: "Hero", fields: { heading: v.text(), align: v.enum(["left", "center"]) } });
 const Quote = defineBlock({ type: "quote", label: "Testimonial", fields: { quote: v.text() } });
@@ -162,4 +162,18 @@ test("blocks saved before keys match by position across copies", () => {
   const branch = withPositionalKeys(schema, structuredClone(old));
   branch.blocks[1] = { ...branch.blocks[1]!, quote: "C" } as never;
   expect(diff(schema, live, branch).map(c => c.path)).toEqual(["blocks[pos1].quote"]);
+});
+
+test("changedBlocks names what the preview outlines, by position on the page", () => {
+  const after = edit(doc => {
+    doc.title = "Not a block";
+    doc.blocks = [{ ...quote }, { ...hero, heading: "Hi" }, { type: "quote", _key: "n", quote: "New" }];
+  });
+  expect(changedBlocks(schema, base, after)).toEqual([
+    { field: "blocks", index: 0, kind: "moved" },
+    { field: "blocks", index: 1, kind: "changed" },
+    { field: "blocks", index: 2, kind: "added" }
+  ]);
+  // Before the first publish, every block is new.
+  expect(changedBlocks(schema, null, base).map(b => b.kind)).toEqual(["added", "added"]);
 });

@@ -1,5 +1,5 @@
 import { animate, motion, useDragControls, useMotionValue, useMotionValueEvent, type PanInfo } from "motion/react";
-import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, LinkIcon, MoreHorizontalIcon, RotateCwIcon, RotateCwSquareIcon, ScalingIcon, SmartphoneIcon, SquareMousePointerIcon, XIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, GitCompareIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, LinkIcon, MoreHorizontalIcon, RotateCwIcon, RotateCwSquareIcon, ScalingIcon, SmartphoneIcon, SquareMousePointerIcon, XIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "../components/ui/button.tsx";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../components/ui/command.tsx";
@@ -17,7 +17,7 @@ import { Spinner } from "../components/ui/spinner.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
 import { DEVICES, matchesDevice, type Device } from "./devices.ts";
-import { closePreview, getPreview, popOutPreview, reloadPreview, setPreviewFrame, setPreviewPicking, setPreviewSynced, subscribePreview } from "./preview.ts";
+import { closePreview, getPreview, popOutPreview, reloadPreview, setPreviewFrame, setPreviewHighlight, setPreviewPicking, setPreviewSynced, subscribePreview } from "./preview.ts";
 
 /** The big three newest first, as Playwright lists them; everyone else by name. */
 const GROUPS = (["Apple", "Google", "Samsung", "Other"] as const).map(maker => {
@@ -487,6 +487,9 @@ export function PreviewWindow() {
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuCheckboxItem checked={preview.synced} onCheckedChange={setPreviewSynced}>
               <LinkIcon /> Follow the editor
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem checked={preview.highlight} onCheckedChange={setPreviewHighlight}>
+              <GitCompareIcon /> Outline unpublished changes
             </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={reloadPreview}><RotateCwIcon /> Reload</DropdownMenuItem>

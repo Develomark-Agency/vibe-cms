@@ -270,6 +270,45 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
     ring.addEventListener("transitionend", function() { ring.remove(); });
   }
 
+  // --- Changes ------------------------------------------------------------------------------------
+  // The editor lists the blocks its unpublished changes add, change or move on this page; each gets a
+  // dashed outline and a label, redrawn as the page lays out again.
+  var changes = null;
+  var changeLabels = { added: "New", changed: "Changed", moved: "Moved" };
+
+  function drawChanges() {
+    var old = document.querySelectorAll("[data-vibe-change]");
+    for(var i = 0; i < old.length; i++) old[i].remove();
+    if(!changes || changes.path.split("?")[0] !== location.pathname) return;
+    changes.blocks.forEach(function(block) {
+      var rects = blockElements(block.index).map(function(el) { return el.getBoundingClientRect(); }).filter(function(r) { return r.width || r.height; });
+      if(!rects.length) return;
+      var top = Math.min.apply(null, rects.map(function(r) { return r.top; })) + scrollY;
+      var bottom = Math.max.apply(null, rects.map(function(r) { return r.bottom; })) + scrollY;
+      var left = Math.min.apply(null, rects.map(function(r) { return r.left; })) + scrollX;
+      var right = Math.max.apply(null, rects.map(function(r) { return r.right; })) + scrollX;
+      var color = block.kind === "added" ? "#10b981" : block.kind === "moved" ? "#8b5cf6" : "#f59e0b";
+      var box = document.createElement("div");
+      box.setAttribute("data-vibe-change", block.kind);
+      box.style.cssText = "position:absolute;z-index:2147483646;pointer-events:none;box-sizing:border-box;top:" + top + "px;left:" + left + "px;width:" + (right - left) + "px;height:" + (bottom - top) + "px;"
+        + "outline:2px dashed " + color + ";outline-offset:-2px;border-radius:4px;";
+      var label = document.createElement("span");
+      label.textContent = changeLabels[block.kind] || "Changed";
+      label.style.cssText = "position:absolute;top:4px;left:4px;padding:1px 6px;border-radius:999px;font:600 11px/16px system-ui,sans-serif;color:#fff;background:" + color + ";";
+      box.append(label);
+      document.body.append(box);
+    });
+  }
+
+  var redraw = null;
+  function scheduleDraw() {
+    if(redraw) return;
+    redraw = requestAnimationFrame(function() { redraw = null; drawChanges(); });
+  }
+  addEventListener("resize", scheduleDraw);
+  addEventListener("load", scheduleDraw);
+  if(typeof ResizeObserver !== "undefined") new ResizeObserver(scheduleDraw).observe(document.documentElement);
+
   // --- The picker ---------------------------------------------------------------------------------
   // While the editor's picker is on, hovering outlines the block or field under the pointer and a click
   // opens it in the editor. Nothing here touches the page until then. Which element shows which field
@@ -605,6 +644,10 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
     if(data.type === "vibe:preview-pick-mode") setPicking(Boolean(data.on));
     if(data.type === "vibe:preview-reload") reload();
     if(data.type === "vibe:preview-focus" && typeof data.index === "number") focusBlock(data.index);
+    if(data.type === "vibe:preview-changes") {
+      changes = data.changes && typeof data.changes.path === "string" && Array.isArray(data.changes.blocks) ? data.changes : null;
+      drawChanges();
+    }
     if(data.type === "vibe:preview-navigate" && typeof data.path === "string" && /^\/(?![\/\\])/.test(data.path)) location.assign(data.path);
   }
 

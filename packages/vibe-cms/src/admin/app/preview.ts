@@ -18,10 +18,27 @@ export interface PreviewState {
   /** Follows the editor: opening a document with a page on the site shows that page. Remembered per browser. */
   synced: boolean,
   /** The picker is on: clicking in the preview opens that block or field here instead. */
-  picking: boolean
+  picking: boolean,
+  /** Outlines the blocks your unpublished changes touch. Remembered per browser. */
+  highlight: boolean
+}
+
+/** The blocks to outline on one page of the site. */
+export interface PreviewChanges {
+  path: string,
+  blocks: Array<{ index: number, kind: "added" | "changed" | "moved" }>
 }
 
 const SYNC_KEY = "vibe-cms:preview-sync";
+const HIGHLIGHT_KEY = "vibe-cms:preview-highlight";
+
+function loadHighlight(): boolean {
+  try {
+    return localStorage.getItem(HIGHLIGHT_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
 
 function loadSynced(): boolean {
   try {
@@ -31,7 +48,9 @@ function loadSynced(): boolean {
   }
 }
 
-let state: PreviewState = { open: false, src: null, path: null, ready: false, reveals: 0, synced: typeof window !== "undefined" && loadSynced(), picking: false };
+let state: PreviewState = { open: false, src: null, path: null, ready: false, reveals: 0, synced: typeof window !== "undefined" && loadSynced(), picking: false, highlight: typeof window === "undefined" || loadHighlight() };
+/** What the document open in the editor changes on its page, for the preview to outline. */
+let changes: PreviewChanges | null = null;
 /** The site page of the document open in the editor, if it has one. */
 let editorPage: string | null = null;
 const listeners = new Set<() => void>();
@@ -143,6 +162,26 @@ export function focusPreviewBlock(index: number) {
   set({ reveals: state.reveals + 1 });
 }
 
+function sendChanges(target: MessageEventSource | null) {
+  const message = { type: "vibe:preview-changes", changes: state.highlight ? changes : null };
+  if(target && "postMessage" in target) (target as Window).postMessage(message, location.origin);
+}
+
+/** The blocks the open document's unpublished changes touch on its page; null when there's nothing to show. */
+export function setPreviewChanges(next: PreviewChanges | null) {
+  changes = next;
+  sendChanges(frame);
+  for(const target of windows) sendChanges(target);
+}
+
+export function setPreviewHighlight(highlight: boolean) {
+  try {
+    localStorage.setItem(HIGHLIGHT_KEY, highlight ? "1" : "0");
+  } catch {}
+  set({ highlight });
+  setPreviewChanges(changes);
+}
+
 /** Turns the picker on or off; each page the window loads is told again (see the message listener). */
 export function setPreviewPicking(picking: boolean) {
   set({ picking });
@@ -185,6 +224,7 @@ if(typeof window !== "undefined") {
         // A pop-out, maybe from before this editor reloaded.
         windows.add(event.source);
       }
+      sendChanges(event.source);
     }
     if(message?.type === "vibe:preview-pick") pickHandler?.(message);
     // Escape pressed in the preview turns the picker off.

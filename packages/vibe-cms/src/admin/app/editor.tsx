@@ -20,6 +20,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { emptyValue, validate, type Issue } from "../../schema/validate.ts";
+import { changedBlocks } from "../../changes/index.ts";
 import type { DocumentData } from "../../schema/types.ts";
 import type { DocumentState } from "../../handler/engine.ts";
 import type { DocumentSlotProps } from "../index.ts";
@@ -59,7 +60,7 @@ import {
   useAdmin
 } from "./context.tsx";
 import { Field, FormValueContext } from "./fields.tsx";
-import { setEditorPage, showPreview } from "./preview.ts";
+import { setEditorPage, setPreviewChanges, showPreview } from "./preview.ts";
 import { Link, navigate, setNavigationBlocker } from "./router.tsx";
 import { confirmLeave } from "./confirm.tsx";
 import { Segmented } from "./segmented.tsx";
@@ -318,6 +319,18 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     setEditorPage(sitePage);
     return () => setEditorPage(null);
   }, [sitePage]);
+
+  // What your saved copy changes on that page, against live, for the preview to outline.
+  const pageChanges = useMemo(() => {
+    if(!sitePage || !savedDraft || !doc.data?.mine) return null;
+    const blocks = changedBlocks(schema, doc.data.published, savedDraft).map(({ index, kind }) => ({ index, kind }));
+    return blocks.length ? { path: sitePage, blocks } : null;
+  }, [sitePage, savedDraft, doc.data, schema]);
+  const pageChangesKey = JSON.stringify(pageChanges);
+  useEffect(() => {
+    setPreviewChanges(pageChanges);
+    return () => setPreviewChanges(null);
+  }, [pageChangesKey]);
 
   if(id !== null && doc.isError) {
     return (

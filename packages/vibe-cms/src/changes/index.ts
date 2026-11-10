@@ -505,6 +505,43 @@ function segmentsOf(change: Change, group: string): Segment[] {
   return change.segments;
 }
 
+// --- Blocks on the page -------------------------------------------------------
+
+/** A block that's new, changed inside or moved, by its position in the newer copy's list. */
+export interface ChangedBlock {
+  /** The top-level field holding the list, e.g. `blocks`. */
+  field: string,
+  index: number,
+  kind: "added" | "changed" | "moved"
+}
+
+/**
+ * The blocks `after` adds, changes or moves against `before`, in each top-level block list: what the
+ * preview outlines. Removed blocks aren't on the page to outline.
+ */
+export function changedBlocks(schema: ObjectSchema, before: unknown, after: unknown): ChangedBlock[] {
+  const out = new Map<string, ChangedBlock>();
+  for(const change of diff(schema, before ?? {}, after)) {
+    const [field, item] = change.segments;
+    if(typeof field !== "string" || !schema.shape[field] || !isKeyedList(schema.shape[field])) continue;
+    const list = isRecord(after) ? after[field] : undefined;
+    // The whole list at once: a new document, or blocks that couldn't be matched up.
+    if(change.segments.length === 1) {
+      if(Array.isArray(list)) list.forEach((_, index) => out.set(`${field}:${index}`, { field, index, kind: Array.isArray(change.before) ? "changed" : "added" }));
+      continue;
+    }
+    if(typeof item !== "object" || item === null) continue;
+    const index = Array.isArray(list) ? list.findIndex(entry => itemKey(entry) === item.key) : -1;
+    if(index < 0) continue;
+    const kind = change.kind === "add" ? "added" : change.kind === "move" && change.segments.length === 2 ? "moved" : "changed";
+    const id = `${field}:${index}`;
+    const seen = out.get(id);
+    // An edit inside a moved block says more than the move.
+    if(!seen || seen.kind === "moved" || kind === "added") out.set(id, { field, index, kind: seen?.kind === "added" ? "added" : kind });
+  }
+  return [...out.values()].sort((a, b) => a.index - b.index);
+}
+
 // --- Keys ---------------------------------------------------------------------
 
 /**
