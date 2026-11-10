@@ -25,6 +25,8 @@ export default defineConfig({
       publishedAt: v.date({ indexed: true }),
       author: v.ref("author", { indexed: true }),
       cover: v.optional(image({ minWidth: 600, folder: "posts/covers" })),
+      // A file readers can download with the post: slides, a PDF, a recording.
+      attachment: v.optional(v.asset({ accept: ["application/pdf", "text/*", "video/*", "audio/*"], folder: "posts/files" })),
       tags: v.array(v.text()),
       layout: v.enum(["default", "wide"]),
       body: richText(),

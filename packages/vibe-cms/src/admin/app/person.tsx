@@ -7,9 +7,11 @@ export function personHue(id: string): number {
   return hash;
 }
 
+/** "Ada Lovelace" → "AL"; a one-word name is one letter, so "Ada" reads as "A", not a shouted "AD". */
 function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
-  return (words.length > 1 ? `${words[0]![0]}${words.at(-1)![0]}` : name.slice(0, 2)).toUpperCase();
+  if(!words.length) return "?";
+  return (words.length > 1 ? `${words[0]![0]}${words.at(-1)![0]}` : words[0]![0]!).toUpperCase();
 }
 
 /** Someone's initials on their color. */

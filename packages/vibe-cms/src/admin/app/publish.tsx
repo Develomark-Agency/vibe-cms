@@ -7,7 +7,13 @@ import {
   CircleCheckIcon,
   ClockIcon,
   CloudUploadIcon,
+  FileArchiveIcon,
+  FileAudioIcon,
+  FileIcon,
+  FileTextIcon,
+  FileVideoIcon,
   PencilLineIcon,
+  PlayIcon,
   TriangleAlertIcon,
   Undo2Icon
 } from "lucide-react";
@@ -37,7 +43,7 @@ import { cn } from "../lib/utils.ts";
 import { isActionError } from "../../actions/errors.ts";
 import { VIA_LABELS } from "./via.ts";
 import { collectionSchema, displayUser, documentTitle, formatDate, formatRelative, useAdmin } from "./context.tsx";
-import { useAsset } from "./pickers.tsx";
+import { formatBytes, useAsset } from "./pickers.tsx";
 import { PersonFace, PersonFaces } from "./person.tsx";
 
 /** One person's change, as publishing names it: `owner` + `change.path`. */
@@ -136,6 +142,11 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
   function nameOf(owner: string) {
     return names.get(owner) ?? displayUser(owner, session);
   }
+  /** Who a face shows: your own name rather than "You", so the initials are yours. */
+  function faceOf(owner: string) {
+    const name = owner === session.user.sub ? session.user.name ?? session.user.email?.split("@")[0] ?? nameOf(owner) : nameOf(owner);
+    return { id: owner, name };
+  }
   const schema = collectionSchema(config, type);
   const rows = useMemo(() => rowsOf(changes.data?.live ?? null, branches, Object.keys(schema.shape)), [changes.data, schema]);
 
@@ -226,11 +237,11 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
                     <span>{canPublish ? `${chosen.length} of ${rows.length} selected` : `${rows.length} unpublished ${rows.length === 1 ? "change" : "changes"}`} from</span>
                     {/* A few people by name; the rest behind "+N", so twenty contributors don't fill the header. */}
                     {branches.slice(0, branches.length > 4 ? 3 : 4).map(branch => (
-                      <PersonChip key={branch.owner} branch={branch} name={nameOf(branch.owner)}
+                      <PersonChip key={branch.owner} branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)}
                         onDiscard={canPublish || branch.owner === session.user.sub ? () => discard(branch.owner) : undefined} />
                     ))}
                     {branches.length > 4 && (
-                      <MorePeople branches={branches.slice(3)} nameOf={nameOf}
+                      <MorePeople branches={branches.slice(3)} nameOf={nameOf} faceOf={faceOf}
                         onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
                     )}
                   </>
@@ -265,6 +276,7 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
                   key={row.id}
                   row={row}
                   nameOf={nameOf}
+                  faceOf={faceOf}
                   readOnly={!canPublish}
                   ticked={!unticked.has(row.id)}
                   onTick={on => setUnticked(prev => {
@@ -354,14 +366,14 @@ function toLocalInput(date: Date): string {
 }
 
 /** A person whose changes are in the review: their face and name, and a menu to discard what they changed. */
-function PersonChip({ branch, name, onDiscard }: { branch: BranchChanges, name: string, onDiscard?: () => Promise<void> }) {
+function PersonChip({ branch, name, face, onDiscard }: { branch: BranchChanges, name: string, face: { id: string, name: string }, onDiscard?: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const via = branch.via !== "ui" ? `via ${VIA_LABELS[branch.via as Via] ?? branch.via}` : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={
         <button type="button" className="inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-foreground well hover:bg-foreground/[0.06]">
-          <PersonFace id={branch.owner} name={name} className="ring-0" />
+          <PersonFace id={face.id} name={face.name} className="ring-0" />
           <span className="text-xs font-medium">{name}</span>
           <ChevronDownIcon className="size-3 text-muted-foreground" />
         </button>
@@ -389,16 +401,17 @@ function PersonChip({ branch, name, onDiscard }: { branch: BranchChanges, name: 
   );
 }
 
-function MorePeople({ branches, nameOf, onDiscard }: {
+function MorePeople({ branches, nameOf, faceOf, onDiscard }: {
   branches: BranchChanges[],
   nameOf(owner: string): string,
+  faceOf(owner: string): { id: string, name: string },
   onDiscard(owner: string): (() => Promise<void>) | undefined
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={
         <button type="button" className="inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-foreground well hover:bg-foreground/[0.06]">
-          <PersonFaces people={branches.map(b => ({ id: b.owner, name: nameOf(b.owner) }))} max={3} count={false} />
+          <PersonFaces people={branches.map(b => faceOf(b.owner))} max={3} count={false} />
           <span className="text-xs font-medium">{branches.length} more</span>
           <ChevronDownIcon className="size-3 text-muted-foreground" />
         </button>
@@ -411,7 +424,7 @@ function MorePeople({ branches, nameOf, onDiscard }: {
           return (
             <DropdownMenuSub key={branch.owner}>
               <DropdownMenuSubTrigger>
-                <PersonFace id={branch.owner} name={name} className="ring-0" />
+                <PersonFace id={branch.owner} name={faceOf(branch.owner).name} className="ring-0" />
                 <span className="min-w-0 flex-1 truncate">{name}</span>
                 <span className="shrink-0 text-xs text-muted-foreground">{via}{formatRelative(branch.updatedAt)}</span>
               </DropdownMenuSubTrigger>
@@ -427,9 +440,10 @@ function MorePeople({ branches, nameOf, onDiscard }: {
   );
 }
 
-function ReviewRow({ row, nameOf, readOnly, ticked, onTick, choice, open, onChoose, onReopen }: {
+function ReviewRow({ row, nameOf, faceOf, readOnly, ticked, onTick, choice, open, onChoose, onReopen }: {
   row: Row,
   nameOf(owner: string): string,
+  faceOf(owner: string): { id: string, name: string },
   readOnly: boolean,
   ticked: boolean,
   onTick(on: boolean): void,
@@ -438,7 +452,7 @@ function ReviewRow({ row, nameOf, readOnly, ticked, onTick, choice, open, onChoo
   onChoose(choice: Choice): void,
   onReopen(): void
 }) {
-  const people = [...new Set(row.entries.map(e => e.owner))].map(owner => ({ id: owner, name: nameOf(owner) }));
+  const people = [...new Set(row.entries.map(e => e.owner))].map(faceOf);
   const settled = row.kind === "choice" && choice !== undefined && !open;
   const kind = settled ? choiceKind(choice!) : null;
   // Unsettled clashes are amber; a settled one takes the color of its answer, as its button had.
@@ -470,7 +484,7 @@ function ReviewRow({ row, nameOf, readOnly, ticked, onTick, choice, open, onChoo
             {!readOnly && <Button variant="ghost" size="xs" className="-my-0.5 text-muted-foreground" onClick={onReopen}>Change</Button>}
           </div>
         ) : (
-          <Choices row={row} nameOf={nameOf} choice={choice} onChoose={onChoose} readOnly={readOnly} />
+          <Choices row={row} nameOf={nameOf} faceOf={faceOf} choice={choice} onChoose={onChoose} readOnly={readOnly} />
         )}
       </div>
     </li>
@@ -538,9 +552,10 @@ function optionsOf(row: Row): Array<{ owners: string[], entries: Entry[] }> {
   return [...out.values()].sort((a, b) => b.owners.length - a.owners.length);
 }
 
-function Choices({ row, nameOf, choice, onChoose, readOnly }: {
+function Choices({ row, nameOf, faceOf, choice, onChoose, readOnly }: {
   row: Row,
   nameOf(owner: string): string,
+  faceOf(owner: string): { id: string, name: string },
   choice: Choice | undefined,
   onChoose(choice: Choice): void,
   readOnly: boolean
@@ -558,7 +573,7 @@ function Choices({ row, nameOf, choice, onChoose, readOnly }: {
   const typing = typeof choice === "object" && "value" in choice;
 
   function people(owners: string[]) {
-    return owners.map(owner => ({ id: owner, name: nameOf(owner) }));
+    return owners.map(faceOf);
   }
   function who(owners: string[]) {
     const first = owners.map(o => nameOf(o).split(/\s+/)[0]!);
@@ -675,7 +690,7 @@ function ChangeView({ change, live, compact }: { change: CheckedChange, live?: u
   }
   if(change.field === "asset") {
     return (
-      <span className="flex items-center gap-2">
+      <span className="flex flex-wrap items-center gap-2">
         {before !== undefined && <span className="opacity-60"><AssetThumb value={before} /></span>}
         {before !== undefined && <ArrowRightIcon className="size-3.5 text-muted-foreground" />}
         <AssetThumb value={change.after} />
@@ -840,14 +855,51 @@ function AssetMini({ value }: { value: unknown }) {
   const asset = useAsset(assetId(value));
   if(!asset.data) return <span className="inline-block size-10 rounded-[8px] well align-middle" />;
   if(asset.data.mime.startsWith("image/")) return <img src={asset.data.url} alt={asset.data.filename} className="inline-block size-10 rounded-[8px] object-cover align-middle" />;
-  return <>{asset.data.filename}</>;
+  return <span className="inline-flex items-center gap-1 align-middle"><FileGlyph mime={asset.data.mime} className="size-3.5" />{asset.data.filename}</span>;
 }
 
-/** A file as a thumbnail big enough to tell two apart, with its name for anything that isn't an image. */
+/** An icon for a kind of file. */
+function FileGlyph({ mime, className }: { mime: string, className?: string }) {
+  const Icon = mime.startsWith("video/") ? FileVideoIcon
+    : mime.startsWith("audio/") ? FileAudioIcon
+      : mime === "application/pdf" || mime.startsWith("text/") ? FileTextIcon
+        : /zip|tar|compressed/.test(mime) ? FileArchiveIcon : FileIcon;
+  return <Icon className={cn("shrink-0 text-muted-foreground", className)} aria-hidden />;
+}
+
+/** "PDF", "MP4", from the file's name, else its type. */
+function fileKind(filename: string, mime: string): string {
+  const ext = /\.([a-z0-9]{1,5})$/i.exec(filename)?.[1];
+  return (ext ?? mime.split("/").pop() ?? "file").toUpperCase();
+}
+
+/**
+ * A file as a card: a preview (the image itself, a video's first frame, or an icon for anything else)
+ * beside its name, kind and size, so two files can be told apart even when they look alike. No players:
+ * it may sit inside a choice.
+ */
 function AssetThumb({ value }: { value: unknown }) {
   const asset = useAsset(assetId(value));
-  if(value === undefined || value === null) return <span className="grid size-16 place-items-center rounded-[10px] text-xs text-muted-foreground well">None</span>;
-  if(!asset.data) return <span className="inline-block size-16 rounded-[10px] well" />;
-  if(asset.data.mime.startsWith("image/")) return <img src={asset.data.url} alt={asset.data.filename} title={asset.data.filename} className="size-16 rounded-[10px] object-cover shadow-[0_0_0_1px] shadow-foreground/10" />;
-  return <span className="max-w-40 truncate rounded-[10px] px-2 py-1 text-xs well">{asset.data.filename}</span>;
+  if(value === undefined || value === null) return <span className="flex h-14 w-fit items-center rounded-[10px] px-3 text-xs text-muted-foreground well">No file</span>;
+  if(!asset.data) return <span className="inline-block h-14 w-48 rounded-[10px] well" />;
+  const { url, filename, mime, size } = asset.data;
+  const tile = "relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-background shadow-[0_0_0_1px] shadow-foreground/10";
+  return (
+    <span className="flex h-14 max-w-64 min-w-0 items-center gap-2.5 rounded-[10px] py-2 pr-3 pl-2 shadow-[inset_0_0_0_1px] shadow-foreground/10 well" title={filename}>
+      {mime.startsWith("image/") ? (
+        <img src={url} alt="" className={cn(tile, "object-cover")} />
+      ) : mime.startsWith("video/") ? (
+        <span className={cn(tile, "bg-black")}>
+          <video src={`${url}#t=0.1`} preload="metadata" muted playsInline className="absolute inset-0 size-full object-cover" />
+          <PlayIcon className="relative size-4 fill-white text-white drop-shadow" aria-hidden />
+        </span>
+      ) : (
+        <span className={tile}><FileGlyph mime={mime} className="size-5" /></span>
+      )}
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate text-sm">{filename}</span>
+        <span className="text-[11px] text-muted-foreground tabular-nums">{fileKind(filename, mime)} · {formatBytes(size)}</span>
+      </span>
+    </span>
+  );
 }
