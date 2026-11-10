@@ -464,7 +464,7 @@ function ReviewRow({ row, nameOf, faceOf, readOnly, ticked, onTick, choice, open
 }
 
 /** "Heading", with where it is ("Blocks › Hero ›") quieter in front. */
-function FieldName({ change }: { change: CheckedChange }) {
+export function FieldName({ change }: { change: CheckedChange }) {
   const label = change.label.length ? change.label : ["Document"];
   return (
     <span className="min-w-0 truncate text-sm">
@@ -658,7 +658,7 @@ function ChoiceButton({ pressed, tone = "person", disabled, onClick, title, chil
  * changed, rich text by its text, media as thumbnails, lists as what was added and removed, blocks by
  * what happened to them. Fields with nothing to show (code, custom widgets) say only that they changed.
  */
-function ChangeView({ change, live, compact }: { change: CheckedChange, live?: unknown, compact?: boolean }) {
+export function ChangeView({ change, live, compact }: { change: CheckedChange, live?: unknown, compact?: boolean }) {
   const before = live !== undefined && change.status === "stale" ? live : change.before;
   switch(change.kind) {
     case "add":

@@ -41,6 +41,7 @@ import { FULLSCREEN_BELOW, PreviewWindow } from "./preview-window.tsx";
 import { MegaNav, type NavGroup, type NavItem } from "./nav.tsx";
 import { announcePainted, embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
 import { ReviewPage } from "./publish.tsx";
+import { HistoryPage } from "./history.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false } }
@@ -170,6 +171,7 @@ function adminRoutes(plugins: Required<AdminPlugin>): RouteObject[] {
       { path: "content/:type", element: <ContentList /> },
       { path: "content/:type/:id", element: <ContentDocument /> },
       { path: "content/:type/:id/review", element: <ContentReview /> },
+      { path: "content/:type/:id/history", element: <ContentHistory /> },
       { path: "media", element: <Allowed when={a => a.canMedia}><MediaPage /></Allowed> },
       { path: "settings", element: <Allowed when={a => a.canSite}><SiteSettingsPage /></Allowed> },
       { path: "users", element: <Allowed when={a => a.canManageUsers}><UsersPage /></Allowed> },
@@ -244,6 +246,11 @@ function ContentList() {
 function ContentDocument() {
   const { type, id } = useParams();
   return useAccess().types.includes(type!) ? <DocumentRoute type={type!} id={id!} /> : <NotFound />;
+}
+
+function ContentHistory() {
+  const { type, id } = useParams();
+  return useAccess().types.includes(type!) ? <HistoryPage key={`${type}/${id}`} type={type!} id={id!} /> : <NotFound />;
 }
 
 function ContentReview() {
@@ -513,7 +520,7 @@ function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: s
   const { config } = useAdmin();
   const { path } = useLocation();
   // The editor header has its own language tabs; its review is of the language it came from, and its header holds Publish.
-  if(match("/content/:type/:id", path) || match("/content/:type/:id/review", path)) return null;
+  if(match("/content/:type/:id", path) || match("/content/:type/:id/review", path) || match("/content/:type/:id/history", path)) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="h-8 rounded-[10px]"><LanguagesIcon /> {localeName(locale)}</Button>} />

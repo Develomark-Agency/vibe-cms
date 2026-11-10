@@ -40,7 +40,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Kbd } from "../components/ui/kbd.tsx";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../components/ui/sheet.tsx";
 import { Crossfade } from "../components/crossfade.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
@@ -65,7 +64,6 @@ import { setEditorPage, setPreviewChanges, showPreview } from "./preview.ts";
 import { Link, navigate, setNavigationBlocker } from "./router.tsx";
 import { confirmLeave } from "./confirm.tsx";
 import { Segmented } from "./segmented.tsx";
-import { ActivityList } from "./activity.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 import { FieldChangesProvider, useFieldChanges } from "./field-changes.tsx";
 
@@ -112,7 +110,6 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const [conflict, setConflict] = useState<DocumentState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const loadedKey = useRef<string | null>(null);
 
@@ -408,7 +405,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             )}
             {id !== null && (
               <Tooltip>
-                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="History" onClick={() => setHistoryOpen(true)}><HistoryIcon /></Button>} />
+                <TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label="History" nativeButton={false} render={<Link to={`/content/${type}/${id}/history${location.search}`} />}><HistoryIcon /></Button>} />
                 <TooltipContent>Version history</TooltipContent>
               </Tooltip>
             )}
@@ -609,7 +606,6 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
       {id !== null && (
         <>
           <ScheduleDialog open={scheduleOpen} onOpenChange={setScheduleOpen} type={type} id={id} status={status} dirty={dirty} onDone={applyResult} onError={handleError} />
-          <HistorySheet open={historyOpen} onOpenChange={setHistoryOpen} type={type} id={id} doc={doc.data} onRestore={applyResult} readOnly={readOnly} />
         </>
       )}
     </FormValueContext.Provider>
@@ -752,88 +748,5 @@ function ScheduleDialog({ open, onOpenChange, type, id, status, dirty, onDone, o
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function HistorySheet({ open, onOpenChange, type, id, doc, onRestore, readOnly }: {
-  open: boolean,
-  onOpenChange(open: boolean): void,
-  type: string,
-  id: string,
-  doc: DocumentState | undefined,
-  onRestore(doc: DocumentState): void,
-  readOnly: boolean
-}) {
-  const { cms, locale, session, config } = useAdmin();
-  const [selected, setSelected] = useState<number | null>(null);
-  const [tab, setTab] = useState<"versions" | "activity">("versions");
-  const versions = useQuery({
-    queryKey: ["versions", type, id, locale, doc?.updatedAt],
-    enabled: open,
-    queryFn: () => cms.actions.documents.versions({ type, id, locale })
-  });
-  const version = useQuery({
-    queryKey: ["version", type, id, locale, selected],
-    enabled: selected !== null,
-    queryFn: () => cms.actions.documents.version({ type, id, locale, ver: selected! })
-  });
-  const schema = collectionSchema(config, type);
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 sm:max-w-xl">
-        <SheetHeader className="border-b">
-          <SheetTitle>Version history</SheetTitle>
-          <SheetDescription>{tab === "versions" ? "Every publish (and scheduled publish) is kept. Restoring copies a version into the draft." : "Who changed this document, when, and through which channel."}</SheetDescription>
-          <Segmented label="History" value={tab} onChange={value => setTab(value as typeof tab)} options={[{ value: "versions", label: "Versions" }, { value: "activity", label: "Activity" }]} />
-        </SheetHeader>
-        {tab === "activity" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto p-4"><ActivityList filter={{ targetId: id }} compact /></div>
-        ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-[11rem_1fr] overflow-hidden">
-            <ul className="overflow-y-auto border-r p-2">
-              {versions.data?.versions.length === 0 && <li className="p-2 text-sm text-muted-foreground">Not published yet.</li>}
-              {versions.data?.versions.map(v => (
-                <li key={v.ver}>
-                  <button
-                    onClick={() => setSelected(v.ver)}
-                    className={cn("w-full rounded-[10px] px-2.5 py-2 text-left text-sm transition-[background-color,box-shadow] hover:bg-foreground/[0.04]", selected === v.ver && "raised")}
-                  >
-                    <span className="flex items-center gap-1.5 font-medium">
-                      Version {v.ver}
-                      {doc?.publishedVer === v.ver && <span className="size-1.5 rounded-full bg-emerald-500" title="Live" />}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">{formatRelative(v.createdAt)} · {displayUser(v.author, session)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <div className="flex min-h-0 flex-col overflow-y-auto p-4">
-              {selected === null ? <p className="text-sm text-muted-foreground">Pick a version to see it.</p>
-                : !version.data ? <Delayed><Spinner /></Delayed>
-                  : (
-                    <div className="flex flex-col gap-4">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-medium">Version {selected}</h4>
-                        {!readOnly && (
-                          <Button size="sm" variant="outline" onClick={async () => {
-                            const result = await cms.actions.documents.restoreVersion({ type, id, locale, ver: selected! });
-                            onRestore(result);
-                            cms.toast(`Version ${selected} restored to the draft`, { type: "success" });
-                            onOpenChange(false);
-                          }}><RotateCcwIcon /> Restore</Button>
-                        )}
-                      </div>
-                      <div className="pointer-events-none flex flex-col gap-5 opacity-90">
-                        {Object.entries(schema.shape).map(([key, field]) => (
-                          <Field key={key} schema={field} name={key} path={[key]} value={version.data.data[key]} issues={[]} readOnly doc={{ type, id }} onChange={() => {}} />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-            </div>
-          </div>
-        )}
-      </SheetContent>
-    </Sheet>
   );
 }
