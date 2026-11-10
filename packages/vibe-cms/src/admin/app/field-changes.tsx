@@ -136,37 +136,66 @@ export function ChangedInside({ path }: { path: Path }) {
   return <span className={cn("size-1.5 shrink-0 rounded-full", tone(mine, others))} title={others ? "Changed by someone else too" : "You changed this"} />;
 }
 
+/** This field's changes, if anyone made any: for the bar down its left edge. */
+export function useFieldChange(path: Path): FieldChange | null {
+  const found = useContext(FieldChangesContext)?.at(path);
+  return found && (found.mine || found.others.length) ? found : null;
+}
+
+/** The bar's color class: amber when someone else changed the field, else yours. */
+export function changeTone(found: FieldChange): string {
+  return tone(Boolean(found.mine), found.others.length > 0);
+}
+
+/** "Bob", "Bob and Ana", "Bob, Ana and 18 others". */
+function namesSentence(names: string[]): string {
+  if(names.length <= 2) return names.join(" and ");
+  return `${names[0]}, ${names[1]} and ${names.length - 2} others`;
+}
+
 /**
- * Next to a field's label when anyone changed it: a marker that opens the live value, yours, and other
- * people's unpublished ones, with a button to use any of them.
+ * Under a field anyone changed: a line saying who ("Bob and Ana changed this", "You changed this · not
+ * saved") that opens the live value, yours, and everyone else's, grouped by value, with a button to use any.
  */
 export function FieldChangeMarker({ path, onUse, readOnly }: { path: Path, onUse(value: unknown): void, readOnly?: boolean }) {
-  const changes = useContext(FieldChangesContext);
   const { session } = useAdmin();
-  const found = changes?.at(path);
-  if(!found || (!found.mine && !found.others.length)) return null;
-  const people = found.others.length;
-  const label = people ? (found.mine ? `You and ${people === 1 ? "1 other" : `${people} others`} changed this` : `${people === 1 ? (found.others[0]!.name ?? displayUser(found.others[0]!.owner, session)) : `${people} people`} changed this`) : found.mine!.unsaved ? "Changed, not saved" : "Changed, not published";
-  // On the field itself: "Changed" when it's only yours, else who ("Bob", "You, Bob", "3 people").
-  const firstNames = found.others.map(other => (other.name ?? displayUser(other.owner, session)).split(/\s+/)[0]!);
-  const named = [...(found.mine ? ["You"] : []), ...firstNames];
-  const short = !people ? "Changed" : named.length > 2 ? `${named.length} people` : named.join(", ");
+  const found = useFieldChange(path);
+  if(!found) return null;
+  function nameOf(other: FieldChange["others"][number]) {
+    return other.name ?? displayUser(other.owner, session);
+  }
+  const others = found.others.map(nameOf);
+  // A full name alone; first names once there are several.
+  const short = others.length > 1 || found.mine ? others.map(n => n.split(/\s+/)[0]!) : others;
+  const sentence = others.length
+    ? `${namesSentence(found.mine ? ["You", ...short] : short)} changed this`
+    : `You changed this · ${found.mine!.unsaved ? "not saved" : "not published"}`;
   function settable(kind: Change["kind"]) {
     return !readOnly && kind === "set";
   }
+  // Twenty people rarely type twenty different things: one row per value, most popular first.
+  const groups = new Map<string, FieldChange["others"]>();
+  for(const other of found.others) {
+    const key = other.kind === "set" ? JSON.stringify(other.value ?? null) : `${other.kind}:${other.owner}`;
+    groups.set(key, [...(groups.get(key) ?? []), other]);
+  }
+  const rows = [...groups.values()].sort((a, b) => b.length - a.length);
   return (
     <Popover>
       <PopoverTrigger render={
-        <button type="button" aria-label={label} title={label}
-          className={cn("inline-flex h-4 items-center gap-1 rounded-full px-1.5 text-[11px] font-medium leading-none",
-            people ? "bg-amber-500/12 text-amber-700 dark:text-amber-400" : "bg-primary/10 text-primary")}>
-          <span className={cn("size-1.5 rounded-full", tone(Boolean(found.mine), people > 0))} />
-          {short}
+        <button type="button" className="flex w-fit items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground">
+          <span className={cn("size-1.5 shrink-0 rounded-full", changeTone(found))} />
+          <span className="underline decoration-border underline-offset-3">{sentence}</span>
         </button>
       } />
       <PopoverContent align="start" className="w-80 gap-0 p-0">
-        <ul className="divide-y text-sm">
-          <Row title="Live" detail={found.live === undefined && !found.mine?.kind ? undefined : null}
+        {found.others.length > 1 && (
+          <p className="bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            {found.others.length} people, {rows.length === 1 ? "1 version" : `${rows.length} different versions`}
+          </p>
+        )}
+        <ul className="max-h-80 divide-y overflow-y-auto text-sm">
+          <Row title="Live"
             onUse={found.mine && settable(found.mine.kind) && found.live !== undefined ? () => onUse(found.live) : undefined} useLabel="Undo yours">
             {found.live === undefined ? <i className="text-muted-foreground">Not live yet</i> : <Shown change={found} value={found.live} />}
           </Row>
@@ -175,17 +204,23 @@ export function FieldChangeMarker({ path, onUse, readOnly }: { path: Path, onUse
               <Shown change={found} value={found.mine.value} kind={found.mine.kind} />
             </Row>
           )}
-          {found.others.map(other => (
-            <Row
-              key={other.owner}
-              title={other.name ?? displayUser(other.owner, session)}
-              detail={`${other.via !== "ui" ? `via ${VIA_LABELS[other.via as Via] ?? other.via} · ` : ""}${formatRelative(other.updatedAt)}`}
-              detailTitle={formatDate(other.updatedAt)}
-              onUse={settable(other.kind) ? () => onUse(other.value) : undefined}
-            >
-              <Shown change={found} value={other.value} kind={other.kind} />
-            </Row>
-          ))}
+          {rows.map(group => {
+            const first = group[0]!;
+            const single = group.length === 1;
+            return (
+              <Row
+                key={`${first.owner}`}
+                title={single ? nameOf(first) : `${group.length} people`}
+                detail={single
+                  ? `${first.via !== "ui" ? `via ${VIA_LABELS[first.via as Via] ?? first.via} · ` : ""}${formatRelative(first.updatedAt)}`
+                  : namesSentence(group.map(o => nameOf(o).split(/\s+/)[0]!))}
+                detailTitle={single ? formatDate(first.updatedAt) : group.map(nameOf).join(", ")}
+                onUse={settable(first.kind) ? () => onUse(first.value) : undefined}
+              >
+                <Shown change={found} value={first.value} kind={first.kind} />
+              </Row>
+            );
+          })}
         </ul>
       </PopoverContent>
     </Popover>

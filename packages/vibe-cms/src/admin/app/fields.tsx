@@ -36,7 +36,7 @@ import { focusPreviewBlock, getPreview, subscribePreview } from "./preview.ts";
 import { getReveal, subscribeReveal } from "./reveal.ts";
 import { AssetControl, RefControl } from "./pickers.tsx";
 import { Segmented } from "./segmented.tsx";
-import { ChangedInside, FieldChangeMarker } from "./field-changes.tsx";
+import { changeTone, ChangedInside, FieldChangeMarker, useFieldChange } from "./field-changes.tsx";
 
 export interface FieldProps {
   schema: AnySchema,
@@ -73,6 +73,7 @@ export function Field(props: FieldProps) {
   const { schema, path, issues, name } = props;
   const { locale, plugins, cms } = useAdmin();
   const inner = unwrap(schema);
+  const change = useFieldChange(path);
   if(inner.type === "literal" || schema.hidden || inner.hidden) return null;
   // Derived fields (`readOnly`) are shown but never edited.
   const derived = Boolean(schema.readOnly || inner.readOnly);
@@ -108,20 +109,20 @@ export function Field(props: FieldProps) {
     return <div className="flex flex-col gap-2">{control}<Errors errors={errors} /></div>;
   }
   return (
-    <div className="group/field flex flex-col gap-2" data-field={path.join(".")} data-invalid={errors.length > 0 || undefined}>
+    <div className="group/field relative flex flex-col gap-2" data-field={path.join(".")} data-invalid={errors.length > 0 || undefined}>
+      {/* Down the left edge of a field with unpublished changes: amber when someone else's, else yours. */}
+      {change && !derived && <span aria-hidden className={cn("absolute top-0.5 bottom-0.5 -left-3 w-[3px] rounded-full", changeTone(change))} />}
       <div className="flex items-baseline justify-between gap-2">
-        <span className="flex items-center gap-1.5">
-          <label className={cn("text-sm font-medium leading-none", errors.length && "text-destructive")} htmlFor={fieldId(path)}>
-            {label}
-            {derived ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Set automatically</span>
-              : schema.type === "optional" ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Optional</span> : null}
-          </label>
-          {!derived && <FieldChangeMarker path={path} readOnly={props.readOnly} onUse={next => props.onChange(next as JsonValue | undefined)} />}
-        </span>
+        <label className={cn("text-sm font-medium leading-none", errors.length && "text-destructive")} htmlFor={fieldId(path)}>
+          {label}
+          {derived ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Set automatically</span>
+            : schema.type === "optional" ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Optional</span> : null}
+        </label>
         {grouped && !widget && Array.isArray(props.value) ? <span className="text-xs text-muted-foreground">{props.value.length} items</span> : null}
       </div>
       {descriptor.description ? <p className="-mt-1 text-xs text-muted-foreground">{descriptor.description}</p> : null}
       {control}
+      {!derived && <FieldChangeMarker path={path} readOnly={props.readOnly} onUse={next => props.onChange(next as JsonValue | undefined)} />}
       <Errors errors={errors} />
     </div>
   );

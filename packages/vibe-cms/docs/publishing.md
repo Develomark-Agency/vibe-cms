@@ -46,5 +46,5 @@ In the editor, **Review** (⌘⇧S) saves what's unsaved and shows the changes a
 
 - Draft reads (`{ drafts: true }`, the editor's lists) show the reader's own copy, else the live one, and carry `$meta.pending`: who has unpublished changes. Published reads, which are public, don't (`vibe-cms docs queries`).
 - `documents.pending` lists every document with unpublished changes that you can read, across the site, with who made them and whether you may publish them. The hub's **Review** page asks every site you can see.
-- In the editor, a marker next to a field you or someone else changed opens its live value, yours (saved or not) and other people's, with a button to copy any of them into your copy. A collapsed block shows a dot when something inside it changed.
+- In the editor, a field you or someone else changed has a bar down its left edge (amber when someone else changed it) and a line under it saying who. The line opens its live value, yours (saved or not) and other people's, grouped by value, with a button to copy any of them into your copy. A collapsed block shows a dot when something inside it changed.
 - The draft preview outlines the blocks your saved changes add, change or move, labelled New, Changed or Moved. "Outline unpublished changes" in the preview's menu turns it off (`vibe-cms docs preview`).

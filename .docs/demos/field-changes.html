@@ -1,0 +1,242 @@
+<title>Changed Field Markers</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: a narrow stack of option cards, each a mock editor form; controls on top switch contributors and theme-neutral states. */
+:root {
+  --bg: #f7f5f3; --panel: #fdfcfb; --field: #f1eeeb; --line: #e3ded9; --fg: #1d1a18; --muted: #77706a;
+  --mine: #2f6fe4; --mine-soft: #2f6fe41a; --others: #d98a0b; --others-soft: #d98a0b1f; --accent: #e6247a;
+  --sans: "Inter", ui-sans-serif, system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #161413; --panel: #1d1b19; --field: #262321; --line: #34302d; --fg: #f2efec; --muted: #9a928b;
+  --mine: #6d9cff; --mine-soft: #6d9cff24; --others: #f0a531; --others-soft: #f0a53126; --accent: #ff4f98; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #161413; --panel: #1d1b19; --field: #262321; --line: #34302d; --fg: #f2efec; --muted: #9a928b;
+  --mine: #6d9cff; --mine-soft: #6d9cff24; --others: #f0a531; --others-soft: #f0a53126; --accent: #ff4f98; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
+main { max-width: 760px; margin: 0 auto; padding-block: 32px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 28px }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance }
+.intro { color: var(--muted); margin: 6px 0 0; max-width: 62ch }
+.controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5 }
+.controls span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em }
+.seg { display: inline-flex; background: var(--field); border-radius: 10px; padding: 2px }
+.seg button { border: 0; background: none; color: var(--muted); font: inherit; padding: 4px 10px; border-radius: 8px; cursor: pointer }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px #0002 }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+section.option { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 18px }
+.option header h2 { font-size: 15px; margin: 0; font-weight: 600 }
+.option header p { margin: 4px 0 0; color: var(--muted); max-width: 62ch }
+.verdict { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 12px; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px }
+.verdict b { font-weight: 500; color: var(--fg) }
+.form { display: flex; flex-direction: column; gap: 18px }
+.f { position: relative; display: flex; flex-direction: column; gap: 8px }
+.lab { display: flex; align-items: center; gap: 8px; min-height: 20px }
+.lab label { font-weight: 500 }
+.opt { color: var(--muted); font-size: 12px }
+.right { margin-left: auto; display: flex; align-items: center; gap: 8px }
+.input { background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; position: relative; min-width: 0; overflow-wrap: anywhere }
+.input.mono { font-family: var(--mono); font-size: 13px }
+.input.area { min-height: 72px }
+.count { position: absolute; right: 10px; bottom: 7px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums }
+.hint { color: var(--muted); font-size: 12px; margin-top: -2px }
+
+/* Gutter bar (A, B) */
+.gutter .f.changed::before { content: ""; position: absolute; left: -12px; top: 2px; bottom: 2px; width: 3px; border-radius: 3px; background: var(--c); cursor: pointer }
+.gutter .f.changed:hover::before { width: 5px; left: -13px }
+/* Faces */
+.faces { display: inline-flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: var(--muted) }
+.face { width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #fff; border: 2px solid var(--panel); margin-left: -6px }
+.face:first-child { margin-left: 0 }
+.more { font-size: 11px; margin-left: 4px; font-variant-numeric: tabular-nums }
+/* Footer line (B) */
+.foot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); background: none; border: 0; padding: 0; font: inherit; font-size: 12px; cursor: pointer; text-align: left }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c); flex: none }
+.foot u { text-decoration-color: var(--line); text-underline-offset: 3px }
+/* Tinted field (C) */
+.tint .f.changed .input { border-color: var(--c); box-shadow: 0 0 0 3px var(--soft) }
+.corner { position: absolute; right: 8px; top: 7px; display: flex; gap: 4px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px 1px 3px; font-size: 11px; color: var(--muted); cursor: pointer; font: inherit; font-size: 11px }
+.corner .face { width: 16px; height: 16px; font-size: 8px; border-width: 1px }
+/* Icon on hover (D) */
+.edge { position: absolute; right: 8px; top: 50%; translate: 0 -50%; width: 24px; height: 24px; border-radius: 7px; border: 0; background: var(--soft); color: var(--c); display: grid; place-items: center; cursor: pointer; opacity: .9 }
+.edge svg { width: 14px; height: 14px }
+.edge .n { position: absolute; top: -5px; right: -6px; background: var(--c); color: #fff; font-size: 9px; font-weight: 600; border-radius: 999px; min-width: 15px; height: 15px; display: grid; place-items: center; padding: 0 3px }
+
+/* Popover */
+.pop { position: absolute; z-index: 20; left: 0; top: 30px; width: min(360px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px #0003; overflow: hidden }
+.pop ul { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto }
+.pop li { padding: 10px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px }
+.pop li:first-child { border-top: 0 }
+.pop .row { display: flex; align-items: center; gap: 8px }
+.pop .who { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap }
+.pop .val { overflow-wrap: anywhere }
+.pop .use { margin-left: auto; border: 0; background: var(--field); color: var(--fg); font: inherit; font-size: 12px; padding: 2px 9px; border-radius: 7px; cursor: pointer }
+.pop .mine { background: var(--mine-soft) }
+.pop .tag { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted) }
+.pop .tag.y { color: var(--mine) }
+.pop .tag.o { color: var(--others) }
+.pop .summary { padding: 8px 12px; font-size: 12px; color: var(--muted); background: var(--field) }
+.banner { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--field); color: var(--muted); font-size: 13px }
+.banner a { color: var(--fg); text-underline-offset: 3px }
+@media (max-width: 480px) { .verdict { grid-template-columns: 1fr } .count { display: none } }
+@media (prefers-reduced-motion: no-preference) { .gutter .f.changed::before { transition: width .12s, left .12s } }
+</style>
+
+<main>
+  <div>
+    <h1>Changed field markers</h1>
+    <p class="intro">Four ways to show that a field has unpublished changes, on the same three fields: Title (someone else changed it), Slug (untouched) and Excerpt (you changed it). Click any marker to open the comparison. Switch how many other people changed the Title.</p>
+  </div>
+
+  <div class="controls" role="group" aria-label="Demo settings">
+    <span>Others on Title</span>
+    <div class="seg" id="people">
+      <button data-n="1" aria-pressed="true">1</button>
+      <button data-n="3" aria-pressed="false">3</button>
+      <button data-n="20" aria-pressed="false">20</button>
+    </div>
+    <span>Popover</span>
+    <div class="seg" id="grouping">
+      <button data-g="value" aria-pressed="true">By value</button>
+      <button data-g="person" aria-pressed="false">By person</button>
+    </div>
+  </div>
+
+  <div id="options"></div>
+</main>
+
+<script>
+const PEOPLE = [
+  ["Bob Smith", "mcp"], ["Ana Lima", "ui"], ["Carl Weiss", "ui"], ["Dana Ortiz", "cli"], ["Eli Park", "ui"], ["Fay Moreau", "ui"],
+  ["Gus Hale", "mcp"], ["Hana Sato", "ui"], ["Ivo Petrov", "ui"], ["Jo Baker", "ui"], ["Kim Duarte", "ui"], ["Lea Novak", "mcp"],
+  ["Max Reid", "ui"], ["Nia Clarke", "ui"], ["Oli Brandt", "ui"], ["Pia Rossi", "ui"], ["Quin Shaw", "ui"], ["Rae Lund", "cli"],
+  ["Sam Okafor", "ui"], ["Tess Young", "ui"]
+];
+// The values 20 people tend to land on: a few, not twenty.
+const TITLES = ["Alchemy v1, a month later", "Running on Alchemy, in production", "A month on Alchemy", "Alchemy v1, a month later", "Alchemy in production"];
+const VIA = { ui: "", mcp: "via Agent (MCP)", cli: "via CLI" };
+const LIVE_TITLE = "Running on Alchemy, in production";
+const state = { n: 1, group: "value", open: null };
+
+// A stable color per person from their ID: the same person looks the same everywhere, with nothing from the sign-in provider.
+function hue(name) { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+function initials(name) { return name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase(); }
+function face(name) { return `<span class="face" style="background:hsl(${hue(name)} 45% 46%)" aria-hidden="true">${initials(name)}</span>`; }
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+
+function others() {
+  return PEOPLE.slice(0, state.n).map(([name, via], i) => ({ name, via, value: i === 0 ? TITLES[0] : TITLES[(i * 7) % TITLES.length], ago: `${(i * 13) % 50 + 2} min ago` }))
+    .filter(o => o.value !== LIVE_TITLE || state.n > 1);
+}
+function namesShort(list) {
+  const first = list.map(o => o.name.split(" ")[0]);
+  return first.length <= 2 ? first.join(" and ") : `${first[0]}, ${first[1]} and ${first.length - 2} others`;
+}
+function stack(list, max = 3) {
+  return list.slice(0, max).map(o => face(o.name)).join("") + (list.length > max ? `<span class="more">+${list.length - max}</span>` : "");
+}
+
+function popover(field) {
+  if (field === "excerpt") {
+    return `<div class="pop" role="dialog" aria-label="Excerpt changes"><ul>
+      <li><div class="row"><span class="tag">Live</span><button class="use">Undo yours</button></div><div class="val">How we moved the blog over in an afternoon.</div></li>
+      <li class="mine"><div class="row"><span class="tag y">You</span><span class="who">Not saved</span></div><div class="val">How we moved the blog over in an afternoon!</div></li>
+    </ul></div>`;
+  }
+  const list = others();
+  let rows = `<li><div class="row"><span class="tag">Live</span></div><div class="val">${esc(LIVE_TITLE)}</div></li>`;
+  if (state.group === "value") {
+    const groups = new Map();
+    for (const o of list) groups.set(o.value, [...(groups.get(o.value) ?? []), o]);
+    for (const [value, who] of [...groups].sort((a, b) => b[1].length - a[1].length)) {
+      rows += `<li><div class="row"><span class="tag o">${who.length === 1 ? esc(who[0].name) : `${who.length} people`}</span><button class="use">Use</button></div>
+        <div class="val">${esc(value)}</div>
+        ${who.length > 1 ? `<div class="who">${stack(who, 5)} ${esc(namesShort(who))}</div>` : `<div class="who">${VIA[who[0].via] ? `${VIA[who[0].via]} · ` : ""}${who[0].ago}</div>`}</li>`;
+    }
+  } else {
+    for (const o of list) rows += `<li><div class="row">${face(o.name)}<b style="font-weight:500">${esc(o.name)}</b><span class="who">${VIA[o.via]}${VIA[o.via] ? " · " : ""}${o.ago}</span><button class="use">Use</button></div><div class="val">${esc(o.value)}</div></li>`;
+  }
+  const distinct = new Set(list.map(o => o.value)).size;
+  const summary = list.length > 1 ? `<div class="summary">${list.length} people, ${distinct} different ${distinct === 1 ? "title" : "titles"}</div>` : "";
+  return `<div class="pop" role="dialog" aria-label="Title changes">${summary}<ul>${rows}</ul></div>`;
+}
+
+function marker(kind, field) {
+  const list = field === "title" ? others() : [];
+  const mine = field === "excerpt";
+  const c = list.length ? "var(--others)" : "var(--mine)";
+  const label = list.length ? `${namesShort(list)} changed this` : "You changed this, not saved";
+  const t = `data-open="${kind}:${field}" aria-label="${esc(label)}" title="${esc(label)}"`;
+  switch (kind) {
+    case "a": return list.length ? `<button class="faces" ${t}>${stack(list)}</button>` : "";
+    case "b": return `<button class="foot" ${t} style="--c:${c}"><span class="dot"></span><u>${list.length ? esc(namesShort(list)) + " changed this" : "You changed this · not saved"}</u></button>`;
+    case "c": return list.length ? `<button class="corner" ${t}>${stack(list, 2)}<span>${list.length === 1 ? list[0].name.split(" ")[0] : list.length}</span></button>` : "";
+    case "d": return `<button class="edge" ${t} style="--c:${c};--soft:${list.length ? "var(--others-soft)" : "var(--mine-soft)"}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 2v8M12 6v8M4 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM12 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM12 6c0 2-2 3-4 3S4 8 4 10" fill="none"/></svg>${list.length ? `<span class="n">${list.length}</span>` : ""}</button>`;
+  }
+}
+
+function field(kind, name, label, value, opts = {}) {
+  const changed = name !== "slug";
+  const list = name === "title" ? others() : [];
+  const c = list.length ? "var(--others)" : "var(--mine)";
+  const soft = list.length ? "var(--others-soft)" : "var(--mine-soft)";
+  const open = state.open === `${kind}:${name}` ? popover(name) : "";
+  const labelRow = `<div class="lab"><label>${label}</label>${opts.optional ? `<span class="opt">Optional</span>` : ""}
+    ${changed && kind === "a" ? `<span class="right">${marker("a", name)}</span>` : ""}</div>`;
+  const input = `<div class="input ${opts.cls ?? ""}">${esc(value)}${opts.count ? `<span class="count">${opts.count}</span>` : ""}
+    ${changed && kind === "c" ? marker("c", name) : ""}${changed && kind === "d" ? marker("d", name) : ""}</div>`;
+  const below = changed && kind === "b" ? marker("b", name) : opts.hint ? `<div class="hint">${opts.hint}</div>` : "";
+  return `<div class="f ${changed ? "changed" : ""}" style="--c:${c};--soft:${soft}" ${changed && (kind === "a" || kind === "b") ? `data-gutter="${kind}:${name}"` : ""}>
+    ${labelRow}${input}${below}${open}</div>`;
+}
+
+const OPTIONS = [
+  { kind: "a", cls: "gutter", title: "A. Margin bar, faces on the right",
+    text: "A bar down the left edge marks a changed field; click it to compare. Faces of other people sit at the right of the label row, where list counts already go. Your own changes show only as the bar.",
+    pros: "Label row stays clean. Scales: the bar is the same for 1 or 20, the faces stop at three and a count.", cons: "Your own unsaved edit is only a thin bar; easy to miss if you don't know what it means." },
+  { kind: "b", cls: "gutter", title: "B. Margin bar, a line of text under the field",
+    text: "The same bar, plus a plain sentence under the input, in the spot hints already use: “Bob and Ana changed this”.",
+    pros: "Says exactly what happened in words, no legend needed. Works for screen readers as is.", cons: "Adds a line to every changed field, so a heavily edited form gets taller." },
+  { kind: "c", cls: "tint", title: "C. Tinted field, chip in its corner",
+    text: "The input itself takes the change color, with a small chip of faces in its corner for other people.",
+    pros: "Impossible to miss, and the label row is untouched.", cons: "Competes with focus and error styling on the same border. The chip can cover text in short inputs." },
+  { kind: "d", cls: "", title: "D. A compare button inside the field",
+    text: "A small branch icon at the input's right edge, with a count when others changed it.",
+    pros: "Very compact; reads as an action, “compare”.", cons: "Doesn't say who at a glance. Clashes with widgets that put their own buttons on the right." }
+];
+
+function render() {
+  document.getElementById("options").innerHTML = OPTIONS.map(o => `
+    <section class="option ${o.cls}">
+      <header><h2>${o.title}</h2><p>${o.text}</p></header>
+      ${o.kind === "a" ? `<div class="banner">${others().length > 2 ? `${esc(namesShort(others()))} also have unpublished changes.` : `${esc(others().map(p => p.name).join(" and "))} also ${others().length === 1 ? "has" : "have"} unpublished changes.`} <a href="#" onclick="return false">Review</a></div>` : ""}
+      <div class="form" style="${o.cls === "gutter" ? "padding-left:12px" : ""}">
+        ${field(o.kind, "title", "Title", LIVE_TITLE, { count: "33/120" })}
+        ${field(o.kind, "slug", "Slug", "alchemy-v1", { cls: "mono", hint: "Generate from title: <span style=\"font-family:var(--mono)\">running-on-alchemy-in-production</span>" })}
+        ${field(o.kind, "excerpt", "Excerpt", "How we moved the blog over in an afternoon!", { optional: true, cls: "area", count: "43/280" })}
+      </div>
+      <div class="verdict"><b>Good</b><span>${o.pros}</span><b>Weak</b><span>${o.cons}</span></div>
+    </section>`).join("");
+}
+
+document.addEventListener("click", e => {
+  const seg = e.target.closest(".seg button");
+  if (seg) {
+    if (seg.dataset.n) state.n = Number(seg.dataset.n);
+    if (seg.dataset.g) state.group = seg.dataset.g;
+    seg.parentElement.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b === seg)));
+    render();
+    return;
+  }
+  if (e.target.closest(".pop")) return;
+  const opener = e.target.closest("[data-open]");
+  // The margin bar is part of the field's box: a click left of the label opens it too.
+  const gutter = e.target.closest("[data-gutter]");
+  const key = opener?.dataset.open ?? (gutter && e.offsetX < 0 ? gutter.dataset.gutter : null);
+  state.open = key && state.open !== key ? key : null;
+  render();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape" && state.open) { state.open = null; render(); } });
+render();
+</script>

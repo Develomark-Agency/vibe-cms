@@ -490,8 +490,9 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
               <div className="flex items-start gap-3 rounded-[14px] well p-3 text-sm text-muted-foreground">
                 <GitBranchIcon className="mt-0.5 size-4 shrink-0" />
                 <p>
-                  {others.length === 1 ? `${others[0]} also has` : `${others.slice(0, -1).join(", ")} and ${others.at(-1)} also have`} unpublished changes.
-                  {" "}You're editing your own copy{doc.data?.published ? " of the live version" : ""}; publishing brings them together.
+                  {others.length === 1 ? `${others[0]} also has` : others.length === 2 ? `${others[0]} and ${others[1]} also have` : `${others[0]}, ${others[1]} and ${others.length - 2} others also have`} unpublished changes.
+                  {" "}You're editing your own copy{doc.data?.published ? " of the live version" : ""}.{" "}
+                  <button type="button" className="text-foreground underline underline-offset-3" onClick={() => void startPublish()}>Review all changes</button>
                 </p>
               </div>
             )}
