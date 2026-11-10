@@ -4,7 +4,7 @@ Pages built from blocks with `vibe-cms/blocks`: defining blocks, the page schema
 
 Blocks are how editors build pages. A site usually has one `page` content type from `pageSchema()`, and every page editors manage is a document of it, each at its own `path`: `/` for the home page, `/about`, `/services/design`. Editors compose each page from blocks; the site renders them with its own components. A catch-all route renders them all (`vibe-cms docs astro` shows the routing).
 
-A block is a named object schema: `defineBlock` gives it a type, a label and icon for the editor's "Add block" menu, and its fields. It contains no rendering code, so it's safe in the config.
+A block is a named object schema: `defineBlock` gives it a type, a label and icon for the editor's "Add block" menu, and its fields. It contains no rendering code, so it's safe in the config. Each block also gets a hidden `_key` from the CMS, which tells it apart from its neighbours across saves, so moving one shows as a move when publishing (`vibe-cms docs publishing`). A block can't have its own `type` or `_key` field.
 
 ```ts
 // examples/schemas/src/presets.ts

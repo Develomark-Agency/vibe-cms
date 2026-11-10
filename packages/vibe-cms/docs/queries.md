@@ -92,7 +92,7 @@ export async function eventPage(cms: Cms<typeof fields>, slug: string) {
 }
 ```
 
-Published reads fail with `CONFLICT` if a stored value has the wrong type for its field, naming the document and field (`vibe-cms docs schema-changes`). `$meta.status` is `"draft"` (never published), `"published"` or `"changed"` (published, with newer draft edits). Media fields come back resolved with URLs (`vibe-cms docs media`), references as IDs unless expanded with `with` (`vibe-cms docs references`). `content.read` plugin hooks can reshape results on the way out.
+Published reads fail with `CONFLICT` if a stored value has the wrong type for its field, naming the document and field (`vibe-cms docs schema-changes`). `$meta.status` is `"draft"` (never published), `"published"` or `"changed"` (published, and someone has unpublished changes). Media fields come back resolved with URLs (`vibe-cms docs media`), references as IDs unless expanded with `with` (`vibe-cms docs references`). `content.read` plugin hooks can reshape results on the way out.
 
 ## Batching
 
@@ -112,7 +112,7 @@ Over HTTP a batch is one request (up to 50 queries).
 
 ## Drafts
 
-Queries read published content by default. `{ drafts: true }` reads the working copies instead, including never-published documents:
+Queries read published content by default. `{ drafts: true }` reads working copies instead, including never-published documents: the reader's own unpublished changes, else the live copy, else (never published) the newest copy anyone saved (`vibe-cms docs publishing`):
 
 ```ts
 // examples/schemas/src/queries.ts

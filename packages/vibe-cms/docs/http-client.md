@@ -83,7 +83,7 @@ console.log(JSON.stringify(await response.json(), null, 2));
 
 - `op` is `findMany`, `findFirst`, `findById` (with `args.id`) or `count`.
 - `args` takes `where`, `orderBy`, `limit` (default 100, at most 1000), `offset`, `locale` and `with`, the same as the typed client. `where` is the condition tree the `vibe-cms/query` helpers build (`eq(post.slug, "hello")` is `{ op: "eq", path: ["slug"], value: "hello" }`).
-- Add `"drafts": true` to a query, and a bearer token, for working copies.
+- Add `"drafts": true` to a query, and a bearer token, for working copies: the token's owner's unpublished changes, else the live copy.
 - Each document comes back with `id` and `$meta` (`locale`, `createdAt`, `updatedAt`, `publishedAt`, `status`).
 
 ## React: `useContent`

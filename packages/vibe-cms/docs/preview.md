@@ -6,7 +6,7 @@ Editors see the site with their saved drafts in a floating window over the edito
 
 1. The editor's **Preview** (in the sidebar, the command palette, or the eye button on a document with a `preview` URL) asks the site for a one-time code and opens `{prefix}/preview?code=…&path=/…`.
 2. The site trades the code for a `vibe_preview` cookie (the editor's session, `HttpOnly`) and redirects to the page. The cookie lasts an hour, renewed by each preview page, and closing the preview clears it.
-3. `vibe({ fetch })` sees the cookie on a page loaded **in a frame** and runs your `fetch` inside a preview scope. There, `vibe.client(env)` reads drafts of every type the editor can read. Pages, FAQs, settings and references all show their saved drafts, including documents never published, with no changes to your site's code.
+3. `vibe({ fetch })` sees the cookie on a page loaded **in a frame** and runs your `fetch` inside a preview scope. There, `vibe.client(env)` reads drafts of every type the editor can read. Pages, FAQs, settings and references all show the editor's own saved changes (and the live copy where they have none), including documents never published, with no changes to your site's code. Other people's unpublished changes aren't shown until they're published.
 4. Preview responses are `Cache-Control: no-store` and `X-Robots-Tag: noindex`. HTML pages get `<script src="{prefix}/preview.js">`, which reloads the page (keeping its scroll position) whenever the editor saves, and passes ⌘S back to the editor.
 
 A forged or expired cookie is ignored: the request is a normal visit.

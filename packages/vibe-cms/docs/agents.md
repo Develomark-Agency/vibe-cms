@@ -65,7 +65,7 @@ One tool per action, with dots as underscores: `documents.publish` → `document
 | Group | Tools |
 |---|---|
 | Schema | `schema_list`, `schema_get` (a content type's fields as JSON Schema: what `data` must look like) |
-| Documents | `documents_list`, `documents_get`, `documents_create`, `documents_update`, `documents_delete`, `documents_publish`, `documents_unpublish`, `documents_references`, `documents_versions`, `documents_version`, `documents_restoreVersion`, `documents_schedule`, `documents_unschedule` |
+| Documents | `documents_list`, `documents_get`, `documents_create`, `documents_update`, `documents_delete`, `documents_publish`, `documents_changes`, `documents_discardChanges`, `documents_unpublish`, `documents_references`, `documents_versions`, `documents_version`, `documents_restoreVersion`, `documents_schedule`, `documents_unschedule` |
 | Media | `assets_list`, `assets_get`, `assets_upload`, `assets_update`, `assets_replaceContent`, `assets_delete`, `folders_list`, `folders_create`, `folders_move`, `folders_delete` |
 | Trash | `trash_list`, `trash_get`, `trash_restore`, `trash_purge`, `trash_empty` |
 | Site | `site_get`, `site_update` |
@@ -73,8 +73,9 @@ One tool per action, with dots as underscores: `documents.publish` → `document
 How they behave:
 
 - Call `schema_list`, then `schema_get` for a type, before creating or updating its documents.
-- Writes save drafts. Drafts save even when invalid and return `issues`; `documents_publish` (or `publish: true`) needs a valid document.
-- `documents_update` replaces the draft's fields. Pass the `updatedAt` from `documents_get` as `baseUpdatedAt` to fail with `CONFLICT` rather than overwrite someone's edit.
+- Writes save to the user's own unpublished copy, never to the live site or anyone else's copy. They save even when invalid and return `issues`; publishing needs a valid document.
+- `documents_update` replaces your copy's fields. Pass `updatedAt` and `baseVer` from `documents_get` as `baseUpdatedAt` and `baseVer`.
+- `documents_publish` merges everyone's unpublished changes. When two people changed the same thing it fails with `CONFLICT`; `documents_changes` shows both sides. See `vibe-cms docs publishing`.
 - Media fields take `{ asset: "<id>" }` plus their per-usage fields (like `alt`): upload with `assets_upload` (file as `{ name, type?, base64 }`) first. See `vibe-cms docs media`.
 - References take document IDs (`vibe-cms docs references`); translations take a `locale` (`vibe-cms docs localization`).
 - Deleting moves things to the trash; `trash_purge` and `trash_empty` can't be undone.

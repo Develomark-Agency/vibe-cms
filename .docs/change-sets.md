@@ -1,85 +1,117 @@
 # Change sets: per-person drafts and merge on publish
 
-Status: proposed. Not built.
+Status: built (branches, merge, publish dialog). Not built: review roles, the hub's review list, visual diff. User-facing docs: `packages/vibe-cms/docs/publishing.md`.
 
 ## Problem
 
-A document has one shared draft. When it holds saved but unpublished changes, nothing tells the person publishing what changed, who changed it, or how. Everyone's edits pile onto the same draft, and publishing is all or nothing.
+A document had one shared draft. When it held saved but unpublished changes, nothing told the person publishing what changed, who changed it, or how. Everyone's edits piled onto the same draft, and publishing was all or nothing.
 
-Today:
+Before this:
 
-- Every save appends a row to `vibe_versions` (`id`, `locale`, `ver`, `data`, `author`, `created_at`).
-- `vibe_documents.published_ver` points at the live version.
-- `documents.update` takes `baseUpdatedAt` and fails with `CONFLICT` if someone saved since. So edits never fork: they're applied one after another, and there's nothing to merge.
+- `vibe_documents` held one `draft` and one `published` copy per document and locale. `updated_by` was the last person to save the draft; nothing else recorded who changed what.
+- `vibe_versions` got a row only on publish (and when scheduling one), not on every save.
+- `documents.update` took `baseUpdatedAt` and failed with `CONFLICT` if anyone had saved since. Edits never forked, so there was nothing to merge.
 
 ## Goal
 
 Publishing works like merging branches in Git:
 
 - Each person has their own branch of a document.
-- The publish screen lists every pending branch as plain-language changes: "Alice changed the title from *Spring sale* to *Summer sale*", "Bob changed the description from … to … and the title from … to …".
+- The publish screen lists every pending branch as plain-language changes: "Alice changed the title from *Spring sale* to *Summer sale*".
 - It shows which changes go through cleanly and which conflict, and lets the publisher pick per change.
 - Publishing some branches leaves the others pending.
 
 ## Decisions
 
-- **One branch per person, per document and locale.** Not per session or per task. An agent's branch belongs to the user whose token it uses; the change records that it came through MCP (see [audit log](./audit-log.md)).
-- **Diff at the field level, keyed by path** (`title`, `seo.description`, `blocks[<block id>].heading`).
-- **Fields that are hard to diff show only that they changed.** Rich text, code, JSON or `mount` widgets with no diff renderer, and any field type without one, show "Alice changed the body". They don't show how. A conflict on such a field is resolved by picking one side whole.
+- **One branch per person, per document and locale.** Not per session or per task. When someone edits and saves, that's their version of the document: not published, but a candidate for publishing. An agent's branch belongs to the user whose token it uses; the branch records where the last save came from (`via`: `ui`, `mcp`, `cli`, `rest`; see [audit log](./audit-log.md)).
+- **Edits to the same field never overwrite each other.** If Alice and Bob both change the title and save, both versions are kept, one on each branch. They meet only at publish, where the publisher picks.
+- **Closing a branch discards it** (`documents.discardChanges`). The branch row is deleted and can't be brought back: saves aren't versions, only publishes are. The person's next edit starts a new branch from live. Discarding the only copy of a never-published document is refused; delete the document instead.
+- **Diff at the field level, keyed by path** (`title`, `seo.description`, `blocks[<_key>].heading`).
+- **Fields that are hard to diff show only that they changed.** Rich text, code, JSON, any field with a widget, and any other type show "Alice changed the body". A conflict on such a field is resolved by picking one side whole.
+- **Hidden and read-only fields aren't anyone's changes.** Plugins derive them (a search text field, say), so diffing them would make every save conflict. Publishing takes them from the newest branch and runs the write hooks again.
+- **Draft reads show the reader's own branch, else live, else the newest branch** (for a document never published). This covers `{ drafts: true }` queries, editor lists and the preview, which reads as the editor behind it. "Live plus every clean change" was dropped: nobody needed it, and it depends on which branches count.
 
 ## Model
 
 ```
+vibe_documents
+  id, locale, type, published, published_ver, …   -- no draft column
+  updated_at, updated_by                         -- last save to any branch, or last publish
+
 vibe_branches
   id, locale, owner            -- primary key (one branch per person)
-  base_ver                     -- the published version the branch started from
+  owner_name                   -- for display
+  base_ver                     -- the published version `base` is; null before the first publish
+  base                         -- the copy the branch started from
   data                         -- the branch's full working copy
-  updated_at
+  via, created_at, updated_at
 ```
 
-A branch's changes are computed, not stored: `diff(version base_ver, branch.data)`. Each save still writes a `vibe_versions` row (with `author` and the source, `via`), so history and restore keep working.
+A branch's changes are computed, not stored: `diff(base, data)`. `base` is stored, not looked up by `base_ver`, because before the first publish a branch starts from another person's branch, which isn't a version.
 
-The editor opens the person's own branch, creating it from the live version on first edit. A document with no live version yet (never published) is created on the creator's branch. Other people branch from that until the first publish.
+A branch exists only while it has something to publish: saving a copy equal to live deletes it.
 
-Locales work as now: each translation has its own branches.
+- **First edit:** the editor opens the live copy and the first save creates the branch, based on the version the editor read (`baseVer`), so changes published in between aren't taken for the editor's.
+- **Never published:** the creator's save is the first branch. Other people start from the newest branch.
+- **Unpublishing:** a document with no branches gets one for whoever unpublished it, based on nothing, so there's still something to edit and republish.
+- **Locales:** work as before. Each translation has its own branches.
+
+`baseUpdatedAt` now guards only your own branch, so it catches another tab, or an agent working as you, not other people.
 
 ### Change
 
+`src/changes/index.ts`, shared by the engine and the editor:
+
 ```ts
 type Change = {
-  path: string;            // "title", "blocks[b_8f2].heading"
+  path: string;            // "title", "blocks[blk_8f2].heading"
+  segments: Segment[];     // the path, with list items as { key }
   kind: "set" | "add" | "remove" | "move";
-  before: unknown;         // value at base_ver
-  after: unknown;          // value on the branch
-  detail: "value" | "changed-only"; // changed-only: rich text etc.
+  before: unknown;         // value at the branch's base (a move: the old position)
+  after: unknown;          // value on the branch (a move: the new position)
+  detail: "value" | "changed-only";
+  label: string[];         // ["Blocks", "Hero", "Heading"]
+  field: string;           // the schema type, for rendering
+  ref?: string;            // a reference's target type
 };
 ```
 
-`detail` comes from the field's diff renderer. Text, numbers, booleans, enums, dates, slugs, references, media and lists of those are `value`. Everything else is `changed-only`.
-
 ### Blocks
 
-Block lists diff by block ID, so a move shows as a move ("Moved Testimonials above Hero") and not as a delete plus an add. Blocks need IDs that stay the same across saves; check `vibe-cms/blocks` and add them if they're missing (with a migration that assigns IDs to existing blocks).
+Blocks carry a hidden `_key` (in `defineBlock`). The engine assigns one to any block without one, and a new one to a duplicate, on every save and publish. Block lists diff by key, so a move shows as a move (from a longest-increasing-subsequence of positions) and not as a delete plus an add.
+
+Blocks saved before keys existed weren't migrated. Instead, whenever the engine reads a copy, blocks without keys get positional ones (`pos0`, `pos1`…). Every copy of a document gets the same ones, so unchanged blocks match across live and branches, and the next save keeps them.
 
 ## Clean or conflicting
 
-Compare each change against the **current live version**, not the branch's base:
+Each change is checked against the **current live version**, not the branch's base:
 
-- **Clean:** the live value at `path` still equals `before`, and no other branch selected in this publish changes the same path (or a parent or child of it).
-- **Stale:** someone published since the branch started and the live value at `path` changed. Shown as a conflict with "Live is now …".
-- **Conflict:** two selected branches change the same path to different values. Two branches that make the same change are not a conflict.
+- **Clean:** the live value at `path` still equals `before`, and no other selected branch changes the same path (or a parent or child of it).
+- **Live:** live already equals `after` (someone published the same thing). Dropped silently.
+- **Stale:** live changed at `path` since the branch started. Needs a choice, like a conflict.
+- **Conflict:** two selected branches change overlapping paths differently. Exceptions:
+  - Two branches making the same change don't conflict.
+  - A move doesn't conflict with edits inside the moved block. A remove does.
+  - An edit made on top of another branch's change doesn't conflict with it: Bob editing `seo.description` on a copy started from Alice's new `seo`, before the first publish.
 
-Clean changes from several branches merge into one new live version.
+Overlapping conflicts share a `group`, the outermost path involved, and are settled together. Changes are applied outermost first, so an edit inside something another branch adds lands in it. An added or moved block goes after the block before it on its branch that live also has.
+
+Before the first publish there is no live version, so nothing is stale.
 
 ## Publish screen
 
-1. Lists every branch with pending changes: owner, source (editor, MCP, CLI, REST), last edited, and changes as sentences.
-2. A checkbox per branch, and per change within it.
-3. Conflicts are grouped by field with a choice: one person's value, the live value, or editing it by hand (for `value` fields).
+**Two clicks when nothing conflicts:** Publish saves what's unsaved and opens the screen with every clean change ticked. The Publish button takes focus once the changes load, so Enter publishes. Conflicts start as "Decide later" (left pending), so they never block publishing the rest. Choosing a side includes them.
+
+The screen shows what will go live and where each change came from: the person, the source (editor, agent via MCP, CLI, API), and when it was saved. A brand-new document publishes straight away, since all its changes are the creator's.
+
+1. A "needs a choice" card per conflict group: each person's value, what's live, a value typed in (for text fields), or decide later.
+2. Every branch with pending changes: a checkbox for the branch and one per change, and the changes as sentences with before and after.
+3. The count treats a settled conflict as one change.
 4. Publishing:
    - writes the merged live version;
-   - rebases each published branch: changes that went live drop out, and the branch's `base_ver` moves forward;
-   - leaves unselected changes pending on their branches.
+   - rebases each published branch: what went live (or was settled against) drops out, what was left out is replayed onto the new version, and `base_ver` moves forward. A branch with nothing left is deleted;
+   - leaves branches that weren't selected as they are. Their changes then show as stale against the new version;
+   - leaves a branch saved during the publish untouched (matched on `updated_at`).
 
 Rendering per field type:
 
@@ -91,28 +123,28 @@ Rendering per field type:
 | Media | Before and after thumbnails |
 | List of simple values | Items added and removed |
 | Blocks | Added, removed, moved, and changes inside each block by its fields |
-| Rich text, code, JSON, unknown widgets | "changed" |
+| Rich text, code, JSON, widgets | "Changed …" |
 
-Later: a visual diff through the existing preview, with changed blocks outlined.
+The editor also says when other people have unpublished changes, and has "Discard my unpublished changes".
 
 ## Other effects
 
-- **Permissions:** a role can be allowed to edit (its own branch) without being allowed to publish. That gives review and approval for agents and junior editors: they propose, someone else publishes. Publishing another person's branch requires the publish permission.
-- **Scheduling:** a schedule names the branches (or the merged result) it will publish. If the branches changed since then, the schedule publishes what was approved (store the merged data, like `vibe_schedules.ver` does today).
-- **Queries:** draft reads (`preview`, draft tokens) need a defined meaning. Proposal: the reader's own branch, or with no reader, the live version plus every clean change. Decide before building.
-- **`documents.*` actions:** `update` writes the caller's branch. New actions: `documents.changes` (pending changes, all branches), `documents.publish` with `branches` / `changes` to pick, `documents.discardBranch`.
-- **Hub:** a cross-site "awaiting review" list built from `documents.changes`.
+- **Actions:** `documents.update` writes the caller's branch and takes `baseVer`. `documents.publish` takes `branches`, `skip` (`{ owner, path }`) and `resolve` (`{ group, use | value }`), and fails with `CONFLICT` and `data.conflicts`. New: `documents.changes`, `documents.discardChanges`. `publish: true` on a save publishes only the caller's branch.
+- **Scheduling:** scheduling a publish merges every branch at that moment and stores the result as a version, as before. It fails while anything conflicts. When it runs, branches whose changes are all live are pruned.
+- **Search:** indexes live plus every branch, one row per document and locale. A document matches its old title until the new one is published.
+- **References, uniqueness and asset usage:** check live and every branch.
+- **Trash:** a trashed document keeps its branches and restores them. Older entries, with a `draft`, restore it as the last editor's branch.
+- **Backups:** format 2 adds a `branches` table. Format 1 snapshots still restore: their drafts become branches.
+- **Migration** (`0003`): drafts that differ from live become their last editor's branch, then the `draft` column, its search triggers and its expression indexes are dropped. Concurrent isolates are safe: a migration that fails because another isolate applied it counts as applied.
+- **Permissions:** a role can already edit without publishing. Publishing, including other people's branches, needs the publish permission, as does discarding someone else's branch.
 
-## Phases
+## Not built
 
-1. **Read-only diff:** in the publish dialog, diff the live version against the shared draft, and group changes by the `author` of the versions saved since `published_ver`. Uses existing tables.
-2. **Source on saves:** record `via` with each version (shared with the audit log).
-3. **Branches:** `vibe_branches`, editor works on the person's branch, merge and conflicts on publish.
-4. **Review:** an edit-without-publish role permission and the hub's review list.
-5. **Visual diff** in the preview.
+1. **Review:** the hub's cross-site "awaiting review" list from `documents.changes`.
+2. **Visual diff** in the preview, with changed blocks outlined.
 
 ## Open questions
 
-- How draft queries read branches (above).
 - Whether to show other people's pending changes to a field while you edit it ("Bob also changed this").
-- Pruning old versions once branches add more saves.
+- Whether saves should become versions, so a discarded branch can be recovered.
+- Branches whose owner left the site: who cleans them up.

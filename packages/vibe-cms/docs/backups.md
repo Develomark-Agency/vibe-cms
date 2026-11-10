@@ -2,7 +2,7 @@
 
 How to take snapshots of a site's content and media, keep them outside the site, and restore them onto the same site or another one. Each step is small and retried, and a restore changes nothing until it finishes.
 
-A snapshot, in the panel or in a `.vibe` file, holds everything editors can change: documents (drafts, published copies, every translation), version history, schedules, the media library and its files, folders, the trash, and the site's name, accent and icon. Code isn't in it, since it lives in your repository. Neither are sessions, the session secret, the site's ID or the search index: a site restored from a snapshot keeps its own identity and sign-in, and rebuilds its search index.
+A snapshot, in the panel or in a `.vibe` file, holds everything editors can change: documents (published copies, everyone's unpublished changes, every translation), version history, schedules, the media library and its files, folders, the trash, and the site's name, accent and icon. Code isn't in it, since it lives in your repository. Neither are sessions, the session secret, the site's ID or the search index: a site restored from a snapshot keeps its own identity and sign-in, and rebuilds its search index.
 
 ## From the panel
 
