@@ -64,7 +64,7 @@ const ATTEMPTS: Record<string, string> = {
   "activity.list": "See others' activity"
 };
 
-const VIA_LABELS: Record<Via, string> = {
+export const VIA_LABELS: Record<Via, string> = {
   ui: "Editor",
   rest: "API",
   mcp: "Agent (MCP)",

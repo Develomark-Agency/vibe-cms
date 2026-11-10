@@ -49,7 +49,7 @@ export const branches = sqliteTable("vibe_branches", {
   base_ver: integer(),
   base: text(),
   data: text().notNull(),
-  /** Where the last save came from: `editor`, `mcp`, `cli`, `api`… */
+  /** Where the last save came from: `ui` (the editor), `mcp`, `cli`, `rest`… */
   via: text().notNull(),
   created_at: integer().notNull(),
   updated_at: integer().notNull()

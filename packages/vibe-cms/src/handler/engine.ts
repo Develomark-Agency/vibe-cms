@@ -25,7 +25,7 @@ import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExi
 import type { BatchItem } from "drizzle-orm/batch";
 import { createDb } from "../db/client.ts";
 import { assets, branches, documents, folders, meta, schedules, trash, versions, type AssetRow, type BranchRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "../db/schema.ts";
-import { assignKeys, check, deepEqual, merge, rebase, type Branch, type CheckedChange, type Resolution } from "../changes/index.ts";
+import { assignKeys, check, deepEqual, merge, rebase, withPositionalKeys, type Branch, type CheckedChange, type Resolution } from "../changes/index.ts";
 import { all, first, getMeta, newId } from "./db.ts";
 import type { D1, ExecutionContext, ImagesBinding, R2 } from "./platform.ts";
 import { serveTransformed, type ImageHealth } from "./images.ts";
@@ -293,9 +293,16 @@ export function documentStatus(row: { published: string | null, pending?: number
   return row.pending ? "changed" : "published";
 }
 
+/** A stored copy of a document, its blocks keyed. */
+function parseCopy(schema: ObjectSchema, json: string): DocumentData;
+function parseCopy(schema: ObjectSchema, json: string | null): DocumentData | null;
+function parseCopy(schema: ObjectSchema, json: string | null): DocumentData | null {
+  return json === null ? null : withPositionalKeys(schema, JSON.parse(json) as DocumentData);
+}
+
 /** A branch row as the merge sees it. */
-function toBranch(row: BranchRow): Branch {
-  return { owner: row.owner, base: row.base === null ? null : JSON.parse(row.base), data: JSON.parse(row.data) };
+function toBranch(schema: ObjectSchema, row: BranchRow): Branch {
+  return { owner: row.owner, base: parseCopy(schema, row.base), data: parseCopy(schema, row.data) };
 }
 
 /** SQL for a document row's columns plus `draft`, the copy the bound reader edits, and `pending`. Binds the reader. */
@@ -670,6 +677,7 @@ export class Engine {
     require(this.state, this.scope.session, { action: "read", type });
     const rows = (await this.workingRows(id)).filter(r => r.type === type);
     if(rows.length === 0) throw new HttpError(404, "Document not found");
+    const schema = getSchema(this.config, type);
     const row = rows.find(r => r.locale === locale);
     const scheduled = await this.orm.select().from(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale)));
     const open = row ? await this.branchRows(id, locale) : [];
@@ -681,8 +689,8 @@ export class Engine {
       locale,
       exists: Boolean(row),
       locales: rows.map(r => ({ locale: r.locale, status: documentStatus(r), updatedAt: iso(r.updated_at)! })),
-      draft: row?.draft ? JSON.parse(row.draft) : null,
-      published: row?.published ? JSON.parse(row.published) : null,
+      draft: row?.draft ? parseCopy(schema, row.draft) : null,
+      published: row?.published ? parseCopy(schema, row.published) : null,
       status: row ? documentStatus(row) : null,
       publishedVer: row?.published_ver ?? null,
       baseVer: own ? own.base_ver : row?.published_ver ?? null,
@@ -814,7 +822,7 @@ export class Engine {
         ? this.orm.update(documents).set({ schema_hash: this.state.schemaHash, updated_at: now, updated_by: updatedBy })
           .where(and(eq(documents.id, id), eq(documents.locale, locale)))
         : this.orm.insert(documents).values({ id, type: input.type, locale, schema_hash: this.state.schemaHash, created_at: now, updated_at: now, updated_by: updatedBy }),
-      existing?.published && deepEqual(doc, JSON.parse(existing.published))
+      existing?.published && deepEqual(doc, parseCopy(schema, existing.published))
         ? this.orm.delete(branches).where(ownBranch)
         : this.orm.insert(branches)
           .values({ id, locale, owner: this.owner, owner_name: this.ownerName, base_ver: base.ver, base: base.data, data, via: this.activityScope.via, created_at: now, updated_at: now })
@@ -966,7 +974,7 @@ export class Engine {
     const schema = getSchema(this.config, type);
     const open = await this.branchRows(id, locale);
     const chosen = selection.branches ? open.filter(b => selection.branches!.includes(b.owner)) : open;
-    const live = row.published ? JSON.parse(row.published) as DocumentData : null;
+    const live = parseCopy(schema, row.published);
     if(!chosen.length) {
       if(!live) throw new HttpError(409, "There's nothing to publish");
       return { ...(await this.getDocument(type, id, locale)), issues: [] };
@@ -974,7 +982,7 @@ export class Engine {
     const skip = new Map<string, Set<string>>();
     for(const item of selection.skip ?? []) skip.set(item.owner, (skip.get(item.owner) ?? new Set()).add(item.path));
     const resolve = new Map<string, Resolution>((selection.resolve ?? []).map(r => [r.group, "value" in r ? { value: r.value } : { use: r.use ?? "live" }]));
-    const result = merge(schema, live, { branches: chosen.map(toBranch), skip, resolve });
+    const result = merge(schema, live, { branches: chosen.map(b => toBranch(schema, b)), skip, resolve });
     if(result.unresolved.length) {
       const conflicting = result.unresolved.some(u => u.status === "conflict");
       throw new HttpError(409, conflicting ? "Some changes conflict. Choose which to publish." : "Some changes were made to an older version. Choose which to publish.", {
@@ -983,7 +991,7 @@ export class Engine {
     }
     // Hidden and read-only fields aren't anyone's changes; they come from the newest copy, and plugins derive them again.
     const merged = result.data as DocumentData;
-    const newest = JSON.parse(chosen[0]!.data) as DocumentData;
+    const newest = parseCopy(schema, chosen[0]!.data);
     for(const [key, field] of Object.entries(schema.shape)) {
       if((field.hidden || field.readOnly || unwrap(field).hidden || unwrap(field).readOnly) && key in newest) merged[key] = newest[key];
     }
@@ -1001,7 +1009,7 @@ export class Engine {
       // Each published branch keeps what was left out, now on top of the new version. One saved since
       // it was read is left as it is; its changes show against the new version.
       ...chosen.map(b => {
-        const next = rebase(doc, result.pending.get(b.owner)!, JSON.parse(b.data));
+        const next = rebase(doc, result.pending.get(b.owner)!, parseCopy(schema, b.data));
         const where = and(eq(branches.id, id), eq(branches.locale, locale), eq(branches.owner, b.owner), eq(branches.updated_at, b.updated_at));
         return next === null
           ? this.orm.delete(branches).where(where)
@@ -1021,8 +1029,8 @@ export class Engine {
     if(!row || row.type !== type) throw new HttpError(404, "Document not found");
     const schema = getSchema(this.config, type);
     const open = await this.branchRows(id, locale);
-    const live = row.published ? JSON.parse(row.published) as DocumentData : null;
-    const checked = check(schema, live, open.map(toBranch));
+    const live = parseCopy(schema, row.published);
+    const checked = check(schema, live, open.map(b => toBranch(schema, b)));
     return {
       live,
       publishedVer: row.published_ver,
@@ -1034,8 +1042,8 @@ export class Engine {
         createdAt: iso(b.created_at)!,
         updatedAt: iso(b.updated_at)!,
         baseVer: b.base_ver,
-        base: b.base === null ? null : JSON.parse(b.base) as DocumentData,
-        data: JSON.parse(b.data) as DocumentData,
+        base: parseCopy(schema, b.base),
+        data: parseCopy(schema, b.data),
         changes: checked.get(b.owner)!.filter(c => c.status !== "live")
       })).filter(b => b.changes.length)
     };
@@ -1066,7 +1074,8 @@ export class Engine {
     const row = await this.getRow(id, locale);
     if(!row?.published) return;
     const open = await this.branchRows(id, locale);
-    const checked = check(getSchema(this.config, type), JSON.parse(row.published), open.map(toBranch));
+    const schema = getSchema(this.config, type);
+    const checked = check(schema, parseCopy(schema, row.published), open.map(b => toBranch(schema, b)));
     const done = open.filter(b => checked.get(b.owner)!.every(c => c.status === "live"));
     if(done.length) await this.orm.delete(branches).where(and(eq(branches.id, id), eq(branches.locale, locale), inArray(branches.owner, done.map(b => b.owner))));
   }
@@ -1221,9 +1230,9 @@ export class Engine {
       // Snapshot the merge of everyone's changes now, so later edits aren't published by surprise.
       const schema = getSchema(this.config, type);
       const open = await this.branchRows(id, locale);
-      const live = row.published ? JSON.parse(row.published) as DocumentData : null;
+      const live = parseCopy(schema, row.published);
       if(!open.length && !live) throw new HttpError(409, "There's nothing to publish");
-      const result = merge(schema, live, { branches: open.map(toBranch) });
+      const result = merge(schema, live, { branches: open.map(b => toBranch(schema, b)) });
       if(result.unresolved.length) {
         throw new HttpError(409, "Some changes conflict. Publish now to choose between them, or schedule once they're settled.", {
           conflicts: result.unresolved.map(u => ({ group: u.group, status: u.status, owners: u.changes.map(c => c.owner), paths: u.changes.map(c => c.change.path) }))
@@ -1982,7 +1991,7 @@ function trashedBranches(row: TrashedDocument): BranchRow[] {
     base_ver: row.published_ver,
     base: row.published,
     data: row.draft,
-    via: "editor",
+    via: "ui",
     created_at: row.updated_at,
     updated_at: row.updated_at
   }];

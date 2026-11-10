@@ -365,7 +365,7 @@ function splitDraft(input: unknown): { row: unknown, branch: Record<string, unkn
     row,
     branch: {
       id: row.id, locale: row.locale, owner: row.updated_by ?? "system", owner_name: null, base_ver: row.published_ver ?? null,
-      base: row.published ?? null, data: draft, via: "editor", created_at: row.updated_at, updated_at: row.updated_at
+      base: row.published ?? null, data: draft, via: "ui", created_at: row.updated_at, updated_at: row.updated_at
     }
   };
 }

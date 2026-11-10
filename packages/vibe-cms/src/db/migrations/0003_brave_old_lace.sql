@@ -14,7 +14,7 @@ CREATE TABLE `vibe_branches` (
 --> statement-breakpoint
 -- Unpublished drafts become their last editor's branch, started from the live copy.
 INSERT OR IGNORE INTO `vibe_branches` (`id`, `locale`, `owner`, `owner_name`, `base_ver`, `base`, `data`, `via`, `created_at`, `updated_at`)
-SELECT `id`, `locale`, COALESCE(`updated_by`, 'system'), NULL, `published_ver`, `published`, `draft`, 'editor', `updated_at`, `updated_at`
+SELECT `id`, `locale`, COALESCE(`updated_by`, 'system'), NULL, `published_ver`, `published`, `draft`, 'ui', `updated_at`, `updated_at`
 FROM `vibe_documents` WHERE `published` IS NULL OR `published` != `draft`;
 --> statement-breakpoint
 -- The search triggers read the draft; `migrate()` reinstalls them over branches.

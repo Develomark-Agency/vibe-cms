@@ -4,7 +4,7 @@
  *
  * Pure functions over schemas and JSON, shared by the engine and the editor. See `.docs/change-sets.md`.
  */
-import type { AnySchema, ArraySchema, LiteralSchema, ObjectSchema, OptionalSchema, UnionSchema } from "../schema/types.ts";
+import type { AnySchema, ArraySchema, LiteralSchema, ObjectSchema, OptionalSchema, RefSchema, UnionSchema } from "../schema/types.ts";
 
 type Json = unknown;
 
@@ -27,7 +27,9 @@ export interface Change {
   /** Field labels from the root, e.g. `["Blocks", "Hero", "Heading"]`. */
   label: string[],
   /** The field's schema type, for choosing how to show it: `text`, `ref`, `asset`, `array`, `block`… */
-  field: string
+  field: string,
+  /** For a reference, or a list of them: the content type it points at, when the field names one. */
+  ref?: string
 }
 
 /** The key list items are matched by across versions. Blocks carry one. */
@@ -181,7 +183,9 @@ function walk(schema: AnySchema, before: unknown, after: unknown, segments: Segm
   if(!s.widget && s.type === "array" && Array.isArray(before) && Array.isArray(after) && isKeyedList(s) && keyable(before, after)) {
     return diffList(s as ArraySchema, before, after, segments, label, out);
   }
-  push("set", before, after, detailOf(s), s.type);
+  const target = s.type === "array" ? unwrap((s as ArraySchema).item) : s;
+  const ref = target.type === "ref" ? (target as RefSchema).to : undefined;
+  out.push({ path: pathString(segments), segments, kind: "set", before, after, detail: detailOf(s), label, field: s.type, ...(ref ? { ref } : {}) });
 }
 
 /** The label of a list item: its block or object label. */
@@ -504,10 +508,19 @@ function segmentsOf(change: Change, group: string): Segment[] {
 // --- Keys ---------------------------------------------------------------------
 
 /**
- * Gives every item of a keyed list (blocks) a key it lacks, and a new one where two share a key (a
- * duplicated block). Mutates `value`; returns whether anything changed.
+ * Keys for blocks saved before blocks had them, by position. Every copy of a document gets the same
+ * ones, so an unchanged block matches across the live copy and the branches until it's saved with a real key.
  */
-export function assignKeys(schema: AnySchema, value: unknown, newKey: () => string): boolean {
+export function withPositionalKeys<T>(schema: AnySchema, value: T): T {
+  assignKeys(schema, value, index => `pos${index}`);
+  return value;
+}
+
+/**
+ * Gives every item of a keyed list (blocks) a key it lacks, and a new one where two share a key (a
+ * duplicated block). `newKey` gets the item's position. Mutates `value`; returns whether anything changed.
+ */
+export function assignKeys(schema: AnySchema, value: unknown, newKey: (index: number) => string): boolean {
   let changed = false;
   function visit(s: AnySchema, v: unknown) {
     const inner = unwrap(s);
@@ -520,11 +533,11 @@ export function assignKeys(schema: AnySchema, value: unknown, newKey: () => stri
       const item = (inner as ArraySchema).item;
       if(isKeyedList(inner)) {
         const seen = new Set<string>();
-        for(const entry of v) {
+        for(const [index, entry] of v.entries()) {
           if(!isRecord(entry)) continue;
           const key = itemKey(entry);
           if(!key || seen.has(key)) {
-            entry[ITEM_KEY] = newKey();
+            entry[ITEM_KEY] = newKey(index);
             changed = true;
           }
           seen.add(entry[ITEM_KEY] as string);

@@ -860,8 +860,8 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
  */
 function summarize(schema: AnySchema, value: unknown, depth = 0): string | undefined {
   const inner = unwrap(schema);
-  // Rich text nests ~8 deep (block → body → node → children → text).
-  if(depth > 10 || value === null || value === undefined) return undefined;
+  // Rich text nests ~8 deep (block → body → node → children → text). Hidden fields (a block's `_key`) aren't content.
+  if(depth > 10 || value === null || value === undefined || schema.hidden || inner.hidden) return undefined;
   if(inner.type === "text") return typeof value === "string" && value.trim() && !/^(https?:|\/|#)/.test(value) ? value.trim().slice(0, 120) : undefined;
   if(inner.type === "union") {
     const option = (inner as UnionSchema).options.find(o => matchesDiscriminators(o, value));

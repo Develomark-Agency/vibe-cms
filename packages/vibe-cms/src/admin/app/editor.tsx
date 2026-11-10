@@ -7,6 +7,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   ExternalLinkIcon,
+  GitBranchIcon,
   HistoryIcon,
   LanguagesIcon,
   MoreHorizontalIcon,
@@ -64,6 +65,7 @@ import { confirmLeave } from "./confirm.tsx";
 import { Segmented } from "./segmented.tsx";
 import { ActivityList } from "./activity.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
+import { PublishDialog } from "./publish.tsx";
 
 export type { DocumentState };
 
@@ -104,11 +106,13 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const arrival = useArrival(value !== null);
   const [serverIssues, setServerIssues] = useState<Issue[]>([]);
   const [showIssues, setShowIssues] = useState(false);
-  const [busy, setBusy] = useState<null | "save" | "publish" | "unpublish" | "delete">(null);
+  const [busy, setBusy] = useState<null | "save" | "publish" | "unpublish" | "discard" | "delete">(null);
   const [conflict, setConflict] = useState<DocumentState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const loadedKey = useRef<string | null>(null);
 
   // Reset the form when switching document or locale, not on every refetch.
@@ -184,53 +188,72 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     console.error(error);
   }
 
-  const save = useCallback(async (options: { publish?: boolean, force?: boolean } = {}) => {
-    if(!value || busy) return;
+  /** Saves to your branch (and with `publish`, publishes just that). Resolves to the saved state, or null when it didn't save. */
+  const save = useCallback(async (options: { publish?: boolean, force?: boolean } = {}): Promise<DocumentState | null> => {
+    if(!value || busy) return null;
     if(options.publish) {
       setShowIssues(true);
       if(clientIssues.length) {
         cms.toast("Fix the highlighted fields before publishing", { type: "error" });
         requestAnimationFrame(() => document.querySelector("[data-invalid]")?.scrollIntoView({ behavior: "smooth", block: "center" }));
-        return;
+        return null;
       }
     }
     setBusy(options.publish ? "publish" : "save");
     try {
+      let result: DocumentState;
       if(id === null) {
-        const created = await cms.actions.documents.create({ type, locale, data: value, publish: options.publish });
-        applyResult(created);
+        result = await cms.actions.documents.create({ type, locale, data: value, publish: options.publish });
+        applyResult(result);
         setNavigationBlocker(undefined);
-        navigate(`/content/${type}/${created.id}${location.search}`, { replace: true });
+        navigate(`/content/${type}/${result.id}${location.search}`, { replace: true });
       } else {
-        const result = await cms.actions.documents.update({
+        result = await cms.actions.documents.update({
           type,
           id,
           locale,
           data: value,
           publish: options.publish,
-          baseUpdatedAt: options.force || isNewTranslation ? undefined : doc.data?.updatedAt ?? undefined
+          baseUpdatedAt: options.force || isNewTranslation ? undefined : doc.data?.updatedAt ?? undefined,
+          baseVer: doc.data?.baseVer ?? undefined
         });
         applyResult(result);
       }
       cms.toast(options.publish ? "Published" : "Saved", { type: "success" });
       if(!options.publish && clientIssues.length) setShowIssues(true);
+      return result;
     } catch (error) {
       handleError(error);
+      return null;
     } finally {
       setBusy(null);
     }
   }, [value, busy, id, type, locale, doc.data, clientIssues, isNewTranslation]);
 
-  async function action(kind: "unpublish" | "publishOnly") {
-    setBusy(kind === "unpublish" ? "unpublish" : "publish");
+  /** Saves what's unsaved, then shows what publishing would do. A new document is all yours, so it publishes straight away. */
+  async function startPublish() {
+    if(id === null) return void save({ publish: true });
+    setShowIssues(true);
+    if(clientIssues.length) {
+      cms.toast("Fix the highlighted fields before publishing", { type: "error" });
+      requestAnimationFrame(() => document.querySelector("[data-invalid]")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+      return;
+    }
+    if(dirty && !(await save())) return;
+    setPublishOpen(true);
+  }
+
+  async function action(kind: "unpublish" | "discard") {
+    setBusy(kind);
     try {
-      const result = await (kind === "unpublish" ? cms.actions.documents.unpublish : cms.actions.documents.publish)({ type, id: id!, locale });
+      const result = await (kind === "unpublish" ? cms.actions.documents.unpublish : cms.actions.documents.discardChanges)({ type, id: id!, locale });
       applyResult(result);
-      cms.toast(kind === "unpublish" ? "Unpublished" : "Published", { type: "success" });
+      cms.toast(kind === "unpublish" ? "Unpublished" : "Discarded your changes", { type: "success" });
     } catch (error) {
       handleError(error);
     } finally {
       setBusy(null);
+      setConfirmDiscard(false);
     }
   }
 
@@ -279,12 +302,14 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     function onKey(event: KeyboardEvent) {
       if((event.metaKey || event.ctrlKey) && event.key === "s") {
         event.preventDefault();
-        if(canWriteLocale) void save({ publish: event.shiftKey && permissions.publish });
+        if(!canWriteLocale) return;
+        if(event.shiftKey && permissions.publish) void startPublish();
+        else void save();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [save, canWriteLocale]);
+  }, [save, canWriteLocale, dirty, clientIssues]);
 
   // This document's page on the site, as last saved, for a preview that follows the editor.
   const savedDraft = doc.data?.exists ? doc.data.draft : null;
@@ -326,6 +351,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const previewUrl = settings.preview && status && id ? fillPreview(settings.preview, doc.data?.draft ?? value, id, locale) : null;
   const liveUrl = settings.preview && doc.data?.published && id ? fillPreview(settings.preview, doc.data.published, id, locale) : null;
   const readOnly = !canWriteLocale;
+  const others = (doc.data?.pending ?? []).filter(p => p.owner !== session.user.sub).map(p => p.name ?? displayUser(p.owner, session));
 
   return (
     <FormValueContext.Provider value={value}>
@@ -367,7 +393,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             {!readOnly && permissions.publish && (
               <Button
                 size="sm"
-                onClick={() => (dirty || id === null ? void save({ publish: true }) : void action("publishOnly"))}
+                onClick={() => void startPublish()}
                 disabled={busy !== null || (status === "published" && !dirty)}
               >
                 <Crossfade
@@ -396,7 +422,10 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                     <DropdownMenuItem render={<a href={liveUrl} target="_blank" rel="noreferrer" />}><ExternalLinkIcon /> View live page</DropdownMenuItem>
                   )}
                   {dirty && (
-                    <DropdownMenuItem onClick={() => setValue(baseline)}><RotateCcwIcon /> Discard changes</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setValue(baseline)}><RotateCcwIcon /> Discard unsaved edits</DropdownMenuItem>
+                  )}
+                  {doc.data?.mine && !readOnly && (
+                    <DropdownMenuItem onClick={() => setConfirmDiscard(true)}><RotateCcwIcon /> Discard my unpublished changes…</DropdownMenuItem>
                   )}
                   {permissions.delete && (
                     <>
@@ -421,6 +450,15 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
               <div className="flex items-start gap-3 rounded-[14px] bg-sky-500/8 p-3 text-sm shadow-[inset_0_0_0_1px] shadow-sky-500/20">
                 <LanguagesIcon className="mt-0.5 size-4 text-sky-600" />
                 <p>There's no {localeName(locale)} version yet. The form starts from the {localeName(config.defaultLocale!)} copy; saving creates the translation.</p>
+              </div>
+            )}
+            {others.length > 0 && (
+              <div className="flex items-start gap-3 rounded-[14px] well p-3 text-sm text-muted-foreground">
+                <GitBranchIcon className="mt-0.5 size-4 shrink-0" />
+                <p>
+                  {others.length === 1 ? `${others[0]} also has` : `${others.slice(0, -1).join(", ")} and ${others.at(-1)} also have`} unpublished changes.
+                  {" "}You're editing your own copy{doc.data?.published ? " of the live version" : ""}; publishing brings them together.
+                </p>
               </div>
             )}
             {readOnly && (
@@ -498,16 +536,16 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
       <AlertDialog open={conflict !== null} onOpenChange={open => !open && setConflict(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Someone else changed this document</AlertDialogTitle>
+            <AlertDialogTitle>You saved this somewhere else</AlertDialogTitle>
             <AlertDialogDescription>
-              {displayUser(conflict?.updatedBy, session)} saved a newer version {formatRelative(conflict?.updatedAt)}. Load theirs (losing your edits), or overwrite it with yours.
+              Your copy was saved {formatRelative(conflict?.updatedAt || null)} from another tab or an agent working as you. Load that version (losing these edits), or overwrite it with these.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => {
               if(conflict) applyResult(conflict);
               setConflict(null);
-            }}>Load theirs</AlertDialogCancel>
+            }}>Load that version</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => {
               setConflict(null);
               void save({ force: true });
@@ -516,8 +554,26 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard your unpublished changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your copy goes back to {doc.data?.published ? "the live version" : "the newest copy"}. Other people's changes stay. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void action("discard")} disabled={busy === "discard"}>
+              {busy === "discard" && <Spinner />} Discard
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {id !== null && (
         <>
+          <PublishDialog open={publishOpen} onOpenChange={setPublishOpen} type={type} id={id} title={title} onDone={applyResult} />
           <ScheduleDialog open={scheduleOpen} onOpenChange={setScheduleOpen} type={type} id={id} status={status} dirty={dirty} onDone={applyResult} onError={handleError} />
           <HistorySheet open={historyOpen} onOpenChange={setHistoryOpen} type={type} id={id} doc={doc.data} onRestore={applyResult} readOnly={readOnly} />
         </>
@@ -564,7 +620,7 @@ function DocumentInfo({ doc }: { doc: DocumentState | undefined }) {
   const { session } = useAdmin();
   const rows: Array<[string, string]> = doc?.exists ? [
     ["Created", formatDate(doc.createdAt)],
-    ["Last saved", `${formatRelative(doc.updatedAt)} by ${displayUser(doc.updatedBy, session)}`],
+    ["Last saved", `${formatRelative(doc.editedAt)} by ${displayUser(doc.updatedBy, session)}`],
     ["Published", doc.publishedAt ? formatDate(doc.publishedAt) : "Never"]
   ] : [["Status", "Not saved yet"]];
   return (
@@ -628,7 +684,7 @@ function ScheduleDialog({ open, onOpenChange, type, id, status, dirty, onDone, o
           <DialogTitle>Schedule</DialogTitle>
           <DialogDescription>
             {action === "publish"
-              ? "The current saved version is captured now and published at the chosen time. Later edits aren't included."
+              ? "Everyone's saved, unpublished changes are merged now and published at the chosen time. Later edits aren't included."
               : "The document is taken off the site at the chosen time."}
           </DialogDescription>
         </DialogHeader>

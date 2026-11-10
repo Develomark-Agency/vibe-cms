@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import v from "../src/schema/index.ts";
 import { blocks, defineBlock } from "../src/blocks/index.ts";
 import { Text } from "../src/blocks/builtins.ts";
-import { assignKeys, check, diff, merge, type Branch } from "../src/changes/index.ts";
+import { assignKeys, check, diff, merge, withPositionalKeys, type Branch } from "../src/changes/index.ts";
 
 const Hero = defineBlock({ type: "hero", label: "Hero", fields: { heading: v.text(), align: v.enum(["left", "center"]) } });
 const Quote = defineBlock({ type: "quote", label: "Testimonial", fields: { quote: v.text() } });
@@ -154,4 +154,12 @@ test("assignKeys fills missing and duplicated keys", () => {
   expect(assignKeys(schema, doc, () => `k${++n}`)).toBe(true);
   expect(doc.blocks.map(b => (b as { _key?: string })._key)).toEqual(["k1", "h", "k2"]);
   expect(assignKeys(schema, doc, () => "x")).toBe(false);
+});
+
+test("blocks saved before keys match by position across copies", () => {
+  const old = { ...base, blocks: [{ type: "hero", heading: "A", align: "left" }, { type: "quote", quote: "B" }] };
+  const live = withPositionalKeys(schema, structuredClone(old));
+  const branch = withPositionalKeys(schema, structuredClone(old));
+  branch.blocks[1] = { ...branch.blocks[1]!, quote: "C" } as never;
+  expect(diff(schema, live, branch).map(c => c.path)).toEqual(["blocks[pos1].quote"]);
 });
