@@ -979,10 +979,7 @@ export class Engine {
       if(!live) throw new HttpError(409, "There's nothing to publish");
       return { ...(await this.getDocument(type, id, locale)), issues: [] };
     }
-    const skip = new Map<string, Set<string>>();
-    for(const item of selection.skip ?? []) skip.set(item.owner, (skip.get(item.owner) ?? new Set()).add(item.path));
-    const resolve = new Map<string, Resolution>((selection.resolve ?? []).map(r => [r.group, "value" in r ? { value: r.value } : { use: r.use ?? "live" }]));
-    const result = merge(schema, live, { branches: chosen.map(b => toBranch(schema, b)), skip, resolve });
+    const result = merge(schema, live, { branches: chosen.map(b => toBranch(schema, b)), ...this.selectionMaps(selection) });
     if(result.unresolved.length) {
       const conflicting = result.unresolved.some(u => u.status === "conflict");
       throw new HttpError(409, conflicting ? "Some changes conflict. Choose which to publish." : "Some changes were made to an older version. Choose which to publish.", {
@@ -1019,6 +1016,14 @@ export class Engine {
     ]);
     this.afterWrite({ type, id, locale, action: "publish", valid: true, doc });
     return { ...(await this.getDocument(type, id, locale)), issues: [] };
+  }
+
+  /** A selection's `skip` and `resolve`, as the merge takes them. */
+  private selectionMaps(selection: PublishSelection): { skip: Map<string, Set<string>>, resolve: Map<string, Resolution> } {
+    const skip = new Map<string, Set<string>>();
+    for(const item of selection.skip ?? []) skip.set(item.owner, (skip.get(item.owner) ?? new Set()).add(item.path));
+    const resolve = new Map<string, Resolution>((selection.resolve ?? []).map(r => [r.group, "value" in r ? { value: r.value } : { use: r.use ?? "live" }]));
+    return { skip, resolve };
   }
 
   /** Every branch with pending changes, each change checked against live and the other branches. */
@@ -1217,7 +1222,7 @@ export class Engine {
     return this.save({ type, id, locale: localeInput, data });
   }
 
-  async schedule(type: string, id: string, localeInput: string | undefined, action: "publish" | "unpublish", runAt: string) {
+  async schedule(type: string, id: string, localeInput: string | undefined, action: "publish" | "unpublish", runAt: string, selection: PublishSelection = {}) {
     const locale = this.locale(localeInput);
     const session = this.writer({ action: "publish", type, locale });
     const at = Date.parse(runAt);
@@ -1230,9 +1235,10 @@ export class Engine {
       // Snapshot the merge of everyone's changes now, so later edits aren't published by surprise.
       const schema = getSchema(this.config, type);
       const open = await this.branchRows(id, locale);
+      const chosen = selection.branches ? open.filter(b => selection.branches!.includes(b.owner)) : open;
       const live = parseCopy(schema, row.published);
-      if(!open.length && !live) throw new HttpError(409, "There's nothing to publish");
-      const result = merge(schema, live, { branches: open.map(b => toBranch(schema, b)) });
+      if(!chosen.length && !live) throw new HttpError(409, "There's nothing to publish");
+      const result = merge(schema, live, { branches: chosen.map(b => toBranch(schema, b)), ...this.selectionMaps(selection) });
       if(result.unresolved.length) {
         throw new HttpError(409, "Some changes conflict. Publish now to choose between them, or schedule once they're settled.", {
           conflicts: result.unresolved.map(u => ({ group: u.group, status: u.status, owners: u.changes.map(c => c.owner), paths: u.changes.map(c => c.change.path) }))

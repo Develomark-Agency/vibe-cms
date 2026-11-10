@@ -92,6 +92,17 @@ const documentsDelete = base({
   }))
   .handler(({ context: { engine }, input }) => engine.delete(input.type, input.id, { force: input.force, locale: input.locale }));
 
+/** Which unpublished changes to publish, for `documents.publish` and `documents.schedule`. */
+const selection = {
+  branches: z.array(z.string()).optional().describe("Owners whose changes to publish; everyone's when omitted"),
+  skip: z.array(z.object({ owner: z.string(), path: z.string() })).optional().describe("Changes to leave unpublished, by owner and `path`"),
+  resolve: z.array(z.object({
+    group: z.string().describe("The conflict's `group`"),
+    use: z.string().optional().describe("Whose change to keep: an owner, or `live` to keep what's live"),
+    value: z.unknown().optional().describe("A value to publish instead of either side")
+  })).optional()
+};
+
 const documentsPublish = base({
   summary: "Publish a document",
   description: "Merges unpublished changes into a new live version and records it: everyone's by default, or the `branches` (owners) you name, minus the changes in `skip`. Fails with CONFLICT and the `conflicts` when two people changed the same thing differently, or someone changed what's since been published; settle each by its `group` in `resolve`. `documents.changes` lists the changes and groups. Fails with UNPROCESSABLE_CONTENT and the `issues` when the result isn't valid.",
@@ -101,13 +112,7 @@ const documentsPublish = base({
     type,
     id,
     locale,
-    branches: z.array(z.string()).optional().describe("Owners whose changes to publish; everyone's when omitted"),
-    skip: z.array(z.object({ owner: z.string(), path: z.string() })).optional().describe("Changes to leave unpublished, by owner and `path`"),
-    resolve: z.array(z.object({
-      group: z.string().describe("The conflict's `group`"),
-      use: z.string().optional().describe("Whose change to keep: an owner, or `live` to keep what's live"),
-      value: z.unknown().optional().describe("A value to publish instead of either side")
-    })).optional()
+    ...selection
   }))
   .handler(({ context: { engine }, input }) => engine.publish(input.type, input.id, input.locale, { branches: input.branches, skip: input.skip, resolve: input.resolve }));
 
@@ -200,7 +205,7 @@ const scheduleAction = z.enum(["publish", "unpublish"]);
 
 const documentsSchedule = base({
   summary: "Schedule publishing",
-  description: "Publishes or unpublishes at a time. Scheduling a publish snapshots everyone's unpublished changes, merged, now, so later edits aren't published by surprise. Fails with CONFLICT while changes conflict.",
+  description: "Publishes or unpublishes at a time. Scheduling a publish merges unpublished changes now (everyone's, or a selection as `documents.publish` takes it), so later edits aren't published by surprise. Fails with CONFLICT while selected changes conflict.",
   idempotent: true
 })
   .input(z.object({
@@ -208,9 +213,10 @@ const documentsSchedule = base({
     id,
     locale,
     action: scheduleAction,
-    runAt: z.string().describe("ISO 8601 date and time")
+    runAt: z.string().describe("ISO 8601 date and time"),
+    ...selection
   }))
-  .handler(({ context: { engine }, input }) => engine.schedule(input.type, input.id, input.locale, input.action, input.runAt));
+  .handler(({ context: { engine }, input }) => engine.schedule(input.type, input.id, input.locale, input.action, input.runAt, { branches: input.branches, skip: input.skip, resolve: input.resolve }));
 
 const documentsUnschedule = base({
   summary: "Cancel a schedule",

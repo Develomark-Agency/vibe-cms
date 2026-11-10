@@ -25,7 +25,7 @@ function setup(db = createD1({ roles: { ...roles, publisher: { post: ["read", "w
     const siteId = (env.DB.sqlite.query("SELECT value FROM vibe_meta WHERE key = 'site_id'").get() as { value: string }).value;
     return (await issueSession(env.DB, session, siteId, "https://site.test")).token;
   }
-  return { env, call, token };
+  return { env, vibe, call, token };
 }
 
 let t: ReturnType<typeof setup>;
@@ -188,6 +188,23 @@ describe("branches", () => {
     expect(await list(bob)).toEqual([["Spring sale", "changed"]]);
     const found = await ok(t.call(bob, "documents.search", { query: "summer" }));
     expect(found.results.map((r: any) => r.id)).toEqual([doc.id]);
+  });
+
+  test("a scheduled publish takes the selection made when scheduling", async () => {
+    const doc = await published();
+    await edit(alice, doc.id, { title: "Summer sale" });
+    await edit(bob, doc.id, { title: "Winter sale", seo: { description: "Bob's" } });
+    const runAt = new Date(Date.now() + 60 * 60 * 1000);
+    await ok(t.call(dev, "documents.schedule", { type: "post", id: doc.id, action: "publish", runAt: runAt.toISOString(), branches: ["bob"], skip: [{ owner: "bob", path: "title" }] }));
+    // Edits after scheduling aren't included.
+    await edit(bob, doc.id, { seo: { description: "Later" } });
+    await t.vibe.scheduled({ scheduledTime: runAt.getTime() + 1000, cron: "* * * * *" } as never, t.env, ctx);
+    const after = await ok(t.call(dev, "documents.get", { type: "post", id: doc.id }));
+    expect(after.published).toMatchObject({ title: "Spring sale", seo: { description: "Bob's" } });
+    // Alice's and Bob's unscheduled changes are still pending.
+    expect(after.pending.map((p: any) => p.owner).sort()).toEqual(["alice", "bob"]);
+    const refused = await t.call(dev, "documents.schedule", { type: "post", id: doc.id, action: "publish", runAt: runAt.toISOString() });
+    expect(refused.status).toBe(409);
   });
 
   test("unpublishing keeps something to edit", async () => {

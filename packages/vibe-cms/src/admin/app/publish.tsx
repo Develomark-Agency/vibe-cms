@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightIcon, CloudUploadIcon, GitMergeIcon, TriangleAlertIcon } from "lucide-react";
+import { ArrowRightIcon, CalendarClockIcon, CloudUploadIcon, GitMergeIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getAt, type CheckedChange } from "../../changes/index.ts";
 import type { BranchChanges, DocumentState } from "../../handler/engine.ts";
@@ -109,17 +109,24 @@ export function PublishDialog({ open, onOpenChange, type, id, title, onDone }: {
     });
   }
 
-  async function publish() {
+  /** What's ticked and chosen, as `documents.publish` and `documents.schedule` take it. */
+  function selection() {
+    const skip = branches.filter(b => owners.includes(b.owner))
+      .flatMap(b => b.changes.filter(c => !included(b.owner, c)).map(c => ({ owner: b.owner, path: c.path })));
+    const resolve = [...choices.entries()].flatMap(([group, choice]) => (choice === "later" ? [] : [{ group, ...choice }]));
+    return { branches: owners, skip, resolve };
+  }
+
+  async function publish(runAt?: string) {
     setBusy(true);
     setError(null);
     try {
-      const skip = branches.filter(b => owners.includes(b.owner))
-        .flatMap(b => b.changes.filter(c => !included(b.owner, c)).map(c => ({ owner: b.owner, path: c.path })));
-      const resolve = [...choices.entries()].flatMap(([group, choice]) => (choice === "later" ? [] : [{ group, ...choice }]));
-      const result = await cms.actions.documents.publish({ type, id, locale, branches: owners, skip, resolve });
+      const result = runAt
+        ? await cms.actions.documents.schedule({ type, id, locale, action: "publish", runAt, ...selection() })
+        : await cms.actions.documents.publish({ type, id, locale, ...selection() });
       onDone(result);
       void queryClient.invalidateQueries({ queryKey: ["changes", type, id, locale] });
-      cms.toast(`Published ${counted}`, { type: "success" });
+      cms.toast(runAt ? `Scheduled ${counted} for ${formatDate(runAt)}` : `Published ${counted}`, { type: "success" });
       onOpenChange(false);
     } catch (failure) {
       // Someone saved or published meanwhile: show the changes as they are now.
@@ -129,6 +136,22 @@ export function PublishDialog({ open, onOpenChange, type, id, title, onDone }: {
       setBusy(false);
     }
   }
+
+  async function discard(owner: string) {
+    try {
+      onDone(await cms.actions.documents.discardChanges({ type, id, locale, owner }));
+      cms.toast(owner === session.user.sub ? "Discarded your changes" : `Discarded ${nameOf(owner)}'s changes`, { type: "success" });
+      await changes.refetch();
+      reset();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Couldn't discard");
+    }
+  }
+
+  const [scheduling, setScheduling] = useState<string | null>(null);
+  useEffect(() => {
+    if(!open) setScheduling(null);
+  }, [open]);
 
   const people = owners.map(owner => inSentence(nameOf(owner)));
   const reason = chosen.length === 0 ? "Nothing selected" : missingValue ? "Type the value to publish" : null;
@@ -172,16 +195,40 @@ export function PublishDialog({ open, onOpenChange, type, id, title, onDone }: {
               grouped={grouped}
               included={change => included(branch.owner, change)}
               onToggle={(paths, on) => toggle(branch.owner, paths, on)}
+              onDiscard={() => discard(branch.owner)}
             />
           ))}
         </div>
 
+        {scheduling !== null && (
+          <div className="flex flex-wrap items-center gap-2 rounded-[14px] bg-violet-500/8 p-3 shadow-[inset_0_0_0_1px] shadow-violet-500/20">
+            <CalendarClockIcon className="size-4 text-violet-600" />
+            <span>Publish these at</span>
+            <Input type="datetime-local" className="w-auto" value={scheduling} onChange={e => setScheduling(e.target.value)} aria-label="When to publish" />
+            <span className="basis-full text-xs text-muted-foreground">They're captured now: edits saved later aren't included.</span>
+          </div>
+        )}
+
         <DialogFooter className="items-center">
           {(error || reason) && <p className={cn("mr-auto text-xs", error ? "text-destructive" : "text-muted-foreground")}>{error ?? reason}</p>}
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button ref={publishButton} disabled={busy || reason !== null} onClick={() => void publish()}>
-            {busy ? <Spinner /> : <CloudUploadIcon />} Publish{count ? ` ${counted}` : ""}
-          </Button>
+          {scheduling === null ? (
+            <>
+              <Button variant="ghost" disabled={busy || reason !== null} onClick={() => setScheduling(toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)))}>
+                <CalendarClockIcon /> Schedule…
+              </Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button ref={publishButton} disabled={busy || reason !== null} onClick={() => void publish()}>
+                {busy ? <Spinner /> : <CloudUploadIcon />} Publish{count ? ` ${counted}` : ""}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => setScheduling(null)}>Back</Button>
+              <Button disabled={busy || reason !== null || !scheduling} onClick={() => void publish(new Date(scheduling).toISOString())}>
+                {busy ? <Spinner /> : <CalendarClockIcon />} Schedule{count ? ` ${counted}` : ""}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -208,6 +255,13 @@ function groupsOf(live: unknown, branches: BranchChanges[]): Group[] {
   return [...out.values()];
 }
 
+function toLocalInput(date: Date): string {
+  function pad(n: number) {
+    return String(n).padStart(2, "0");
+  }
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** "You" starts a sentence; anywhere else it's "you". */
 function inSentence(name: string): string {
   return name === "You" ? "you" : name;
@@ -229,27 +283,48 @@ function Who({ name, via, at }: { name: string, via?: string, at?: string }) {
   );
 }
 
-function BranchSection({ branch, nameOf, grouped, included, onToggle }: {
+function BranchSection({ branch, nameOf, grouped, included, onToggle, onDiscard }: {
   branch: BranchChanges,
   nameOf(owner: string): string,
   grouped: Set<string>,
   included(change: CheckedChange): boolean,
-  onToggle(paths: string[], on: boolean): void
+  onToggle(paths: string[], on: boolean): void,
+  onDiscard(): Promise<void>
 }) {
+  const [confirming, setConfirming] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   // The box ticks the changes that aren't waiting on a choice, and shows everything going in, choices included.
   const own = branch.changes.filter(c => !grouped.has(keyOf(branch.owner, c.path)));
   const on = branch.changes.filter(included).length;
   return (
     <section className="flex flex-col gap-2">
-      <label className="flex items-center gap-2.5">
-        <Checkbox
-          checked={on === branch.changes.length}
-          indeterminate={on > 0 && on < branch.changes.length}
-          disabled={own.length === 0}
-          onCheckedChange={checked => onToggle(own.map(c => c.path), Boolean(checked))}
-        />
-        <Who name={nameOf(branch.owner)} via={branch.via} at={branch.updatedAt} />
-      </label>
+      <div className="flex items-center gap-2">
+        <label className="flex min-w-0 flex-1 items-center gap-2.5">
+          <Checkbox
+            checked={on === branch.changes.length}
+            indeterminate={on > 0 && on < branch.changes.length}
+            disabled={own.length === 0}
+            onCheckedChange={checked => onToggle(own.map(c => c.path), Boolean(checked))}
+          />
+          <Who name={nameOf(branch.owner)} via={branch.via} at={branch.updatedAt} />
+        </label>
+        {confirming ? (
+          <span className="flex items-center gap-1 text-xs">
+            <span className="text-muted-foreground">Throw these away?</span>
+            <Button variant="ghost" size="xs" onClick={() => setConfirming(false)}>Keep</Button>
+            <Button variant="destructive" size="xs" disabled={discarding} onClick={async () => {
+              setDiscarding(true);
+              await onDiscard();
+              setDiscarding(false);
+              setConfirming(false);
+            }}>{discarding && <Spinner />} Discard</Button>
+          </span>
+        ) : (
+          <Button variant="ghost" size="xs" className="text-muted-foreground" onClick={() => setConfirming(true)}>
+            <Trash2Icon /> Discard
+          </Button>
+        )}
+      </div>
       <ul className="ml-6.5 flex flex-col divide-y rounded-[14px] well">
         {branch.changes.map(change => {
           const inGroup = grouped.has(keyOf(branch.owner, change.path));
