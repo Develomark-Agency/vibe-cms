@@ -2,12 +2,12 @@ import type { Collection, Column } from "../index.ts";
 import type { LocaleOf, QueryClient } from "../query/index.ts";
 import { eq } from "../query/index.ts";
 import v from "../schema/index.ts";
-import type { FieldOptions, LiteralSchema, ObjectSchema, Output, Shape } from "../schema/index.ts";
+import type { FieldOptions, LiteralSchema, ObjectSchema, OptionalSchema, Output, Shape, TextSchema } from "../schema/types.ts";
 
 type Icon = FieldOptions<unknown>["icon"];
 
-/** A block's stored shape: its fields plus `type`, which tells blocks apart in a page. */
-export type BlockSchema<T extends string = string, F extends Shape = Shape> = ObjectSchema<{ type: LiteralSchema<T> } & F>;
+/** A block's stored shape: its fields plus `type`, which tells kinds of block apart, and `_key`, which tells blocks apart. */
+export type BlockSchema<T extends string = string, F extends Shape = Shape> = ObjectSchema<{ type: LiteralSchema<T>, _key: OptionalSchema<TextSchema> } & F>;
 
 /**
  * What a block is: its type, how it's labelled in the editor and which inputs
@@ -32,8 +32,10 @@ export function defineBlock<const T extends string, const F extends Shape>(defin
     throw new Error(`Block type "${definition.type}" must be lowercase letters, numbers and dashes`);
   }
   if("type" in definition.fields) throw new Error(`Block "${definition.type}" can't have a field called "type"`);
+  if("_key" in definition.fields) throw new Error(`Block "${definition.type}" can't have a field called "_key"`);
   const schema = v.object(
-    { type: v.literal(definition.type, { hidden: true }), ...definition.fields },
+    // `_key` tells a block apart from its siblings across saves, so changes show as moves and edits, not replacements. The engine assigns it.
+    { type: v.literal(definition.type, { hidden: true }), _key: v.optional(v.text({ hidden: true })), ...definition.fields },
     { label: definition.label, description: definition.description, icon: definition.icon }
   ) as BlockSchema<T, F>;
   return { type: definition.type, label: definition.label, schema };
