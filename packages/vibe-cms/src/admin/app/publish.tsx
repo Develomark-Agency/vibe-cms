@@ -313,7 +313,8 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
         </main>
 
         {/* Like the editor's sidebar: what's going on, and who. Under the changes on a phone, which come first. */}
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-20">
+        {/* Pinned while the changes scroll, and never taller than the window under the app bar and this header (10.5rem): the people list scrolls instead. */}
+        <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:max-h-[calc(100dvh-10.5rem)]">
           {(status || scheduling !== null) && canPublish && (
             <section className={cn("flex flex-col gap-3 rounded-[16px] p-4 elevated", error && "shadow-[inset_0_0_0_1px] shadow-destructive/30")}>
               {status && <p className={cn("text-sm", error ? "text-destructive" : "text-muted-foreground")}>{status}</p>}
@@ -333,9 +334,9 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
             </section>
           )}
           {branches.length > 0 && (
-            <section className="flex flex-col gap-2 rounded-[16px] p-4 elevated">
-              <h3 className="text-sm font-medium">{branches.length === 1 ? "1 person" : `${branches.length} people`}</h3>
-              <ul className={cn("flex flex-col gap-1", branches.length > 8 && "max-h-96 overflow-y-auto")}>
+            <section className="flex min-h-0 flex-col gap-2 rounded-[16px] p-4 elevated">
+              <h3 className="shrink-0 text-sm font-medium">{branches.length === 1 ? "1 person" : `${branches.length} people`}</h3>
+              <ul className="-mx-1.5 flex min-h-0 flex-col gap-1 overflow-y-auto px-1.5 max-lg:max-h-96">
                 {branches.map(branch => (
                   <PersonRow key={branch.owner} branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)} onDiscard={discardFor(branch.owner)} />
                 ))}
