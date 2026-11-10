@@ -205,6 +205,22 @@ export interface BranchChanges extends PendingBranch {
   changes: CheckedChange[]
 }
 
+/** A document with unpublished changes, for review lists across a site (and the hub's across sites). */
+export interface PendingDocument {
+  type: string,
+  id: string,
+  locale: string,
+  /** As the newest copy titles it. */
+  title: string,
+  /** Whether it's on the site at all yet. */
+  live: boolean,
+  /** When the newest change was saved. */
+  updatedAt: string,
+  pending: PendingBranch[],
+  /** Whether the reader may publish it. */
+  canPublish: boolean
+}
+
 /** What to publish: whose branches (all when omitted), which of their changes to leave pending, and how to settle conflicts. */
 export interface PublishSelection {
   branches?: string[],
@@ -1019,6 +1035,37 @@ export class Engine {
     ]);
     this.afterWrite({ type, id, locale, action: "publish", valid: true, doc });
     return { ...(await this.getDocument(type, id, locale)), issues: [] };
+  }
+
+  /** Documents with unpublished changes, of the types the reader can read, most recently changed first. */
+  async pendingDocuments(args: { limit?: number } = {}): Promise<{ documents: PendingDocument[] }> {
+    if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
+    const types = Object.keys(this.config.schemas).filter(type => (this.scope.trusted && !this.scope.session) || can(this.state, this.scope.session, { action: "read", type }));
+    if(!types.length) return { documents: [] };
+    const rows = await all<{ id: string, type: string, locale: string, live: number, branches: string }>(this.db,
+      `SELECT d.id, d.type, d.locale, d.published IS NOT NULL AS live,
+        (SELECT json_group_array(json_object('owner', owner, 'name', owner_name, 'via', via, 'updatedAt', updated_at, 'data', json(data)))
+          FROM (SELECT * FROM vibe_branches b WHERE b.id = d.id AND b.locale = d.locale ORDER BY b.updated_at DESC)) AS branches,
+        (SELECT MAX(b.updated_at) FROM vibe_branches b WHERE b.id = d.id AND b.locale = d.locale) AS newest
+      FROM vibe_documents d
+      WHERE d.type IN (${types.map(() => "?").join(", ")}) AND EXISTS (SELECT 1 FROM vibe_branches b WHERE b.id = d.id AND b.locale = d.locale)
+      ORDER BY newest DESC, d.id DESC LIMIT ?`,
+      [...types, Math.min(Math.max(args.limit ?? 100, 1), 200)]);
+    return {
+      documents: rows.map(row => {
+        const open = JSON.parse(row.branches) as Array<{ owner: string, name: string | null, via: string, updatedAt: number, data: DocumentData }>;
+        return {
+          type: row.type,
+          id: row.id,
+          locale: row.locale,
+          title: this.titleOf(row.type, open[0]?.data ?? null),
+          live: Boolean(row.live),
+          updatedAt: iso(open[0]?.updatedAt ?? null)!,
+          pending: open.map(b => ({ owner: b.owner, name: b.name, via: b.via, updatedAt: iso(b.updatedAt)! })),
+          canPublish: (this.scope.trusted && !this.scope.session) || can(this.state, this.scope.session, { action: "publish", type: row.type, locale: row.locale })
+        };
+      })
+    };
   }
 
   /** A selection's `skip` and `resolve`, as the merge takes them. */

@@ -1,5 +1,6 @@
 import type { RoleRules } from "../config.ts";
 import type { SiteWarning } from "../handler/images.ts";
+import type { PendingDocument } from "../handler/engine.ts";
 import { isSameZoneBlock, sameZoneAdvice } from "../org/index.ts";
 
 /** A site as the panel knows it: from its `/.well-known/vibe-cms` descriptor. */
@@ -37,6 +38,8 @@ export function normalizeBranding(input: Partial<Record<keyof PanelBranding, unk
 }
 
 export interface PanelUser {
+  /** The identity sites know this person by: `<issuer>|<sub>`. Hosted panels only. */
+  sub?: string,
   name?: string,
   email?: string,
   /** The user's hub role (`owner`, `admin`, `member` or a custom one); null when they aren't a member. Hosted panels only. */
@@ -260,7 +263,14 @@ export interface PanelBackend {
   /** Scheduled backups. Hosted panels only. */
   backups?: PanelBackups,
   /** Members, site access and templates. Hosted panels only. */
-  hub?: PanelHub
+  hub?: PanelHub,
+  /** Unpublished changes across sites. Hosted panels only. */
+  review?(): Promise<PanelReview>
+}
+
+/** What awaits publishing on each site this person can see. A site that couldn't be asked has an `error`. */
+export interface PanelReview {
+  sites: Array<{ site: { id: string, name: string }, documents: PendingDocument[], error?: string }>
 }
 
 export class PanelError extends Error {

@@ -213,6 +213,18 @@ describe("branches", () => {
     expect(refused.status).toBe(409);
   });
 
+  test("documents.pending lists what awaits publishing across the site", async () => {
+    const doc = await published();
+    await edit(alice, doc.id, { title: "Summer sale" });
+    const fresh = await ok(t.call(bob, "documents.create", { type: "post", data: { ...post, slug: "fresh", title: "Fresh" } }));
+    const asAlice = await ok(t.call(alice, "documents.pending", {}));
+    expect(asAlice.documents.map((d: any) => [d.id, d.title, d.live, d.pending.map((p: any) => p.owner), d.canPublish]).sort((a: any, b: any) => a[1].localeCompare(b[1]))).toEqual([
+      [fresh.id, "Fresh", false, ["bob"], false],
+      [doc.id, "Summer sale", true, ["alice"], false]
+    ]);
+    expect((await ok(t.call(bob, "documents.pending", {}))).documents.every((d: any) => d.canPublish)).toBe(true);
+  });
+
   test("unpublishing keeps something to edit", async () => {
     const doc = await published();
     const off = await ok(t.call(dev, "documents.unpublish", { type: "post", id: doc.id }));

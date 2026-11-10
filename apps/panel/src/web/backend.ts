@@ -53,6 +53,7 @@ export function hostedBackend(base = location.origin, fetch?: typeof globalThis.
       await done(favorite ? await route.$put({ param: { id } }) : await route.$delete({ param: { id } }));
     },
     codeFor: async id => (await read(await api.sites[":id"].code.$post({ param: { id } }))).code,
+    review: async () => read(await api.review.$get()),
     agents: async () => read(await api.agents.$get()),
     disconnectAgent: async id => done(await api.agents[":id"].$delete({ param: { id } })),
     backups: {

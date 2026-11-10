@@ -128,6 +128,14 @@ const documentsChanges = base({
   }))
   .handler(({ context: { engine }, input }) => engine.changes(input.type, input.id, input.locale));
 
+const documentsPending = base({
+  summary: "List documents awaiting publishing",
+  description: "Every document with unpublished changes, across the content types you can read, most recently changed first: who has changes, and whether you may publish them. Use it to find what needs reviewing.",
+  readOnly: true
+})
+  .input(z.object({ limit: z.number().int().min(1).max(200).optional() }))
+  .handler(({ context: { engine }, input }) => engine.pendingDocuments(input));
+
 const documentsDiscardChanges = base({
   summary: "Discard unpublished changes",
   description: "Throws away one person's unpublished changes: yours, or with `owner` someone else's, which needs permission to publish. Published versions stay in the history.",
@@ -240,6 +248,7 @@ export const documents = router({
   delete: documentsDelete,
   publish: documentsPublish,
   changes: documentsChanges,
+  pending: documentsPending,
   discardChanges: documentsDiscardChanges,
   unpublish: documentsUnpublish,
   references: documentsReferences,

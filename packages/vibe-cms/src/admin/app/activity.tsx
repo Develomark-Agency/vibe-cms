@@ -13,6 +13,7 @@ import { collectionLabel, displayUser, formatDate, formatRelative, localeName, u
 import { Delayed, useArrival } from "./delayed.tsx";
 import { Collapse } from "./fields.tsx";
 import { Link } from "./router.tsx";
+import { VIA_LABELS } from "./via.ts";
 
 /** What people see for an action's name. Anything not here (plugin actions) shows its name. */
 const LABELS: Record<string, string> = {
@@ -62,16 +63,6 @@ const ATTEMPTS: Record<string, string> = {
   "assets.delete": "Delete",
   "trash.purge": "Delete for good",
   "activity.list": "See others' activity"
-};
-
-export const VIA_LABELS: Record<Via, string> = {
-  ui: "Editor",
-  rest: "API",
-  mcp: "Agent (MCP)",
-  cli: "CLI",
-  plugin: "Plugin",
-  cron: "Schedule",
-  hub: "Hub"
 };
 
 /** Known MCP clients by the start of their user agent; anything else is just "an agent". */

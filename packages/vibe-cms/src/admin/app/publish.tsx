@@ -12,7 +12,7 @@ import { Skeleton } from "../components/ui/skeleton.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { cn } from "../lib/utils.ts";
 import { isActionError } from "../../actions/errors.ts";
-import { VIA_LABELS } from "./activity.tsx";
+import { VIA_LABELS } from "./via.ts";
 import { displayUser, documentTitle, formatDate, formatRelative, useAdmin } from "./context.tsx";
 import { useAsset } from "./pickers.tsx";
 

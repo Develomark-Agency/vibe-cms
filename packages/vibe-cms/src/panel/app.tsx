@@ -61,6 +61,7 @@ import { go, listeners, useRoute } from "./location.ts";
 import { AccessPage, PeoplePage, SetupCard, TemplatePicker, TemplatesPage } from "./access.tsx";
 import type { SiteWarning } from "../handler/images.ts";
 import { DEFAULT_BRANDING, fetchDescriptor, isClaimLink, PanelError, type PanelBackend, type PanelBranding, type PanelSite, type PanelUser } from "./backend.ts";
+import { ReviewPage } from "./review.tsx";
 
 /**
  * Clicks inside the framed editor never reach this document, so popups can't
@@ -262,6 +263,7 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
   const canAdd = !hub || (user.permissions?.includes("addSites") ?? false);
   const panelPages = hub ? [
     { key: null, label: "Sites", to: "/" },
+    ...(backend.review ? [{ key: "review", label: "Review", to: "/review" }] : []),
     ...(user.role ? [{ key: "people", label: "People", to: "/people" }] : []),
     ...(user.permissions?.includes("templates") || user.role ? [{ key: "templates", label: "Templates", to: "/templates" }] : [])
   ] : [];
@@ -413,6 +415,8 @@ function Shell({ backend, branding, user }: { backend: PanelBackend, branding: P
           <div className="h-full overflow-y-auto"><AccessPage key={accessId} hub={hub} siteId={accessId} site={live?.find(s => s.id === accessId) ?? null} /></div>
         ) : hub && page === "people" ? (
           <div className="h-full overflow-y-auto"><PeoplePage hub={hub} user={user} /></div>
+        ) : backend.review && page === "review" ? (
+          <div className="h-full overflow-y-auto"><ReviewPage backend={backend} user={user} /></div>
         ) : hub && page === "templates" ? (
           <div className="h-full overflow-y-auto"><TemplatesPage hub={hub} user={user} /></div>
         ) : siteId === null ? (

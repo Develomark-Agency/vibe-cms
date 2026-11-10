@@ -50,7 +50,7 @@ function relative(time: number | null): string {
   return new Date(time).toLocaleDateString();
 }
 
-function PageHeader({ title, description, children }: { title: string, description: string, children?: React.ReactNode }) {
+export function PageHeader({ title, description, children }: { title: string, description: string, children?: React.ReactNode }) {
   return (
     <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="space-y-2">
@@ -62,7 +62,7 @@ function PageHeader({ title, description, children }: { title: string, descripti
   );
 }
 
-function Loading() {
+export function Loading() {
   return <Delayed><div className="flex justify-center p-12"><Spinner /></div></Delayed>;
 }
 

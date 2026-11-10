@@ -10,6 +10,7 @@ import type { AppEnv } from "../context.ts";
 import { backups } from "./backups.ts";
 import { attachBody, siteBody } from "./validate.ts";
 import { addSite, attachSite } from "../sites.ts";
+import { review } from "../review.ts";
 import { access } from "./access.ts";
 import { announceSetup, hasOwner, hubAccess, requireVisibleSite, visibleSiteIds } from "../access.ts";
 
@@ -61,12 +62,14 @@ export const api = new Hono<AppEnv>()
   .get("/me", async c => {
     const session = c.get("session");
     const me = await hubAccess(c.env, session);
-    return c.json({ name: session.name ?? undefined, email: session.email ?? undefined, role: me.role, permissions: me.permissions, admin: me.admin });
+    return c.json({ sub: session.sub, name: session.name ?? undefined, email: session.email ?? undefined, role: me.role, permissions: me.permissions, admin: me.admin });
   })
 
   .route("/", access)
 
   .route("/", backups)
+
+  .get("/review", async c => c.json(await review(c.env, c.get("session"))))
 
   .get("/sites", async c => {
     const visible = await visibleSiteIds(c.env, await hubAccess(c.env, c.get("session")));
