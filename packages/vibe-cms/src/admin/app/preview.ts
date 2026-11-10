@@ -26,7 +26,8 @@ export interface PreviewState {
 /** The blocks to outline on one page of the site. */
 export interface PreviewChanges {
   path: string,
-  blocks: Array<{ index: number, kind: "added" | "changed" | "moved" }>
+  /** `key`: the block's key, found by it on the page; `index` for blocks rendered without one. */
+  blocks: Array<{ index: number, key?: string, kind: "added" | "changed" | "moved" }>
 }
 
 const SYNC_KEY = "vibe-cms:preview-sync";
@@ -156,9 +157,9 @@ export async function popOutPreview() {
   return true;
 }
 
-/** Scrolls the preview to the `index`th block of the page's blocks, and outlines it. */
-export function focusPreviewBlock(index: number) {
-  frame?.postMessage({ type: "vibe:preview-focus", index }, location.origin);
+/** Scrolls the preview to a block, by its key (unique on the page) or else its position, and outlines it. */
+export function focusPreviewBlock(index: number, key?: string) {
+  frame?.postMessage({ type: "vibe:preview-focus", index, key }, location.origin);
   set({ reveals: state.reveals + 1 });
 }
 

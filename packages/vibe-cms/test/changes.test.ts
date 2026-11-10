@@ -170,9 +170,9 @@ test("changedBlocks names what the preview outlines, by position on the page", (
     doc.blocks = [{ ...quote }, { ...hero, heading: "Hi" }, { type: "quote", _key: "n", quote: "New" }];
   });
   expect(changedBlocks(schema, base, after)).toEqual([
-    { field: "blocks", index: 0, kind: "moved" },
-    { field: "blocks", index: 1, kind: "changed" },
-    { field: "blocks", index: 2, kind: "added" }
+    { field: "blocks", index: 0, key: "q", kind: "moved" },
+    { field: "blocks", index: 1, key: "h", kind: "changed" },
+    { field: "blocks", index: 2, key: "n", kind: "added" }
   ]);
   // Before the first publish, every block is new.
   expect(changedBlocks(schema, null, base).map(b => b.kind)).toEqual(["added", "added"]);

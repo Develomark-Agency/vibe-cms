@@ -340,7 +340,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   // What your saved copy changes on that page, against live, for the preview to outline.
   const pageChanges = useMemo(() => {
     if(!sitePage || !savedDraft || !doc.data?.mine) return null;
-    const blocks = changedBlocks(schema, doc.data.published, savedDraft).map(({ index, kind }) => ({ index, kind }));
+    const blocks = changedBlocks(schema, doc.data.published, savedDraft).map(({ index, key, kind }) => ({ index, key, kind }));
     return blocks.length ? { path: sitePage, blocks } : null;
   }, [sitePage, savedDraft, doc.data, schema]);
   const pageChangesKey = JSON.stringify(pageChanges);

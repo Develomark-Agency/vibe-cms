@@ -827,7 +827,7 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                 </button>
                 {previewing && (
                   <Tip label="Show in preview (as last saved)">
-                    <Button variant="ghost" size="icon-xs" className="relative z-10" aria-label="Show in preview" onClick={() => focusPreviewBlock(i)}>
+                    <Button variant="ghost" size="icon-xs" className="relative z-10" aria-label="Show in preview" onClick={() => focusPreviewBlock(i, typeof (entry as { _key?: unknown } | null)?._key === "string" ? (entry as { _key: string })._key : undefined)}>
                       <LocateFixedIcon />
                     </Button>
                   </Tip>

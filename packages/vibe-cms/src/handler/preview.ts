@@ -208,6 +208,8 @@ export function previewScriptResponse(prefix: string): Response {
 const PREVIEW_CLIENT = String.raw`function(prefix) {
   var host = window.parent !== window ? window.parent : window.opener;
   var scrollKey = "vibe-cms:preview-scroll";
+  // A block marker, or the end of a list: where one block's elements stop.
+  var endRe = /^\/?vibe-blocks?(:\d+(:[\w-]+)?)?$/;
   var reloading = false;
   function here() { return location.pathname + location.search; }
 
@@ -235,23 +237,29 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
     } catch (e) {}
   }
 
-  // The elements between <!--vibe-block:N--> and the next block marker.
-  function blockElements(index) {
+  // The elements between a block's marker (<!--vibe-block:N--> or <!--vibe-block:N:key-->) and the next one.
+  // By key when the editor knows it, which is unique across every list on the page; else the Nth block of the first list.
+  function blockElements(index, key) {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_COMMENT);
     var start = null;
+    var byIndex = null;
     while(walker.nextNode()) {
-      if(walker.currentNode.nodeValue === "vibe-block:" + index) { start = walker.currentNode; break; }
+      var parts = /^vibe-block:(\d+)(?::([\w-]+))?$/.exec(walker.currentNode.nodeValue || "");
+      if(!parts) continue;
+      if(key && parts[2] === key) { start = walker.currentNode; break; }
+      if(!byIndex && Number(parts[1]) === index) byIndex = walker.currentNode;
     }
+    start = start || byIndex;
     var elements = [];
     for(var node = start && start.nextSibling; node; node = node.nextSibling) {
-      if(node.nodeType === Node.COMMENT_NODE && /^\/?vibe-blocks?(:\d+)?$/.test(node.nodeValue || "")) break;
+      if(node.nodeType === Node.COMMENT_NODE && endRe.test(node.nodeValue || "")) break;
       if(node.nodeType === Node.ELEMENT_NODE) elements.push(node);
     }
     return elements;
   }
 
-  function focusBlock(index) {
-    var rects = blockElements(index).map(function(el) { return el.getBoundingClientRect(); }).filter(function(r) { return r.width || r.height; });
+  function focusBlock(index, key) {
+    var rects = blockElements(index, key).map(function(el) { return el.getBoundingClientRect(); }).filter(function(r) { return r.width || r.height; });
     if(!rects.length) return;
     var top = Math.min.apply(null, rects.map(function(r) { return r.top; })) + scrollY;
     var bottom = Math.max.apply(null, rects.map(function(r) { return r.bottom; })) + scrollY;
@@ -281,7 +289,7 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
     for(var i = 0; i < old.length; i++) old[i].remove();
     if(!changes || changes.path.split("?")[0] !== location.pathname) return;
     changes.blocks.forEach(function(block) {
-      var rects = blockElements(block.index).map(function(el) { return el.getBoundingClientRect(); }).filter(function(r) { return r.width || r.height; });
+      var rects = blockElements(block.index, block.key).map(function(el) { return el.getBoundingClientRect(); }).filter(function(r) { return r.width || r.height; });
       if(!rects.length) return;
       var top = Math.min.apply(null, rects.map(function(r) { return r.top; })) + scrollY;
       var bottom = Math.max.apply(null, rects.map(function(r) { return r.bottom; })) + scrollY;
@@ -321,8 +329,7 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
   var hovered = null;
   var overlay = null;
   var pickStyle = null;
-  var markerRe = /^vibe-block:(\d+)$/;
-  var endRe = /^\/?vibe-blocks?(:\d+)?$/;
+  var markerRe = /^vibe-block:(\d+)(?::[\w-]+)?$/;
 
   function humanize(key) {
     var words = String(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
@@ -643,7 +650,7 @@ const PREVIEW_CLIENT = String.raw`function(prefix) {
     if(!data) return;
     if(data.type === "vibe:preview-pick-mode") setPicking(Boolean(data.on));
     if(data.type === "vibe:preview-reload") reload();
-    if(data.type === "vibe:preview-focus" && typeof data.index === "number") focusBlock(data.index);
+    if(data.type === "vibe:preview-focus" && typeof data.index === "number") focusBlock(data.index, typeof data.key === "string" ? data.key : null);
     if(data.type === "vibe:preview-changes") {
       changes = data.changes && typeof data.changes.path === "string" && Array.isArray(data.changes.blocks) ? data.changes : null;
       drawChanges();

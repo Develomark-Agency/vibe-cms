@@ -514,6 +514,8 @@ export interface ChangedBlock {
   /** The top-level field holding the list, e.g. `blocks`. */
   field: string,
   index: number,
+  /** The block's key, which finds it on the page whichever list it's in. */
+  key?: string,
   kind: "added" | "changed" | "moved"
 }
 
@@ -529,7 +531,7 @@ export function changedBlocks(schema: ObjectSchema, before: unknown, after: unkn
     const list = isRecord(after) ? after[field] : undefined;
     // The whole list at once: a new document, or blocks that couldn't be matched up.
     if(change.segments.length === 1) {
-      if(Array.isArray(list)) list.forEach((_, index) => out.set(`${field}:${index}`, { field, index, kind: Array.isArray(change.before) ? "changed" : "added" }));
+      if(Array.isArray(list)) list.forEach((entry, index) => out.set(`${field}:${index}`, { field, index, key: itemKey(entry) ?? undefined, kind: Array.isArray(change.before) ? "changed" : "added" }));
       continue;
     }
     if(typeof item !== "object" || item === null) continue;
@@ -539,7 +541,7 @@ export function changedBlocks(schema: ObjectSchema, before: unknown, after: unkn
     const id = `${field}:${index}`;
     const seen = out.get(id);
     // An edit inside a moved block says more than the move.
-    if(!seen || seen.kind === "moved" || kind === "added") out.set(id, { field, index, kind: seen?.kind === "added" ? "added" : kind });
+    if(!seen || seen.kind === "moved" || kind === "added") out.set(id, { field, index, key: item.key, kind: seen?.kind === "added" ? "added" : kind });
   }
   return [...out.values()].sort((a, b) => a.index - b.index);
 }
