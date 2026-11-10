@@ -38,7 +38,7 @@ Blocks are matched by a key the CMS gives each one (`_key`), so moving a block s
 
 While a conflict or stale change is selected and unsettled, it fails with `CONFLICT` and `data.conflicts`. Published copies keep only what was left out, now on top of the new version.
 
-In the editor, **Publish** saves what's unsaved and shows the changes as sentences, with who made each one. Clean changes are ticked. Conflicts start out as "Decide later", so publishing everything else is two clicks. Each person's changes can be discarded there too, and **Schedule…** publishes the same selection at a time. `publish: true` on a save publishes only your own changes.
+In the editor, **Review** (⌘⇧S) saves what's unsaved and shows the changes as sentences, with who made each one; nothing goes live until you publish from there. People who can't publish see the same list. Clean changes are ticked. Conflicts start out as "Decide later", so publishing everything else is two clicks. Each person's changes can be discarded there too, and **Schedule…** publishes the same selection at a time. `publish: true` on a save publishes only your own changes.
 
 `documents.schedule` takes the same `branches`, `skip` and `resolve`. It merges the selection when you schedule it, so later saves aren't included, and fails while a selected change conflicts.
 
@@ -46,4 +46,5 @@ In the editor, **Publish** saves what's unsaved and shows the changes as sentenc
 
 - Draft reads (`{ drafts: true }`, the editor's lists) show the reader's own copy, else the live one, and carry `$meta.pending`: who has unpublished changes. Published reads, which are public, don't (`vibe-cms docs queries`).
 - `documents.pending` lists every document with unpublished changes that you can read, across the site, with who made them and whether you may publish them. The hub's **Review** page asks every site you can see.
+- In the editor, a marker next to a field you or someone else changed opens its live value, yours (saved or not) and other people's, with a button to copy any of them into your copy. A collapsed block shows a dot when something inside it changed.
 - The draft preview outlines the blocks your saved changes add, change or move, labelled New, Changed or Moved. "Outline unpublished changes" in the preview's menu turns it off (`vibe-cms docs preview`).

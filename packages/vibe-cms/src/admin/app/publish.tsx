@@ -38,12 +38,14 @@ function keyOf(owner: string, path: string) {
  * What publishing will do: every person's unpublished changes as sentences, ticked unless they need a
  * choice, and a choice for each conflict. With nothing to choose it's one click to open and one to publish.
  */
-export function PublishDialog({ open, onOpenChange, type, id, title, onDone }: {
+export function PublishDialog({ open, onOpenChange, type, id, title, canPublish = true, onDone }: {
   open: boolean,
   onOpenChange(open: boolean): void,
   type: string,
   id: string,
   title: string,
+  /** Without it the dialog only shows the changes, and lets you discard your own. */
+  canPublish?: boolean,
   onDone(doc: DocumentState): void
 }) {
   const { cms, locale, session } = useAdmin();
@@ -160,18 +162,19 @@ export function PublishDialog({ open, onOpenChange, type, id, title, onDone }: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[min(88vh,48rem)] flex-col gap-4 sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Publish “{title}”</DialogTitle>
+          <DialogTitle>Review “{title}”</DialogTitle>
           <DialogDescription>
             {changes.isPending ? "Checking what's changed…"
               : !branches.length ? "There are no unpublished changes."
-                : chosen.length === 0 ? "Nothing is selected to publish."
-                  : <>{counted} from {list(people)} {count === 1 ? "goes" : "go"} live as one new version.</>}
+                : !canPublish ? "These changes aren't live yet. Someone who can publish will see them here."
+                  : chosen.length === 0 ? "Nothing is selected to publish."
+                    : <>{counted} from {list(people)} {count === 1 ? "goes" : "go"} live as one new version.</>}
           </DialogDescription>
         </DialogHeader>
 
         <div className="-mx-5 flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5">
           {changes.isPending && <Skeleton className="h-24 w-full" />}
-          {groups.length > 0 && (
+          {canPublish && groups.length > 0 && (
             <section className="flex flex-col gap-3">
               <h3 className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-amber-700 uppercase dark:text-amber-400">
                 <GitMergeIcon className="size-3.5" /> {groups.length === 1 ? "Needs a choice" : `${groups.length} need a choice`}
@@ -195,7 +198,8 @@ export function PublishDialog({ open, onOpenChange, type, id, title, onDone }: {
               grouped={grouped}
               included={change => included(branch.owner, change)}
               onToggle={(paths, on) => toggle(branch.owner, paths, on)}
-              onDiscard={() => discard(branch.owner)}
+              onDiscard={canPublish || branch.owner === session.user.sub ? () => discard(branch.owner) : undefined}
+              readOnly={!canPublish}
             />
           ))}
         </div>
@@ -211,7 +215,9 @@ export function PublishDialog({ open, onOpenChange, type, id, title, onDone }: {
 
         <DialogFooter className="items-center">
           {(error || reason) && <p className={cn("mr-auto text-xs", error ? "text-destructive" : "text-muted-foreground")}>{error ?? reason}</p>}
-          {scheduling === null ? (
+          {!canPublish ? (
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+          ) : scheduling === null ? (
             <>
               <Button variant="ghost" disabled={busy || reason !== null} onClick={() => setScheduling(toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)))}>
                 <CalendarClockIcon /> Schedule…
@@ -283,13 +289,15 @@ function Who({ name, via, at }: { name: string, via?: string, at?: string }) {
   );
 }
 
-function BranchSection({ branch, nameOf, grouped, included, onToggle, onDiscard }: {
+function BranchSection({ branch, nameOf, grouped, included, onToggle, onDiscard, readOnly }: {
   branch: BranchChanges,
   nameOf(owner: string): string,
   grouped: Set<string>,
   included(change: CheckedChange): boolean,
   onToggle(paths: string[], on: boolean): void,
-  onDiscard(): Promise<void>
+  onDiscard?: () => Promise<void>,
+  /** Just showing the changes: no boxes to tick. */
+  readOnly?: boolean
 }) {
   const [confirming, setConfirming] = useState(false);
   const [discarding, setDiscarding] = useState(false);
@@ -300,15 +308,17 @@ function BranchSection({ branch, nameOf, grouped, included, onToggle, onDiscard 
     <section className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <label className="flex min-w-0 flex-1 items-center gap-2.5">
-          <Checkbox
-            checked={on === branch.changes.length}
-            indeterminate={on > 0 && on < branch.changes.length}
-            disabled={own.length === 0}
-            onCheckedChange={checked => onToggle(own.map(c => c.path), Boolean(checked))}
-          />
+          {!readOnly && (
+            <Checkbox
+              checked={on === branch.changes.length}
+              indeterminate={on > 0 && on < branch.changes.length}
+              disabled={own.length === 0}
+              onCheckedChange={checked => onToggle(own.map(c => c.path), Boolean(checked))}
+            />
+          )}
           <Who name={nameOf(branch.owner)} via={branch.via} at={branch.updatedAt} />
         </label>
-        {confirming ? (
+        {!onDiscard ? null : confirming ? (
           <span className="flex items-center gap-1 text-xs">
             <span className="text-muted-foreground">Throw these away?</span>
             <Button variant="ghost" size="xs" onClick={() => setConfirming(false)}>Keep</Button>
@@ -325,14 +335,14 @@ function BranchSection({ branch, nameOf, grouped, included, onToggle, onDiscard 
           </Button>
         )}
       </div>
-      <ul className="ml-6.5 flex flex-col divide-y rounded-[14px] well">
+      <ul className={cn("flex flex-col divide-y rounded-[14px] well", !readOnly && "ml-6.5")}>
         {branch.changes.map(change => {
           const inGroup = grouped.has(keyOf(branch.owner, change.path));
           return (
             <li key={change.path} className={cn("flex items-start gap-2.5 px-3 py-2.5", inGroup && "bg-amber-500/5")}>
               {inGroup
                 ? <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" aria-label="Needs a choice" />
-                : <Checkbox className="mt-0.5" checked={included(change)} onCheckedChange={checked => onToggle([change.path], Boolean(checked))} />}
+                : !readOnly && <Checkbox className="mt-0.5" checked={included(change)} onCheckedChange={checked => onToggle([change.path], Boolean(checked))} />}
               <ChangeLine change={change} />
             </li>
           );
@@ -397,7 +407,7 @@ function ValueDiff({ change }: { change: CheckedChange }) {
 }
 
 /** A value as its field shows it: document titles for references, thumbnails for media. */
-function Value({ change, value, single }: { change: Pick<CheckedChange, "field" | "ref">, value: unknown, single?: boolean }) {
+export function Value({ change, value, single }: { change: Pick<CheckedChange, "field" | "ref">, value: unknown, single?: boolean }) {
   if(value === undefined || value === null || value === "") return <i>empty</i>;
   const field = single && change.field === "array" ? (change.ref ? "ref" : "text") : change.field;
   if(field === "ref") return <RefTitle to={change.ref} value={value} />;

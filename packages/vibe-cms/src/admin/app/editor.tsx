@@ -8,6 +8,7 @@ import {
   EyeOffIcon,
   ExternalLinkIcon,
   GitBranchIcon,
+  GitPullRequestArrowIcon,
   HistoryIcon,
   LanguagesIcon,
   MoreHorizontalIcon,
@@ -67,6 +68,7 @@ import { Segmented } from "./segmented.tsx";
 import { ActivityList } from "./activity.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 import { PublishDialog } from "./publish.tsx";
+import { FieldChangesProvider, useFieldChanges } from "./field-changes.tsx";
 
 export type { DocumentState };
 
@@ -133,6 +135,22 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const issues = showIssues ? dedupe([...clientIssues, ...serverIssues]) : [];
   const title = documentTitle(config, type, value);
 
+  // Other people's unpublished changes, for the markers next to the fields they touch.
+  const othersPending = (doc.data?.pending ?? []).some(p => p.owner !== session.user.sub);
+  const branchChanges = useQuery({
+    queryKey: ["changes", type, id, locale],
+    enabled: id !== null && othersPending,
+    queryFn: () => cms.actions.documents.changes({ type, id: id!, locale })
+  });
+  const fieldChanges = useFieldChanges({
+    schema,
+    published: doc.data?.published ?? null,
+    saved: doc.data?.draft ?? null,
+    value,
+    branches: othersPending ? branchChanges.data?.branches : undefined,
+    me: session.user.sub
+  });
+
   useEffect(() => {
     document.title = `${title} · ${admin.site.name}`;
   }, [title]);
@@ -155,6 +173,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     queryClient.setQueryData(["document", type, result.id, locale], result);
     void queryClient.invalidateQueries({ queryKey: ["documents", type] });
     void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    void queryClient.invalidateQueries({ queryKey: ["changes", type, result.id, locale] });
     loadedKey.current = `${type}/${result.id}/${locale}/ready`;
     setValue(result.draft);
     setServerIssues(result.issues ?? []);
@@ -304,7 +323,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
       if((event.metaKey || event.ctrlKey) && event.key === "s") {
         event.preventDefault();
         if(!canWriteLocale) return;
-        if(event.shiftKey && permissions.publish) void startPublish();
+        if(event.shiftKey && (permissions.publish || id !== null)) void startPublish();
         else void save();
       }
     }
@@ -403,17 +422,19 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                 {busy === "save" ? <Spinner /> : <SaveIcon />} Save
               </Button>
             )}
-            {!readOnly && permissions.publish && (
+            {/* A new document is all yours, so it publishes; otherwise this opens the review of everyone's changes, which publishes from there. */}
+            {!readOnly && (permissions.publish || id !== null) && (
               <Button
                 size="sm"
                 onClick={() => void startPublish()}
                 disabled={busy !== null || (status === "published" && !dirty)}
               >
                 <Crossfade
-                  active={busy === "publish" ? "busy" : status === "published" && !dirty ? "published" : "publish"}
+                  active={busy === "publish" ? "busy" : status === "published" && !dirty ? "published" : id === null ? "publish" : "review"}
                   options={{
                     publish: <><CloudUploadIcon /> Publish</>,
-                    busy: <><Spinner /> Publish</>,
+                    review: <><GitPullRequestArrowIcon /> Review</>,
+                    busy: <><Spinner /> {id === null ? "Publish" : "Review"}</>,
                     published: <><CheckIcon /> Published</>
                   }}
                 />
@@ -438,7 +459,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                     <DropdownMenuItem onClick={() => setValue(baseline)}><RotateCcwIcon /> Discard unsaved edits</DropdownMenuItem>
                   )}
                   {doc.data?.mine && !readOnly && (
-                    <DropdownMenuItem onClick={() => setConfirmDiscard(true)}><RotateCcwIcon /> Discard my unpublished changes…</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setConfirmDiscard(true)}><RotateCcwIcon /> Discard my changes…</DropdownMenuItem>
                   )}
                   {permissions.delete && (
                     <>
@@ -488,29 +509,31 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                 <Button variant="ghost" size="icon-xs" aria-label="Hide" onClick={() => setShowIssues(false)}><XIcon /></Button>
               </div>
             )}
-            <form className="flex flex-col gap-6" onSubmit={e => e.preventDefault()}>
-              {Object.entries(schema.shape).map(([key, field]) => (
-                <Field
-                  key={key}
-                  schema={field}
-                  name={key}
-                  path={[key]}
-                  value={value[key]}
-                  issues={issues}
-                  readOnly={readOnly}
-                  doc={{ type, id }}
-                  onChange={next => {
-                    setServerIssues([]);
-                    setValue(prev => {
-                      const copy = { ...prev };
-                      if(next === undefined) delete copy[key];
-                      else copy[key] = next;
-                      return copy;
-                    });
-                  }}
-                />
-              ))}
-            </form>
+            <FieldChangesProvider value={fieldChanges}>
+              <form className="flex flex-col gap-6" onSubmit={e => e.preventDefault()}>
+                {Object.entries(schema.shape).map(([key, field]) => (
+                  <Field
+                    key={key}
+                    schema={field}
+                    name={key}
+                    path={[key]}
+                    value={value[key]}
+                    issues={issues}
+                    readOnly={readOnly}
+                    doc={{ type, id }}
+                    onChange={next => {
+                      setServerIssues([]);
+                      setValue(prev => {
+                        const copy = { ...prev };
+                        if(next === undefined) delete copy[key];
+                        else copy[key] = next;
+                        return copy;
+                      });
+                    }}
+                  />
+                ))}
+              </form>
+            </FieldChangesProvider>
           </main>
           <aside className="flex flex-col gap-4">
             {doc.data?.schedules.length ? <Schedules type={type} id={id!} doc={doc.data} onChange={applyResult} /> : null}
@@ -522,7 +545,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             ))}
             {!readOnly && (
               <p className="hidden text-xs text-muted-foreground lg:block">
-                <Kbd>⌘</Kbd> <Kbd>S</Kbd> to save{permissions.publish ? <>, <Kbd>⌘</Kbd> <Kbd>⇧</Kbd> <Kbd>S</Kbd> to publish</> : null}
+                <Kbd>⌘</Kbd> <Kbd>S</Kbd> to save, <Kbd>⌘</Kbd> <Kbd>⇧</Kbd> <Kbd>S</Kbd> to {id === null && permissions.publish ? "publish" : "review"}
               </p>
             )}
           </aside>
@@ -586,7 +609,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
 
       {id !== null && (
         <>
-          <PublishDialog open={publishOpen} onOpenChange={setPublishOpen} type={type} id={id} title={title} onDone={applyResult} />
+          <PublishDialog open={publishOpen} onOpenChange={setPublishOpen} type={type} id={id} title={title} canPublish={permissions.publish} onDone={applyResult} />
           <ScheduleDialog open={scheduleOpen} onOpenChange={setScheduleOpen} type={type} id={id} status={status} dirty={dirty} onDone={applyResult} onError={handleError} />
           <HistorySheet open={historyOpen} onOpenChange={setHistoryOpen} type={type} id={id} doc={doc.data} onRestore={applyResult} readOnly={readOnly} />
         </>

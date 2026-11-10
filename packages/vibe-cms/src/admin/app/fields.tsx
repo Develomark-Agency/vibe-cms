@@ -36,6 +36,7 @@ import { focusPreviewBlock, getPreview, subscribePreview } from "./preview.ts";
 import { getReveal, subscribeReveal } from "./reveal.ts";
 import { AssetControl, RefControl } from "./pickers.tsx";
 import { Segmented } from "./segmented.tsx";
+import { ChangedInside, FieldChangeMarker } from "./field-changes.tsx";
 
 export interface FieldProps {
   schema: AnySchema,
@@ -109,11 +110,14 @@ export function Field(props: FieldProps) {
   return (
     <div className="group/field flex flex-col gap-2" data-field={path.join(".")} data-invalid={errors.length > 0 || undefined}>
       <div className="flex items-baseline justify-between gap-2">
-        <label className={cn("text-sm font-medium leading-none", errors.length && "text-destructive")} htmlFor={fieldId(path)}>
-          {label}
-          {derived ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Set automatically</span>
-            : schema.type === "optional" ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Optional</span> : null}
-        </label>
+        <span className="flex items-center gap-1.5">
+          <label className={cn("text-sm font-medium leading-none", errors.length && "text-destructive")} htmlFor={fieldId(path)}>
+            {label}
+            {derived ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Set automatically</span>
+              : schema.type === "optional" ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">Optional</span> : null}
+          </label>
+          {!derived && <FieldChangeMarker path={path} readOnly={props.readOnly} onUse={next => props.onChange(next as JsonValue | undefined)} />}
+        </span>
         {grouped && !widget && Array.isArray(props.value) ? <span className="text-xs text-muted-foreground">{props.value.length} items</span> : null}
       </div>
       {descriptor.description ? <p className="-mt-1 text-xs text-muted-foreground">{descriptor.description}</p> : null}
@@ -816,6 +820,7 @@ function ArrayControl({ schema, value, onChange, path, issues, readOnly, doc }: 
                   <ChevronRightIcon className={cn("-mr-2 size-3.5 w-0 shrink-0 text-muted-foreground opacity-0 transition-[opacity,rotate,width,margin] duration-200 group-hover/head:mr-0 group-hover/head:w-3.5 group-hover/head:opacity-100 group-focus-visible/toggle:mr-0 group-focus-visible/toggle:w-3.5 group-focus-visible/toggle:opacity-100", !isCollapsed && "rotate-90")} />
                   {VariantIcon && <VariantIcon className="size-4 shrink-0 text-muted-foreground" />}
                   <span className="shrink-0 font-medium">{title}</span>
+                  <ChangedInside path={itemPath} />
                   {detail && <span className="min-w-0 truncate text-muted-foreground">{detail}</span>}
                   {hasIssues && <span className="size-1.5 shrink-0 rounded-full bg-destructive" />}
                 </button>
