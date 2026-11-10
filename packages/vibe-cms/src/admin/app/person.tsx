@@ -27,8 +27,9 @@ export interface FacePerson {
 export function PersonFace({ id, name, self, className }: FacePerson & { className?: string }) {
   if(self) {
     return (
-      <span aria-hidden title="You" className={cn("inline-grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground ring-2 ring-background", className)}>
-        <UserRoundIcon className="size-3" strokeWidth={2.5} />
+      <span aria-hidden title="You" className={cn("inline-grid size-5 shrink-0 place-items-center rounded-full ring-2 ring-background **:text-primary-foreground!", className)}
+        style={{ background: "var(--primary)", color: "var(--primary-foreground)" }}>
+        <UserRoundIcon className="size-3" strokeWidth={2.5} style={{ color: "var(--primary-foreground)" }} />
       </span>
     );
   }
@@ -37,7 +38,8 @@ export function PersonFace({ id, name, self, className }: FacePerson & { classNa
       aria-hidden
       title={name}
       className={cn("inline-grid size-5 shrink-0 place-items-center rounded-full text-[9px] font-semibold text-white ring-2 ring-background", className)}
-      style={{ background: `hsl(${personHue(id)} 45% 46%)` }}
+      // Set here, not by class: menus recolor their items' text on hover, and a face should stay a face.
+      style={{ background: `hsl(${personHue(id)} 45% 46%)`, color: "#fff" }}
     >
       {initials(name)}
     </span>

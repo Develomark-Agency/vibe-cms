@@ -7,6 +7,7 @@ import {
   CircleCheckIcon,
   ClockIcon,
   CloudUploadIcon,
+  Trash2Icon,
   ExternalLinkIcon,
   FileArchiveIcon,
   FileAudioIcon,
@@ -48,6 +49,7 @@ import { describeAsset, useAsset } from "./pickers.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { Link } from "./router.tsx";
 import { PersonFace, PersonFaces, type FacePerson } from "./person.tsx";
+import { askConfirm } from "./confirm.tsx";
 
 /** One person's change, as publishing names it: `owner` + `change.path`. */
 interface Entry {
@@ -237,13 +239,22 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
                     <span>{canPublish ? `${chosen.length} of ${rows.length} selected` : `${rows.length} unpublished ${rows.length === 1 ? "change" : "changes"}`} from</span>
                     {/* A few people by name; the rest behind "+N", so twenty contributors don't fill the header. */}
                     {branches.slice(0, branches.length > 4 ? 3 : 4).map(branch => (
-                      <PersonChip key={branch.owner} branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)}
-                        onDiscard={canPublish || branch.owner === session.user.sub ? () => discard(branch.owner) : undefined} />
+                      <span key={branch.owner} className="max-sm:hidden">
+                        <PersonChip branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)}
+                          onDiscard={canPublish || branch.owner === session.user.sub ? () => discard(branch.owner) : undefined} />
+                      </span>
                     ))}
                     {branches.length > 4 && (
-                      <MorePeople branches={branches.slice(3)} nameOf={nameOf} faceOf={faceOf}
-                        onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
+                      <span className="max-sm:hidden">
+                        <MorePeople branches={branches.slice(3)} label={`${branches.length - 3} more`} nameOf={nameOf} faceOf={faceOf}
+                          onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
+                      </span>
                     )}
+                    {/* On a phone, everyone sits behind one menu, so the header stays one line. */}
+                    <span className="sm:hidden">
+                      <MorePeople branches={branches} label={branches.length === 1 ? nameOf(branches[0]!.owner) : `${branches.length} people`} nameOf={nameOf} faceOf={faceOf}
+                        onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
+                    </span>
                   </>
                 )}
           </DialogDescription>
@@ -304,18 +315,20 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
           </div>
         )}
 
-        <DialogFooter className="items-center">
+        {/* One row at every width: the note takes its own line on a phone, and Schedule shrinks to its icon. */}
+        <DialogFooter className="flex-row flex-wrap items-center justify-end">
           {(error || reason || undecided > 0) && canPublish && (
-            <p className={cn("mr-auto text-xs", error ? "text-destructive" : "text-muted-foreground")}>
-              {error ?? reason ?? `${undecided} left for later`}
+            <p className={cn("mr-auto basis-full text-xs sm:basis-auto", error ? "text-destructive" : "text-muted-foreground")}>
+              {error ?? reason ?? `${undecided} skipped`}
             </p>
           )}
           {!canPublish ? (
             <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
           ) : scheduling === null ? (
             <>
-              <Button variant="ghost" disabled={busy || reason !== null} onClick={() => setScheduling(toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)))}>
-                <CalendarClockIcon /> Schedule…
+              <Button variant="ghost" disabled={busy || reason !== null} aria-label="Schedule" className="max-sm:mr-auto max-sm:px-2"
+                onClick={() => setScheduling(toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)))}>
+                <CalendarClockIcon /> <span className="max-sm:hidden">Schedule…</span>
               </Button>
               <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
               <Button ref={publishButton} disabled={busy || reason !== null} onClick={() => void publish()}>
@@ -324,7 +337,7 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
             </>
           ) : (
             <>
-              <Button variant="outline" onClick={() => setScheduling(null)}>Back</Button>
+              <Button variant="outline" className="max-sm:mr-auto" onClick={() => setScheduling(null)}>Back</Button>
               <Button disabled={busy || reason !== null || !scheduling} onClick={() => void publish(new Date(scheduling).toISOString())}>
                 {busy ? <Spinner /> : <CalendarClockIcon />} Schedule{chosen.length ? ` ${counted}` : ""}
               </Button>
@@ -401,8 +414,9 @@ function PersonChip({ branch, name, face, onDiscard }: { branch: BranchChanges, 
   );
 }
 
-function MorePeople({ branches, nameOf, faceOf, onDiscard }: {
+function MorePeople({ branches, label, nameOf, faceOf, onDiscard }: {
   branches: BranchChanges[],
+  label: string,
   nameOf(owner: string): string,
   faceOf(owner: string): FacePerson,
   onDiscard(owner: string): (() => Promise<void>) | undefined
@@ -412,32 +426,39 @@ function MorePeople({ branches, nameOf, faceOf, onDiscard }: {
       <DropdownMenuTrigger render={
         <button type="button" className="inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-foreground well hover:bg-foreground/[0.06]">
           <PersonFaces people={branches.map(b => faceOf(b.owner))} max={3} count={false} />
-          <span className="text-xs font-medium">{branches.length} more</span>
+          <span className="text-xs font-medium">{label}</span>
           <ChevronDownIcon className="size-3 text-muted-foreground" />
         </button>
       } />
       <DropdownMenuContent align="start" className="max-h-80 w-72 overflow-y-auto">
-        {branches.map(branch => {
-          const discard = onDiscard(branch.owner);
-          const name = nameOf(branch.owner);
-          const via = branch.via !== "ui" ? `${VIA_LABELS[branch.via as Via] ?? branch.via} · ` : "";
-          return (
-            <DropdownMenuSub key={branch.owner}>
-              <DropdownMenuSubTrigger>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Choose someone to discard their changes</DropdownMenuLabel>
+          {/* Discarding is the only thing to do with someone here, so choosing them asks to. */}
+          {branches.map(branch => {
+            const discard = onDiscard(branch.owner);
+            const name = nameOf(branch.owner);
+            const via = branch.via !== "ui" ? `${VIA_LABELS[branch.via as Via] ?? branch.via} · ` : "";
+            return (
+              <DropdownMenuItem key={branch.owner} disabled={!discard} onClick={async () => {
+                if(!discard) return;
+                const ok = await askConfirm({
+                  title: `Discard ${name}'s changes?`,
+                  description: "Their unpublished changes to this document are thrown away. This can't be undone.",
+                  action: "Discard",
+                  destructive: true
+                });
+                if(ok) await discard();
+              }}>
                 <PersonFace {...faceOf(branch.owner)} className="ring-0" />
-                {/* Name above where and when, so neither has to squeeze the other. */}
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{name}</span>
                   <span className="truncate text-xs text-muted-foreground">{via}{formatRelative(branch.updatedAt)}</span>
                 </span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {discard ? <DropdownMenuItem variant="destructive" onClick={() => void discard()}>Discard {name.split(/\s+/)[0]}'s changes</DropdownMenuItem>
-                  : <DropdownMenuItem disabled>Only people who can publish can discard these</DropdownMenuItem>}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          );
-        })}
+                <Trash2Icon className="text-muted-foreground" />
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -466,7 +487,7 @@ function ReviewRow({ row, nameOf, faceOf, readOnly, ticked, onTick, choice, open
         {row.kind === "clean"
           ? !readOnly && <Checkbox checked={ticked} onCheckedChange={checked => onTick(Boolean(checked))} aria-label={`Publish ${row.outer.label.join(" ")}`} />
           : !settled ? <TriangleAlertIcon className="size-4 text-amber-600 dark:text-amber-400" aria-label="Needs a choice" />
-            : kind === "later" ? <ClockIcon className="size-4 text-muted-foreground" aria-label="Left for later" />
+            : kind === "later" ? <ClockIcon className="size-4 text-muted-foreground" aria-label="Skipped" />
               : kind === "live" ? <Undo2Icon className="size-4 text-sky-600 dark:text-sky-400" aria-label="Keeping live" />
                 : <CircleCheckIcon className={cn("size-4", kind === "own" ? "text-violet-600 dark:text-violet-400" : "text-emerald-600 dark:text-emerald-400")} aria-label="Settled" />}
       </span>
@@ -474,7 +495,7 @@ function ReviewRow({ row, nameOf, faceOf, readOnly, ticked, onTick, choice, open
         <div className="flex min-h-5 items-center gap-2">
           <FieldName change={row.outer} />
           {row.kind === "choice" && !settled && (
-            <span className="text-xs text-amber-700 dark:text-amber-400">{row.status === "conflict" ? "Changed differently" : "Changed since"}</span>
+            <span className="text-xs text-amber-700 dark:text-amber-400">{row.status === "conflict" ? `${optionsOf(row).length} versions` : "Live has changed"}</span>
           )}
           {settled && <Settled choice={choice!} nameOf={nameOf} with={typeof choice === "object" && "use" in choice ? optionsOf(row).find(o => o.owners.includes(choice.use))?.owners.length ?? 1 : 1} />}
           <PersonFaces people={people} className="ml-auto" />
@@ -514,7 +535,7 @@ function choiceKind(choice: Choice): "person" | "live" | "own" | "later" {
 /** What a settled row went with. `with` counts the people who made that version. */
 function Settled({ choice, nameOf, with: together }: { choice: Choice, nameOf(owner: string): string, with: number }) {
   const first = typeof choice === "object" && "use" in choice ? nameOf(choice.use).split(/\s+/)[0]! : "";
-  const text = choice === "later" ? "Later"
+  const text = choice === "later" ? "Skipped"
     : "value" in choice ? "Your own value"
       : choice.use === "live" ? "Keeping live"
         : together > 1 ? `Using ${first === "You" ? "yours" : first} and ${together - 1} ${together === 2 ? "other's" : "others'"}`
@@ -533,7 +554,7 @@ function Settled({ choice, nameOf, with: together }: { choice: Choice, nameOf(ow
 
 /** What a settled row will publish. */
 function Outcome({ row, choice }: { row: Row, choice: Choice }) {
-  if(choice === "later") return <span className="text-sm text-muted-foreground">Stays unpublished for now.</span>;
+  if(choice === "later") return <span className="text-sm text-muted-foreground">Stays unpublished.</span>;
   if("value" in choice) return <span className="text-sm"><Value change={row.outer} value={choice.value} /></span>;
   if(choice.use === "live") return <span className="text-sm text-muted-foreground">{row.live === undefined ? "Stays as it is." : <Value change={row.outer} value={row.live} />}</span>;
   const entry = row.entries.find(e => e.owner === choice.use && e.change.path === row.outer.path) ?? row.entries.find(e => e.owner === choice.use);
@@ -582,13 +603,13 @@ function Choices({ row, nameOf, faceOf, choice, onChoose, readOnly }: {
     <div className="flex flex-col gap-1.5" role="radiogroup" aria-label={`Which ${outer.label.join(" ")} to publish`}>
       {/* What's live comes first: the version nobody has to change anything for. */}
       <ChoiceCard tone="live" checked={sameChoice(choice, { use: "live" })} disabled={readOnly} onSelect={() => onChoose({ use: "live" })}
-        head={<><Undo2Icon className="size-3.5" /> {row.status === "stale" ? "Live now, published since" : "Live"}</>}>
+        head={<><Undo2Icon className="size-3.5" /> {row.status === "stale" ? "Live (updated since)" : "Live"}</>}>
         {row.live === undefined ? <Quiet>Not set</Quiet> : <OptionValue change={{ ...outer, kind: "set", after: row.live }} live={row.live} />}
       </ChoiceCard>
       {visible.map(option => (
         <ChoiceCard key={option.owners[0]} tone="person" checked={sameChoice(choice, { use: option.owners[0]! })} disabled={readOnly}
           onSelect={() => onChoose({ use: option.owners[0]! })}
-          head={<><PersonFaces people={option.owners.map(faceOf)} max={5} />{option.owners.length > 1 && <span>Same change</span>}<span className="sr-only">{who(option.owners)}</span></>}>
+          head={<><PersonFaces people={option.owners.map(faceOf)} max={5} />{option.owners.length > 1 && <span>{option.owners.length === 2 ? "Both" : `All ${option.owners.length}`} made this edit</span>}<span className="sr-only">{who(option.owners)}</span></>}>
           {option.entries.map(entry => <OptionValue key={entry.change.path} change={entry.change} live={row.live} />)}
         </ChoiceCard>
       ))}
@@ -612,7 +633,7 @@ function Choices({ row, nameOf, faceOf, choice, onChoose, readOnly }: {
             </ChoiceButton>
           )}
           <ChoiceButton tone="later" pressed={choice === "later"} onClick={() => onChoose("later")}>
-            <ClockIcon className="size-3.5" /> Decide later
+            <ClockIcon className="size-3.5" /> Skip for now
           </ChoiceButton>
         </div>
       )}
