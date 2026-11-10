@@ -732,12 +732,12 @@ function ChangeView({ change, live, compact }: { change: CheckedChange, live?: u
  */
 function OptionValue({ change, live }: { change: CheckedChange, live: unknown }) {
   if(change.kind !== "set") return <ChangeView change={change} live={live} compact />;
-  if(change.field === "asset") return <AssetThumb value={change.after} />;
+  if(change.field === "asset") return <AssetThumb value={change.after} stretch />;
   if(change.detail === "changed-only") {
     const text = plainText(change.after);
     return text ? <p className="line-clamp-3 text-sm whitespace-pre-wrap">{text}</p> : <ChangeView change={change} live={live} compact />;
   }
-  if(change.field === "asset") return <AssetThumb value={change.after} />;
+  if(change.field === "asset") return <AssetThumb value={change.after} stretch />;
   if(change.field === "array") return <ChangeView change={change} live={live} compact />;
   return <p className="line-clamp-3 text-sm break-words"><Value change={change} value={change.after} /></p>;
 }
@@ -893,7 +893,8 @@ function middleTruncate(text: string, max = 48): string {
  * and size. Not a control itself, so it sits quietly inside a choice; the small link beside it opens the
  * file in the media library, and hovering that link shows where the file lives.
  */
-function AssetThumb({ value }: { value: unknown }) {
+/** `stretch`: fill the width, with the link at the far end, so files in a list of choices line up. */
+function AssetThumb({ value, stretch }: { value: unknown, stretch?: boolean }) {
   const asset = useAsset(assetId(value));
   if(value === undefined || value === null) return <Quiet>No file</Quiet>;
   if(!asset.data) return <span className="inline-block h-10 w-48 rounded-[8px] well" />;
@@ -901,7 +902,7 @@ function AssetThumb({ value }: { value: unknown }) {
   const tile = "relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-background shadow-[0_0_0_1px] shadow-foreground/10";
   const path = file.folder ? `${file.folder}/${file.filename}` : file.filename;
   return (
-    <span className="flex max-w-80 min-w-0 items-center gap-2.5">
+    <span className={cn("flex min-w-0 items-center gap-2.5", stretch ? "w-full" : "max-w-80")}>
       {file.mime.startsWith("image/") ? (
         <img src={file.url} alt="" className={cn(tile, "object-cover")} />
       ) : file.mime.startsWith("video/") ? (
@@ -912,7 +913,7 @@ function AssetThumb({ value }: { value: unknown }) {
       ) : (
         <span className={tile}><FileGlyph mime={file.mime} className="size-5" /></span>
       )}
-      <span className="flex min-w-0 flex-col">
+      <span className={cn("flex min-w-0 flex-col", stretch && "flex-1")}>
         <span className="truncate text-sm">{file.filename}</span>
         <span className="truncate text-[11px] text-muted-foreground tabular-nums">{describeAsset(file)}</span>
       </span>
