@@ -44,8 +44,8 @@ import { cn } from "../lib/utils.ts";
 import { isActionError } from "../../actions/errors.ts";
 import { VIA_LABELS } from "./via.ts";
 import { collectionSchema, displayUser, documentTitle, formatDate, formatRelative, useAdmin } from "./context.tsx";
-import { AssetPreview, describeAsset, formatBytes, useAsset } from "./pickers.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover.tsx";
+import { describeAsset, useAsset } from "./pickers.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { Link } from "./router.tsx";
 import { PersonFace, PersonFaces, type FacePerson } from "./person.tsx";
 
@@ -74,8 +74,6 @@ interface Row {
 /** Undecided rows aren't in the map; they stay unpublished, like "later", but still ask. */
 type Choice = { use: string } | { value: string } | "later";
 
-/** Values that fit on a button. Anything longer, or a picture, gets a row of its own. */
-const SHORT_FIELDS = new Set(["text", "number", "boolean", "enum", "date", "literal", "ref"]);
 /** How many sides of a conflict show before "N more". */
 const SHOWN_OPTIONS = 4;
 /** Rows past which the review offers to show only what needs a choice. */
@@ -571,9 +569,9 @@ function Choices({ row, nameOf, faceOf, choice, onChoose, readOnly }: {
   const typing = typeof choice === "object" && "value" in choice;
 
   function who(owners: string[]) {
-    const names = owners.map(o => nameOf(o));
-    const first = names.length > 1 ? names.map(n => (n === "You" ? "you" : n.split(/\s+/)[0]!)) : names;
-    const said = first.length <= 2 ? first.join(" and ") : `${first[0]}, ${first[1]} and ${first.length - 2} others`;
+    // Full names: first names alone can't tell two Bobs apart. Hovering the faces lists everyone.
+    const names = owners.map(o => nameOf(o)).map((n, i) => (i && n === "You" ? "you" : n));
+    const said = names.length <= 2 ? names.join(" and ") : `${names[0]}, ${names[1]} and ${names.length - 2} others`;
     return said.charAt(0).toUpperCase() + said.slice(1);
   }
 
@@ -883,65 +881,52 @@ function FileGlyph({ mime, className }: { mime: string, className?: string }) {
   return <Icon className={cn("shrink-0 text-muted-foreground", className)} aria-hidden />;
 }
 
-/** "PDF", "MP4", from the file's name, else its type. */
-function fileKind(filename: string, mime: string): string {
-  const ext = /\.([a-z0-9]{1,5})$/i.exec(filename)?.[1];
-  return (ext ?? mime.split("/").pop() ?? "file").toUpperCase();
+/** "Blog/2024/…/brief-02.pdf": the start and the end, which say the most, with the middle left out. */
+function middleTruncate(text: string, max = 48): string {
+  if(text.length <= max) return text;
+  const keep = max - 1;
+  return `${text.slice(0, Math.ceil(keep * 0.4))}…${text.slice(text.length - Math.floor(keep * 0.6))}`;
 }
 
 /**
- * A file as a card: a preview (the image itself, a video's first frame, or an icon for anything else)
- * beside its name, where it lives, its kind and size. Clicking it opens a bigger preview with the file's
- * details and a link to it in the media library. No players inline: it may sit inside a choice.
+ * A file: a preview (the image, a video's first frame, or an icon for its kind) beside its name, kind
+ * and size. Not a control itself, so it sits quietly inside a choice; the small link beside it opens the
+ * file in the media library, and hovering that link shows where the file lives.
  */
 function AssetThumb({ value }: { value: unknown }) {
-  const { session } = useAdmin();
   const asset = useAsset(assetId(value));
-  if(value === undefined || value === null) return <span className="flex h-14 w-fit items-center rounded-[10px] px-3 text-xs text-muted-foreground well">No file</span>;
-  if(!asset.data) return <span className="inline-block h-14 w-48 rounded-[10px] well" />;
+  if(value === undefined || value === null) return <Quiet>No file</Quiet>;
+  if(!asset.data) return <span className="inline-block h-10 w-48 rounded-[8px] well" />;
   const file = asset.data;
   const tile = "relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-background shadow-[0_0_0_1px] shadow-foreground/10";
-  const where = file.folder ?? "Media library";
+  const path = file.folder ? `${file.folder}/${file.filename}` : file.filename;
   return (
-    <Popover>
-      <PopoverTrigger render={
-        <button type="button" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
-          className="flex h-14 max-w-72 min-w-0 items-center gap-2.5 rounded-[10px] py-2 pr-3 pl-2 text-left shadow-[inset_0_0_0_1px] shadow-foreground/10 transition-shadow well hover:shadow-foreground/25"
-          aria-label={`${file.filename}, in ${where}. Show details`}>
-          {file.mime.startsWith("image/") ? (
-            <img src={file.url} alt="" className={cn(tile, "object-cover")} />
-          ) : file.mime.startsWith("video/") ? (
-            <span className={cn(tile, "bg-black")}>
-              <video src={`${file.url}#t=0.1`} preload="metadata" muted playsInline className="absolute inset-0 size-full object-cover" />
-              <PlayIcon className="relative size-4 fill-white text-white drop-shadow" aria-hidden />
-            </span>
-          ) : (
-            <span className={tile}><FileGlyph mime={file.mime} className="size-5" /></span>
-          )}
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-sm">{file.filename}</span>
-            <span className="truncate text-[11px] text-muted-foreground tabular-nums">{where} · {fileKind(file.filename, file.mime)} · {formatBytes(file.size)}</span>
-          </span>
-        </button>
-      } />
-      <PopoverContent align="start" className="w-80 gap-3 p-3" onClick={event => event.stopPropagation()}>
-        <div className="overflow-hidden rounded-[10px] well">
-          <AssetPreview asset={file} />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium [overflow-wrap:anywhere]">{file.filename}</span>
-          <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{file.folder ? `${file.folder}/${file.filename}` : file.filename}</span>
-        </div>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-          <dt className="text-muted-foreground">File</dt><dd>{describeAsset(file)}</dd>
-          {typeof file.meta.alt === "string" && file.meta.alt && <><dt className="text-muted-foreground">Alt text</dt><dd>{file.meta.alt}</dd></>}
-          <dt className="text-muted-foreground">Uploaded</dt><dd>{formatDate(file.createdAt)} by {displayUser(file.createdBy, session)}</dd>
-        </dl>
-        <Link to={`/media?file=${encodeURIComponent(file.id)}`} target="_blank" rel="noreferrer"
-          className="inline-flex w-fit items-center gap-1 text-xs underline underline-offset-3 hover:text-foreground">
-          Open in the media library <ExternalLinkIcon className="size-3" />
-        </Link>
-      </PopoverContent>
-    </Popover>
+    <span className="flex max-w-80 min-w-0 items-center gap-2.5">
+      {file.mime.startsWith("image/") ? (
+        <img src={file.url} alt="" className={cn(tile, "object-cover")} />
+      ) : file.mime.startsWith("video/") ? (
+        <span className={cn(tile, "bg-black")}>
+          <video src={`${file.url}#t=0.1`} preload="metadata" muted playsInline className="absolute inset-0 size-full object-cover" />
+          <PlayIcon className="relative size-4 fill-white text-white drop-shadow" aria-hidden />
+        </span>
+      ) : (
+        <span className={tile}><FileGlyph mime={file.mime} className="size-5" /></span>
+      )}
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate text-sm">{file.filename}</span>
+        <span className="truncate text-[11px] text-muted-foreground tabular-nums">{describeAsset(file)}</span>
+      </span>
+      <Tooltip>
+        <TooltipTrigger render={
+          <Link to={`/media?file=${encodeURIComponent(file.id)}`} target="_blank" rel="noreferrer"
+            onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
+            aria-label={`Open ${file.filename} in the media library`}
+            className="grid size-6 shrink-0 place-items-center rounded-[6px] text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground">
+            <ExternalLinkIcon className="size-3.5" />
+          </Link>
+        } />
+        <TooltipContent className="whitespace-nowrap">{middleTruncate(path)}</TooltipContent>
+      </Tooltip>
+    </span>
   );
 }

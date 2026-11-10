@@ -1,4 +1,5 @@
 import { UserRoundIcon } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import { cn } from "../lib/utils.ts";
 
 /** A hue from someone's ID, so the same person has the same color everywhere, with nothing from their sign-in provider. */
@@ -43,13 +44,27 @@ export function PersonFace({ id, name, self, className }: FacePerson & { classNa
   );
 }
 
-/** Up to `max` faces, overlapping, then "+N". */
+/** Up to `max` faces, overlapping, then "+N". Hovering lists everyone, in full. */
 export function PersonFaces({ people, max = 3, count = true, className }: { people: FacePerson[], max?: number, count?: boolean, className?: string }) {
   const shown = people.slice(0, max);
   return (
-    <span className={cn("inline-flex shrink-0 items-center", className)} title={people.map(p => (p.self ? "You" : p.name)).join(", ")}>
-      {shown.map((person, i) => <PersonFace key={person.id} {...person} className={i ? "-ml-1.5" : undefined} />)}
-      {count && people.length > max && <span className="ml-1 text-[11px] text-muted-foreground tabular-nums">+{people.length - max}</span>}
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={
+        <span className={cn("inline-flex shrink-0 items-center", className)}>
+          {shown.map((person, i) => <PersonFace key={person.id} {...person} className={i ? "-ml-1.5" : undefined} />)}
+          {count && people.length > max && <span className="ml-1 text-[11px] text-muted-foreground tabular-nums">+{people.length - max}</span>}
+        </span>
+      } />
+      <TooltipContent className="max-h-72 overflow-y-auto">
+        <ul className="flex flex-col gap-1">
+          {people.map(person => (
+            <li key={person.id} className="flex items-center gap-2">
+              <PersonFace {...person} className="size-4 text-[8px] ring-0" />
+              {person.self ? "You" : person.name}
+            </li>
+          ))}
+        </ul>
+      </TooltipContent>
+    </Tooltip>
   );
 }
