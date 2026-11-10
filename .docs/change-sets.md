@@ -1,6 +1,6 @@
 # Change sets: per-person drafts and merge on publish
 
-Status: built (branches, merge, publish dialog). Not built: review roles, the hub's review list, visual diff. User-facing docs: `packages/vibe-cms/docs/publishing.md`.
+Status: built. User-facing docs: `packages/vibe-cms/docs/publishing.md`.
 
 ## Problem
 
@@ -138,10 +138,13 @@ The editor also says when other people have unpublished changes, and has "Discar
 - **Migration** (`0003`): drafts that differ from live become their last editor's branch, then the `draft` column, its search triggers and its expression indexes are dropped. Concurrent isolates are safe: a migration that fails because another isolate applied it counts as applied.
 - **Permissions:** a role can already edit without publishing. Publishing, including other people's branches, needs the publish permission, as does discarding someone else's branch.
 
-## Not built
+## Review and visual diff
 
-1. **Review:** the hub's cross-site "awaiting review" list from `documents.changes`.
-2. **Visual diff** in the preview, with changed blocks outlined.
+- **Lists:** draft reads carry `$meta.pending` (owner and name, newest first), shown under each row's status. Published reads leave it out, since they're public.
+- **`documents.pending`:** every document with unpublished changes that the reader can read, across the site, with `canPublish`.
+- **Hub:** the Review page (`/review`) asks each visible site's `documents.pending` with the person's hub token, so each site applies its own permissions. A site that can't answer is listed with why; an older site without the action lists nothing. Hosted panels only: the local panel reaches sites from the browser, which the actions' CORS rules don't allow.
+- **Publish dialog:** a Discard per person, and Schedule… for the current selection. `documents.schedule` takes the same `branches`, `skip` and `resolve` as `documents.publish`.
+- **Visual diff:** the editor computes `changedBlocks` (your saved copy against live) for the document's preview page and posts it to the preview script, which outlines each block between its `<!--vibe-block:N-->` markers (New, Changed, Moved) and redraws on resize. Only the first block list on a page is outlined, as with focusing a block. Off with "Outline unpublished changes" in the preview's menu, remembered per browser.
 
 ## Open questions
 

@@ -65,7 +65,7 @@ One tool per action, with dots as underscores: `documents.publish` → `document
 | Group | Tools |
 |---|---|
 | Schema | `schema_list`, `schema_get` (a content type's fields as JSON Schema: what `data` must look like) |
-| Documents | `documents_list`, `documents_get`, `documents_create`, `documents_update`, `documents_delete`, `documents_publish`, `documents_changes`, `documents_discardChanges`, `documents_unpublish`, `documents_references`, `documents_versions`, `documents_version`, `documents_restoreVersion`, `documents_schedule`, `documents_unschedule` |
+| Documents | `documents_list`, `documents_get`, `documents_create`, `documents_update`, `documents_delete`, `documents_publish`, `documents_changes`, `documents_pending`, `documents_discardChanges`, `documents_unpublish`, `documents_references`, `documents_versions`, `documents_version`, `documents_restoreVersion`, `documents_schedule`, `documents_unschedule` |
 | Media | `assets_list`, `assets_get`, `assets_upload`, `assets_update`, `assets_replaceContent`, `assets_delete`, `folders_list`, `folders_create`, `folders_move`, `folders_delete` |
 | Trash | `trash_list`, `trash_get`, `trash_restore`, `trash_purge`, `trash_empty` |
 | Site | `site_get`, `site_update` |

@@ -105,5 +105,6 @@ Inside a panel on another domain, the floating window's cookie is a third-party 
 ## Limits
 
 - The preview shows saved drafts. Unsaved edits appear once you save.
+- Blocks your saved changes add, change or move are outlined, against the live page (New, Changed, Moved). Only the first block list on a page is outlined. Turn it off with "Outline unpublished changes" in the preview's menu.
 - Saves from agents, the CLI or the REST API don't reload open previews. Reload them with the preview's reload button.
 - A draft can be incomplete (only publishing validates). Site code that assumes required fields are present may fail on one in preview.

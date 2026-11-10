@@ -38,7 +38,7 @@ Every action the editor uses is a command: `vibe-cms <group> <action>`, with fla
 | Group | Actions |
 |---|---|
 | `schema` | `list`, `get` |
-| `documents` | `list`, `get`, `create`, `update`, `delete`, `publish`, `changes`, `discard-changes`, `unpublish`, `references`, `versions`, `version`, `restore-version`, `schedule`, `unschedule` |
+| `documents` | `list`, `get`, `create`, `update`, `delete`, `publish`, `changes`, `pending`, `discard-changes`, `unpublish`, `references`, `versions`, `version`, `restore-version`, `schedule`, `unschedule` |
 | `assets` | `list`, `get`, `upload`, `update`, `replace-content`, `delete` |
 | `folders` | `list`, `create`, `move`, `delete` |
 | `trash` | `list`, `get`, `restore`, `purge`, `empty` |
