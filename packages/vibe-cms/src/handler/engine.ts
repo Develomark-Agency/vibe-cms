@@ -213,7 +213,7 @@ export interface PublishSelection {
 }
 
 /** A document row with the copy this reader edits (`draft`) and whether anyone has unpublished changes. */
-type WorkingRow = DocumentRow & { draft: string | null, pending: number };
+type WorkingRow = DocumentRow & { draft: string | null, pending: number, pending_by: string };
 
 /** A trashed document row: its branches travel with it. Older entries carry a `draft` instead. */
 type TrashedDocument = DocumentRow & { branches?: BranchRow[], draft?: string };
@@ -309,7 +309,8 @@ function toBranch(schema: ObjectSchema, row: BranchRow): Branch {
 function workingColumns(alias = "d"): string {
   const branch = `FROM vibe_branches b WHERE b.id = ${alias}.id AND b.locale = ${alias}.locale`;
   return `${alias}.*, COALESCE((SELECT b.data ${branch} AND b.owner = ?), ${alias}.published, (SELECT b.data ${branch} ORDER BY b.updated_at DESC LIMIT 1)) AS draft,
-    EXISTS (SELECT 1 ${branch}) AS pending`;
+    EXISTS (SELECT 1 ${branch}) AS pending,
+    (SELECT json_group_array(json_object('owner', owner, 'name', owner_name)) FROM (SELECT b.owner, b.owner_name ${branch} ORDER BY b.updated_at DESC)) AS pending_by`;
 }
 
 /** Matches a document whose live copy or any branch contains `pattern` (a LIKE pattern). */
@@ -477,7 +478,7 @@ export class Engine {
     const limit = Math.min(Math.max(args.limit ?? 100, 0), 1000);
     const rows = await all<WorkingRow>(
       this.db,
-      `SELECT c.id, c.type, c.locale, c.draft, c.published, c.pending, c.created_at, c.updated_at, c.published_at
+      `SELECT c.id, c.type, c.locale, c.draft, c.published, c.pending, c.pending_by, c.created_at, c.updated_at, c.published_at
        FROM ${source.sql} c WHERE ${where} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`,
       [...source.params, ...sql.params, limit, Math.max(args.offset ?? 0, 0)]
     );
@@ -508,7 +509,9 @@ export class Engine {
         createdAt: iso(row.created_at)!,
         updatedAt: iso(row.updated_at)!,
         publishedAt: iso(row.published_at),
-        status: documentStatus(row)
+        status: documentStatus(row),
+        // Who's editing is for signed-in editors, not published reads.
+        ...(drafts ? { pending: JSON.parse(row.pending_by ?? "[]") as NonNullable<DocumentMeta["pending"]> } : {})
       }
     };
   }

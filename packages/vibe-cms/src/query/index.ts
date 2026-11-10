@@ -200,7 +200,8 @@ export type Executor = (queries: SerializedQuery[]) => Promise<unknown[]>;
 
 /**
  * Every result's `$meta`. `status`: `draft` (never published), `published`, or `changed`
- * (published, with newer draft edits). `locale` is the one returned, after fallback.
+ * (published, and someone has unpublished changes). `locale` is the one returned, after fallback.
+ * `pending`, on draft reads only: who has unpublished changes, most recent first.
  */
 // A type alias (not an interface) so documents carrying it stay valid JSON objects.
 export type DocumentMeta = {
@@ -208,7 +209,8 @@ export type DocumentMeta = {
   createdAt: string,
   updatedAt: string,
   publishedAt: string | null,
-  status: "draft" | "published" | "changed"
+  status: "draft" | "published" | "changed",
+  pending?: Array<{ owner: string, name: string | null }>
 };
 
 type SchemasOf<Cfg> = Cfg extends { schemas: infer S } ? S : never;

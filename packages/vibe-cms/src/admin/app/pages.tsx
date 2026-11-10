@@ -9,7 +9,7 @@ import { Spinner } from "../components/ui/spinner.tsx";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table.tsx";
 import { cn } from "../lib/utils.ts";
 import { Delayed, useArrival } from "./delayed.tsx";
-import { collectionLabel, collectionSettings, documentTitle, formatDate, formatRelative, localeName, titleField, useAdmin } from "./context.tsx";
+import { collectionLabel, collectionSettings, displayUser, documentTitle, formatDate, formatRelative, localeName, titleField, useAdmin } from "./context.tsx";
 import { EditorPage } from "./editor.tsx";
 import { Marked, markTitle } from "./marked.tsx";
 import { Link, navigate, useLocation } from "./router.tsx";
@@ -19,6 +19,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/toolti
 const PAGE = 25;
 
 /** Position in a `.stagger` list (see styles.css). */
+/** Who has unpublished changes to a listed document: "You and Bob". */
+function PendingBy({ pending }: { pending: Array<{ owner: string, name: string | null }> | undefined }) {
+  const { session } = useAdmin();
+  if(!pending?.length) return null;
+  const names = pending.map(p => (p.owner === session.user.sub ? "You" : p.name ?? displayUser(p.owner, session)));
+  const shown = names.length > 2 ? `${names[0]} and ${names.length - 1} others` : names.join(" and ").replace(/ and You$/, " and you");
+  return <span className="block truncate text-xs text-muted-foreground" title={`Unpublished changes: ${names.join(", ")}`}>{shown}</span>;
+}
+
 export function staggerIndex(i: number): CSSProperties {
   return { "--i": i } as CSSProperties;
 }
@@ -167,6 +176,7 @@ export function ListPage({ type }: { type: string }) {
                       <StatusDot status={doc.$meta.status} />
                       {{ draft: "Draft", published: "Published", changed: "Changed" }[doc.$meta.status]}
                     </span>
+                    <PendingBy pending={doc.$meta.pending} />
                   </TableCell>
                   {columns.map(c => <TableCell key={c.id}><c.component doc={doc} cms={cms} /></TableCell>)}
                   <TableCell className="pr-4 text-right text-sm text-muted-foreground" title={formatDate(doc.$meta.updatedAt)}>{formatRelative(doc.$meta.updatedAt)}</TableCell>

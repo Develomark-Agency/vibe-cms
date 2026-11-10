@@ -185,6 +185,12 @@ describe("branches", () => {
       return (await ok(t.call(token, "documents.list", { type: "post" }))).docs.map((d: any) => [d.title, d.$meta.status]);
     }
     expect(await list(alice)).toEqual([["Summer sale", "changed"]]);
+    const [row] = (await ok(t.call(bob, "documents.list", { type: "post" }))).docs;
+    expect(row.$meta.pending).toEqual([{ owner: "alice", name: "Alice" }]);
+    // Published reads are public, so they don't say who's editing.
+    const response = await t.vibe.handle(new Request("https://site.test/_vibe/api/query", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ queries: [{ type: "post", op: "findMany", args: {} }] }) }), t.env, ctx);
+    const { results: [publicRows] } = await response.json() as any;
+    expect(publicRows[0].$meta.pending).toBeUndefined();
     expect(await list(bob)).toEqual([["Spring sale", "changed"]]);
     const found = await ok(t.call(bob, "documents.search", { query: "summer" }));
     expect(found.results.map((r: any) => r.id)).toEqual([doc.id]);
