@@ -416,17 +416,20 @@ function MorePeople({ branches, nameOf, faceOf, onDiscard }: {
           <ChevronDownIcon className="size-3 text-muted-foreground" />
         </button>
       } />
-      <DropdownMenuContent align="start" className="max-h-80 w-64 overflow-y-auto">
+      <DropdownMenuContent align="start" className="max-h-80 w-72 overflow-y-auto">
         {branches.map(branch => {
           const discard = onDiscard(branch.owner);
           const name = nameOf(branch.owner);
-          const via = branch.via !== "ui" ? `via ${VIA_LABELS[branch.via as Via] ?? branch.via} · ` : "";
+          const via = branch.via !== "ui" ? `${VIA_LABELS[branch.via as Via] ?? branch.via} · ` : "";
           return (
             <DropdownMenuSub key={branch.owner}>
               <DropdownMenuSubTrigger>
                 <PersonFace {...faceOf(branch.owner)} className="ring-0" />
-                <span className="min-w-0 flex-1 truncate">{name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{via}{formatRelative(branch.updatedAt)}</span>
+                {/* Name above where and when, so neither has to squeeze the other. */}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">{name}</span>
+                  <span className="truncate text-xs text-muted-foreground">{via}{formatRelative(branch.updatedAt)}</span>
+                </span>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
                 {discard ? <DropdownMenuItem variant="destructive" onClick={() => void discard()}>Discard {name.split(/\s+/)[0]}'s changes</DropdownMenuItem>
