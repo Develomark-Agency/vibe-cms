@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeftIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { diff, withPositionalKeys, type CheckedChange } from "../../changes/index.ts";
@@ -20,13 +20,14 @@ import { staggerIndex } from "./pages.tsx";
 type Tab = "versions" | "activity";
 
 /**
- * A document's history, a page of its own (`/content/:type/:id/history`): every published version, each
- * shown as what it changed from the one before (or in full), with Restore; and the document's activity.
+ * A document's history: every published version (`/content/:type/:id/history`), each shown as what it
+ * changed from the one before (or in full), with Restore; and its activity (`/content/:type/:id/activity`).
+ * The two are sibling pages, so switching between them plays the app's page transition while the header,
+ * shared by both, holds still.
  */
-export function HistoryPage({ type, id }: { type: string, id: string }) {
+export function HistoryPage({ type, id, tab }: { type: string, id: string, tab: Tab }) {
   const { cms, config, locale, session } = useAdmin();
   const { search } = useLocation();
-  const tab: Tab = search.get("tab") === "activity" ? "activity" : "versions";
   const editorPath = `/content/${type}/${id}${locale === config.defaultLocale ? "" : `?locale=${encodeURIComponent(locale)}`}`;
   const doc = useQuery({ queryKey: ["document", type, id, locale], queryFn: () => cms.actions.documents.get({ type, id, locale }), retry: false });
   const title = documentTitle(config, type, doc.data?.draft ?? doc.data?.published);
@@ -38,24 +39,26 @@ export function HistoryPage({ type, id }: { type: string, id: string }) {
   }, [title]);
 
   function setTab(next: Tab) {
-    const params = new URLSearchParams(search);
-    if(next === "versions") params.delete("tab");
-    else params.set("tab", next);
-    const query = params.toString();
-    navigate(`/content/${type}/${id}/history${query ? `?${query}` : ""}`, { replace: true });
+    const query = search.toString();
+    navigate(`/content/${type}/${id}/${next === "versions" ? "history" : "activity"}${query ? `?${query}` : ""}`, { replace: true });
   }
 
   return (
     <div className="flex min-h-full flex-col">
       <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
-        <Button variant="ghost" size="icon-sm" className="-ml-1.5 rounded-[8px] md:-ml-3.5" aria-label="Back to the editor" nativeButton={false} render={<Link to={editorPath} />}>
-          <ChevronLeftIcon />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[15px] font-semibold">{title}</h1>
-          <p className="truncate text-xs text-muted-foreground">History</p>
+        {/* Shared with the sibling tab (`data-shared`), so it holds still while the content changes over. */}
+        <div className="flex min-w-0 flex-1 items-center gap-2" data-shared="title">
+          <Button variant="ghost" size="icon-sm" className="-ml-1.5 rounded-[8px] md:-ml-3.5" aria-label="Back to the editor" nativeButton={false} render={<Link to={editorPath} />}>
+            <ChevronLeftIcon />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[15px] font-semibold">{title}</h1>
+            <p className="truncate text-xs text-muted-foreground">History</p>
+          </div>
         </div>
-        <Segmented<Tab> label="History" value={tab} onChange={setTab} options={[{ value: "versions", label: "Versions" }, { value: "activity", label: "Activity" }]} />
+        <div data-shared="actions">
+          <Segmented<Tab> label="History" value={tab} onChange={setTab} options={[{ value: "versions", label: "Versions" }, { value: "activity", label: "Activity" }]} />
+        </div>
       </header>
       <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-8">
         {tab === "activity"
@@ -80,16 +83,28 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
   const [restoring, setRestoring] = useState(false);
   const schema = collectionSchema(config, type);
 
+  // Picking another version keeps the one on screen until the next arrives: versions look alike, so a
+  // loading flash or a replayed entrance would read as a flicker.
   const current = useQuery({
     queryKey: ["version", type, id, locale, selected],
     enabled: selected !== null,
+    placeholderData: keepPreviousData,
     queryFn: () => cms.actions.documents.version({ type, id, locale, ver: selected! })
   });
   const before = useQuery({
     queryKey: ["version", type, id, locale, previous],
     enabled: previous !== null,
+    placeholderData: keepPreviousData,
     queryFn: () => cms.actions.documents.version({ type, id, locale, ver: previous! })
   });
+  // The changes cascade in once, when the page first shows a version; later picks swap in place.
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if(current.data && !shown) {
+      const timer = setTimeout(() => setShown(true), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [current.data, shown]);
   const changes = useMemo<CheckedChange[]>(() => {
     if(!current.data || (previous !== null && !before.data)) return [];
     const a = previous === null ? {} : withPositionalKeys(schema, structuredClone(before.data!.data as DocumentData));
@@ -160,16 +175,15 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
 
         {!current.data ? <Delayed><Skeleton className="h-40 w-full" /></Delayed>
           : whole ? (
-            <div key={`whole-${selected}`} className="rise-in pointer-events-none flex flex-col gap-6 rounded-[16px] p-5 elevated">
+            <div className="pointer-events-none flex flex-col gap-6 rounded-[16px] p-5 elevated">
               {Object.entries(schema.shape).map(([key, field]) => (
                 <Field key={key} schema={field} name={key} path={[key]} value={(current.data.data as DocumentData)[key]} issues={[]} readOnly doc={{ type, id }} onChange={() => {}} />
               ))}
             </div>
           ) : !changes.length ? (
-            <p key={`none-${selected}`} className="rise-in rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Published with no changes from version {previous}.</p>
+            <p className="rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Published with no changes from version {previous}.</p>
           ) : (
-            // Keyed by version, so picking another one plays the cascade again.
-            <ul key={`changes-${selected}`} className="stagger flex flex-col divide-y overflow-hidden rounded-[16px] well">
+            <ul className={cn("flex flex-col divide-y overflow-hidden rounded-[16px] well", !shown && "stagger")}>
               {changes.map((change, i) => (
                 <li key={change.path} style={staggerIndex(i)} className="flex flex-col gap-1.5 px-4 py-3">
                   <FieldName change={change} />
