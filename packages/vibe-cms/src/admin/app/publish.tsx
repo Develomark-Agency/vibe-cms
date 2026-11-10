@@ -585,7 +585,7 @@ function Choices({ row, nameOf, faceOf, choice, onChoose, readOnly }: {
       {visible.map(option => (
         <ChoiceCard key={option.owners[0]} tone="person" checked={sameChoice(choice, { use: option.owners[0]! })} disabled={readOnly}
           onSelect={() => onChoose({ use: option.owners[0]! })}
-          head={<><PersonFaces people={option.owners.map(faceOf)} count={false} /> {who(option.owners)}{option.owners.length > 1 && <span className="text-muted-foreground/70">· same change</span>}</>}>
+          head={<><PersonFaces people={option.owners.map(faceOf)} max={5} />{option.owners.length > 1 && <span>Same change</span>}<span className="sr-only">{who(option.owners)}</span></>}>
           {option.entries.map(entry => <OptionValue key={entry.change.path} change={entry.change} live={row.live} />)}
         </ChoiceCard>
       ))}

@@ -55,7 +55,8 @@ export function PersonFaces({ people, max = 3, count = true, className }: { peop
           {count && people.length > max && <span className="ml-1 text-[11px] text-muted-foreground tabular-nums">+{people.length - max}</span>}
         </span>
       } />
-      <TooltipContent className="max-h-72 overflow-y-auto">
+      {/* Scrolls only when the list is long; otherwise the open animation would flash a scrollbar. */}
+      <TooltipContent className={cn(people.length > 12 && "max-h-72 overflow-y-auto")}>
         <ul className="flex flex-col gap-1">
           {people.map(person => (
             <li key={person.id} className="flex items-center gap-2">
