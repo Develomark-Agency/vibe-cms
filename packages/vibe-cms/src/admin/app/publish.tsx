@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSub,
@@ -366,12 +367,14 @@ function PersonChip({ branch, name, onDiscard }: { branch: BranchChanges, name: 
         </button>
       } />
       <DropdownMenuContent align="start" className="w-60">
-        <DropdownMenuLabel className="font-normal">
-          <span className="block font-medium text-foreground">{name}</span>
-          <span className="block text-xs text-muted-foreground" title={formatDate(branch.updatedAt)}>
-            {[via, `saved ${formatRelative(branch.updatedAt)}`].filter(Boolean).join(" · ")}
-          </span>
-        </DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="font-normal">
+            <span className="block font-medium text-foreground">{name}</span>
+            <span className="block text-xs text-muted-foreground" title={formatDate(branch.updatedAt)}>
+              {[via, `saved ${formatRelative(branch.updatedAt)}`].filter(Boolean).join(" · ")}
+            </span>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         {onDiscard && (
           <DropdownMenuItem variant="destructive" disabled={busy} onClick={async () => {
             setBusy(true);

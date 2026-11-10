@@ -5,7 +5,7 @@ import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
@@ -128,15 +128,19 @@ function RolesMenu({ roles, assignable, value, onChange }: { roles: string[], as
         </Button>
       } />
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>Roles on this site</DropdownMenuLabel>
-        {roles.map(role => (
-          <DropdownMenuCheckboxItem key={role} checked={value.includes(role)} disabled={!assignable.includes(role)} onCheckedChange={on => onChange(on ? [...value, role] : value.filter(r => r !== role))}>{role}</DropdownMenuCheckboxItem>
-        ))}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Roles on this site</DropdownMenuLabel>
+          {roles.map(role => (
+            <DropdownMenuCheckboxItem key={role} checked={value.includes(role)} disabled={!assignable.includes(role)} onCheckedChange={on => onChange(on ? [...value, role] : value.filter(r => r !== role))}>{role}</DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuGroup>
         {unknown.length > 0 && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Not on the site any more, so ignored:</DropdownMenuLabel>
-            {unknown.map(role => <DropdownMenuCheckboxItem key={role} checked onCheckedChange={() => onChange(value.filter(r => r !== role))}>{role}</DropdownMenuCheckboxItem>)}
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Not on the site any more, so ignored:</DropdownMenuLabel>
+              {unknown.map(role => <DropdownMenuCheckboxItem key={role} checked onCheckedChange={() => onChange(value.filter(r => r !== role))}>{role}</DropdownMenuCheckboxItem>)}
+            </DropdownMenuGroup>
           </>
         )}
       </DropdownMenuContent>
