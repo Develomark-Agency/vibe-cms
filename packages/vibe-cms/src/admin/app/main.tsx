@@ -40,6 +40,7 @@ import { openPick, type PreviewPick } from "./reveal.ts";
 import { FULLSCREEN_BELOW, PreviewWindow } from "./preview-window.tsx";
 import { MegaNav, type NavGroup, type NavItem } from "./nav.tsx";
 import { announcePainted, embedded, getPanelAccent, postToPanel, renewSession, signOut, startSession, subscribePanelAccent } from "./session.ts";
+import { ReviewPage } from "./publish.tsx";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: false } }
@@ -168,6 +169,7 @@ function adminRoutes(plugins: Required<AdminPlugin>): RouteObject[] {
       { index: true, element: <Dashboard /> },
       { path: "content/:type", element: <ContentList /> },
       { path: "content/:type/:id", element: <ContentDocument /> },
+      { path: "content/:type/:id/review", element: <ContentReview /> },
       { path: "media", element: <Allowed when={a => a.canMedia}><MediaPage /></Allowed> },
       { path: "settings", element: <Allowed when={a => a.canSite}><SiteSettingsPage /></Allowed> },
       { path: "users", element: <Allowed when={a => a.canManageUsers}><UsersPage /></Allowed> },
@@ -242,6 +244,11 @@ function ContentList() {
 function ContentDocument() {
   const { type, id } = useParams();
   return useAccess().types.includes(type!) ? <DocumentRoute type={type!} id={id!} /> : <NotFound />;
+}
+
+function ContentReview() {
+  const { type, id } = useParams();
+  return useAccess().types.includes(type!) ? <ReviewPage key={`${type}/${id}`} type={type!} id={id!} /> : <NotFound />;
 }
 
 function PluginRoute({ component: Page }: { component: Required<AdminPlugin>["pages"][string]["component"] }) {

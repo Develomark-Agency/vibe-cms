@@ -3,6 +3,7 @@ import {
   ArrowRightIcon,
   CalendarClockIcon,
   CheckIcon,
+  ChevronLeftIcon,
   ChevronDownIcon,
   CircleCheckIcon,
   ClockIcon,
@@ -26,16 +27,12 @@ import type { BranchChanges, DocumentState } from "../../handler/engine.ts";
 import type { Via } from "../../handler/activity.ts";
 import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger
 } from "../components/ui/dropdown-menu.tsx";
 import { Input } from "../components/ui/input.tsx";
@@ -47,7 +44,7 @@ import { VIA_LABELS } from "./via.ts";
 import { collectionSchema, displayUser, documentTitle, formatDate, formatRelative, useAdmin } from "./context.tsx";
 import { describeAsset, useAsset } from "./pickers.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
-import { Link } from "./router.tsx";
+import { Link, navigate } from "./router.tsx";
 import { PersonFace, PersonFaces, type FacePerson } from "./person.tsx";
 import { askConfirm } from "./confirm.tsx";
 
@@ -88,22 +85,34 @@ function sameChoice(a: Choice | undefined, b: Choice): boolean {
 }
 
 /**
- * The review before publishing: every change, field by field, whoever made it. Clean changes are
- * ticked; a field two people changed (or that was published differently since) asks for a choice, and
- * says so once it's settled. With nothing to settle it's one click to open and one to publish.
+ * The review before publishing, a page of its own (`/content/:type/:id/review`): every change, field by
+ * field, whoever made it. Clean changes are ticked; a field two people changed (or that was published
+ * differently since) asks for a choice, and says so once it's settled. With nothing to settle, Review
+ * then Publish is two clicks. People who can't publish see the same page, without the choices.
  */
-export function PublishDialog({ open, onOpenChange, type, id, title, canPublish = true, onDone }: {
-  open: boolean,
-  onOpenChange(open: boolean): void,
-  type: string,
-  id: string,
-  title: string,
-  /** Without it the dialog only shows the changes, and lets you discard your own. */
-  canPublish?: boolean,
-  onDone(doc: DocumentState): void
-}) {
+export function ReviewPage({ type, id }: { type: string, id: string }) {
   const { cms, config, locale, session } = useAdmin();
   const queryClient = useQueryClient();
+  const open = true;
+  const permissions = session.permissions.types[type];
+  const canPublish = Boolean(permissions?.publish && session.permissions.locales.includes(locale));
+  const doc = useQuery({ queryKey: ["document", type, id, locale], queryFn: () => cms.actions.documents.get({ type, id, locale }), retry: false });
+  const title = documentTitle(config, type, doc.data?.draft ?? doc.data?.published);
+  const editorPath = `/content/${type}/${id}${location.search}`;
+
+  useEffect(() => {
+    document.title = `Review ${title}`;
+  }, [title]);
+
+  /** What publishing or discarding returns is the document as the editor shows it now. */
+  function onDone(result: DocumentState) {
+    queryClient.setQueryData(["document", type, id, locale], result);
+    void queryClient.invalidateQueries({ queryKey: ["documents", type] });
+    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  }
+  function onOpenChange(next: boolean) {
+    if(!next) navigate(editorPath);
+  }
   const changes = useQuery({
     queryKey: ["changes", type, id, locale],
     enabled: open,
@@ -227,38 +236,41 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
   const conflicts = rows.length - clean.length;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[min(88vh,52rem)] flex-col gap-4 sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Review “{title}”</DialogTitle>
-          <DialogDescription render={<div />} className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-            {changes.isPending ? "Checking what's changed…"
-              : !branches.length ? "There are no unpublished changes."
-                : (
-                  <>
-                    <span>{canPublish ? `${chosen.length} of ${rows.length} selected` : `${rows.length} unpublished ${rows.length === 1 ? "change" : "changes"}`} from</span>
-                    {/* A few people by name; the rest behind "+N", so twenty contributors don't fill the header. */}
-                    {branches.slice(0, branches.length > 4 ? 3 : 4).map(branch => (
-                      <span key={branch.owner} className="max-sm:hidden">
-                        <PersonChip branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)}
-                          onDiscard={canPublish || branch.owner === session.user.sub ? () => discard(branch.owner) : undefined} />
-                      </span>
-                    ))}
-                    {branches.length > 4 && (
-                      <span className="max-sm:hidden">
-                        <MorePeople branches={branches.slice(3)} label={`${branches.length - 3} more`} nameOf={nameOf} faceOf={faceOf}
-                          onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
-                      </span>
-                    )}
-                    {/* On a phone, everyone sits behind one menu, so the header stays one line. */}
-                    <span className="sm:hidden">
-                      <MorePeople branches={branches} label={branches.length === 1 ? nameOf(branches[0]!.owner) : `${branches.length} people`} nameOf={nameOf} faceOf={faceOf}
+    <div className="flex min-h-full flex-col">
+      <header className="sticky top-0 z-20 flex items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
+        <Button variant="ghost" size="icon-sm" className="-ml-1.5 rounded-[8px] md:-ml-3.5" aria-label="Back to the editor" nativeButton={false} render={<Link to={editorPath} />}>
+          <ChevronLeftIcon />
+        </Button>
+        <h1 className="min-w-0 truncate text-[15px] font-semibold">Review “{title}”</h1>
+      </header>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-6 md:px-8">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-muted-foreground">
+          {changes.isPending ? "Checking what's changed…"
+            : !branches.length ? "There are no unpublished changes."
+              : (
+                <>
+                  <span>{canPublish ? `${chosen.length} of ${rows.length} selected` : `${rows.length} unpublished ${rows.length === 1 ? "change" : "changes"}`} from</span>
+                  {/* A few people by name; the rest behind "+N", so twenty contributors don't fill the header. */}
+                  {branches.slice(0, branches.length > 4 ? 3 : 4).map(branch => (
+                    <span key={branch.owner} className="max-sm:hidden">
+                      <PersonChip branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)}
+                        onDiscard={canPublish || branch.owner === session.user.sub ? () => discard(branch.owner) : undefined} />
+                    </span>
+                  ))}
+                  {branches.length > 4 && (
+                    <span className="max-sm:hidden">
+                      <MorePeople branches={branches.slice(3)} label={`${branches.length - 3} more`} nameOf={nameOf} faceOf={faceOf}
                         onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
                     </span>
-                  </>
-                )}
-          </DialogDescription>
-        </DialogHeader>
+                  )}
+                  {/* On a phone, everyone sits behind one menu, so the header stays one line. */}
+                  <span className="sm:hidden">
+                    <MorePeople branches={branches} label={branches.length === 1 ? nameOf(branches[0]!.owner) : `${branches.length} people`} nameOf={nameOf} faceOf={faceOf}
+                      onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
+                  </span>
+                </>
+              )}
+        </div>
 
         {canPublish && rows.length > 0 && (clean.length > 1 || rows.length > MANY_ROWS) && (
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -278,7 +290,7 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
           </div>
         )}
 
-        <div className="-mx-5 min-h-0 flex-1 overflow-y-auto px-5">
+        <div>
           {changes.isPending && <Skeleton className="h-24 w-full" />}
           {shown.length > 0 && (
             <ul className="flex flex-col divide-y overflow-hidden rounded-[14px] well">
@@ -315,22 +327,24 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
           </div>
         )}
 
-        {/* One row at every width: the note takes its own line on a phone, and Schedule shrinks to its icon. */}
-        <DialogFooter className="flex-row flex-wrap items-center justify-end">
+      </main>
+      {/* Stays in reach at the bottom however long the list. One row at every width: the note takes its own line on a phone, and Schedule shrinks to its icon. */}
+      <footer className="sticky bottom-0 z-20 border-t bg-background/95 backdrop-blur-md" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+        <div className="mx-auto flex w-full max-w-3xl flex-row flex-wrap items-center justify-end gap-2 px-4 py-3 md:px-8">
           {(error || reason || undecided > 0) && canPublish && (
             <p className={cn("mr-auto basis-full text-xs sm:basis-auto", error ? "text-destructive" : "text-muted-foreground")}>
               {error ?? reason ?? `${undecided} skipped`}
             </p>
           )}
           {!canPublish ? (
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+            <Button variant="outline" nativeButton={false} render={<Link to={editorPath} />}>Back to the editor</Button>
           ) : scheduling === null ? (
             <>
               <Button variant="ghost" disabled={busy || reason !== null} aria-label="Schedule" className="max-sm:mr-auto max-sm:px-2"
                 onClick={() => setScheduling(toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)))}>
                 <CalendarClockIcon /> <span className="max-sm:hidden">Schedule…</span>
               </Button>
-              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button variant="outline" nativeButton={false} render={<Link to={editorPath} />}>Cancel</Button>
               <Button ref={publishButton} disabled={busy || reason !== null} onClick={() => void publish()}>
                 {busy ? <Spinner /> : <CloudUploadIcon />} Publish{chosen.length ? ` ${counted}` : ""}
               </Button>
@@ -343,9 +357,9 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
               </Button>
             </>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </footer>
+    </div>
   );
 }
 

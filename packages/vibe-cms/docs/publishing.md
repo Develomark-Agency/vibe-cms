@@ -38,7 +38,7 @@ Blocks are matched by a key the CMS gives each one (`_key`), so moving a block s
 
 While a conflict or stale change is selected and unsettled, it fails with `CONFLICT` and `data.conflicts`. Published copies keep only what was left out, now on top of the new version.
 
-In the editor, **Review** (⌘⇧S) saves what's unsaved and lists the changes field by field, with the faces of who made each; nothing goes live until you publish from there. People who can't publish see the same list.
+In the editor, **Review** (⌘⇧S) saves what's unsaved and opens the review page (`/content/<type>/<id>/review`), which lists the changes field by field, with the faces of who made each; nothing goes live until you publish from there. People who can't publish see the same list.
 
 - A clean change is ticked, and shown the way its field needs: short values as old → new, long text as the words that changed (with "Show all"), rich text by its text, files as thumbnails, lists as what was added and removed, blocks as added, removed or moved.
 - A field people changed differently, or that was published differently since, asks once, on its own row: one version (people who made the same one are grouped, most popular first), **Keep live**, **Write my own** for short text, or **Skip for now**. Once chosen, the row says so ("Using Bob's", "Keeping live", "Skipped") with **Change** to reopen it.

@@ -67,7 +67,6 @@ import { confirmLeave } from "./confirm.tsx";
 import { Segmented } from "./segmented.tsx";
 import { ActivityList } from "./activity.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
-import { PublishDialog } from "./publish.tsx";
 import { FieldChangesProvider, useFieldChanges } from "./field-changes.tsx";
 
 export type { DocumentState };
@@ -114,7 +113,6 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const loadedKey = useRef<string | null>(null);
 
@@ -260,7 +258,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
       return;
     }
     if(dirty && !(await save())) return;
-    setPublishOpen(true);
+    navigate(`/content/${type}/${id}/review${location.search}`);
   }
 
   async function action(kind: "unpublish" | "discard") {
@@ -610,7 +608,6 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
 
       {id !== null && (
         <>
-          <PublishDialog open={publishOpen} onOpenChange={setPublishOpen} type={type} id={id} title={title} canPublish={permissions.publish} onDone={applyResult} />
           <ScheduleDialog open={scheduleOpen} onOpenChange={setScheduleOpen} type={type} id={id} status={status} dirty={dirty} onDone={applyResult} onError={handleError} />
           <HistorySheet open={historyOpen} onOpenChange={setHistoryOpen} type={type} id={id} doc={doc.data} onRestore={applyResult} readOnly={readOnly} />
         </>
