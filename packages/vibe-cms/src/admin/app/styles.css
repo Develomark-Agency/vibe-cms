@@ -303,6 +303,8 @@
   [data-shared="bar"] { view-transition-name: page-bar; }
 }
 
+/* Nor does it move: by default the browser would slide it between its two boxes, which differ by a pixel or a scrollbar. */
+::view-transition-group(page-bar) { animation: none; }
 ::view-transition-old(page-bar) { animation: none; opacity: 0; }
 ::view-transition-new(page-bar) { animation: none; }
 

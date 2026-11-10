@@ -10,12 +10,11 @@ import { cn } from "../lib/utils.ts";
 import { ActivityList } from "./activity.tsx";
 import { askConfirm } from "./confirm.tsx";
 import { collectionSchema, displayUser, documentTitle, formatDate, formatRelative, useAdmin } from "./context.tsx";
-import { Delayed } from "./delayed.tsx";
+import { Delayed, useArrival } from "./delayed.tsx";
 import { Field } from "./fields.tsx";
 import { ChangeView, FieldName } from "./publish.tsx";
 import { Link, navigate, useLocation } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
-import { staggerIndex } from "./pages.tsx";
 
 type Tab = "versions" | "activity";
 
@@ -80,6 +79,8 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
   const index = list.findIndex(v => v.ver === selected);
   const previous = index >= 0 ? list[index + 1]?.ver ?? null : null;
   const [whole, setWhole] = useState(false);
+  // Only a switch between the two views animates, not the first showing.
+  const [toggled, setToggled] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const schema = collectionSchema(config, type);
 
@@ -117,14 +118,8 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
   }, [computed]);
   const view = computed ?? last;
   const changes = view?.changes ?? [];
-  // The changes cascade in once, when the page first shows a version; later picks swap in place.
-  const [shown, setShown] = useState(false);
-  useEffect(() => {
-    if(view && !shown) {
-      const timer = setTimeout(() => setShown(true), 600);
-      return () => clearTimeout(timer);
-    }
-  }, [view, shown]);
+  // The panel arrives once, when the list and the first version's changes are both in, not in two waves.
+  const arrival = useArrival(Boolean(view));
 
   async function restore() {
     if(selected === null) return;
@@ -147,16 +142,16 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
     }
   }
 
-  if(versions.isPending) return <Delayed><Skeleton className="h-48 w-full" /></Delayed>;
+  if(versions.isPending || (list.length > 0 && !view)) return <Delayed><Skeleton className="h-48 w-full" /></Delayed>;
   if(!list.length) return <p className="rise-in rounded-[14px] p-8 text-center text-sm text-muted-foreground well">Not published yet. Each publish is kept here.</p>;
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
+    <div className={cn("grid items-start gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]", arrival)}>
       <aside className="lg:sticky lg:top-20">
         {/* Padded inside its scroll box, so the selected version's raised shadow isn't cut off. */}
-        <ul className="stagger -m-1.5 flex flex-col gap-0.5 p-1.5 max-lg:max-h-64 max-lg:overflow-y-auto lg:max-h-[calc(100dvh-10.5rem)] lg:overflow-y-auto">
-          {list.map((v, i) => (
-            <li key={v.ver} style={staggerIndex(i)}>
+        <ul className="-m-1.5 flex flex-col gap-0.5 p-1.5 max-lg:max-h-64 max-lg:overflow-y-auto lg:max-h-[calc(100dvh-10.5rem)] lg:overflow-y-auto">
+          {list.map(v => (
+            <li key={v.ver}>
               <button type="button" onClick={() => setPicked(v.ver)} aria-current={selected === v.ver || undefined}
                 className={cn("flex w-full flex-col rounded-[10px] px-3 py-2 text-left text-sm transition-colors hover:bg-foreground/[0.04]", selected === v.ver && "raised")}>
                 <span className="flex items-center gap-2 font-medium">
@@ -178,8 +173,11 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
               {view ? `Published ${formatDate(view.data.createdAt)} by ${displayUser(view.data.author, session)}` : " "}
             </p>
           </div>
-          <Segmented<"changes" | "whole"> label="Show" value={whole ? "whole" : "changes"} onChange={value => setWhole(value === "whole")}
-            options={[{ value: "changes", label: (view?.previous ?? previous) === null ? "What it set" : `Changes from ${view?.previous ?? previous}` }, { value: "whole", label: "Whole version" }]} />
+          <Segmented<"changes" | "whole"> label="Show" value={whole ? "whole" : "changes"} onChange={value => {
+            setToggled(true);
+            setWhole(value === "whole");
+          }}
+          options={[{ value: "changes", label: (view?.previous ?? previous) === null ? "What it set" : `Changes from ${view?.previous ?? previous}` }, { value: "whole", label: "Whole version" }]} />
           {canRestore && (
             <Button variant="outline" size="sm" disabled={restoring || !current.data} onClick={() => void restore()}>
               {restoring ? <Spinner /> : <RotateCcwIcon />} Restore
@@ -188,7 +186,7 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
         </div>
 
         {/* Changes and the whole version are different views: switching between them arrives like new content. */}
-        {!view ? <Delayed><Skeleton className="h-40 w-full" /></Delayed> : <div key={whole ? "whole" : "changes"} className={cn(shown && "rise-in")}>{
+        {!view ? <Delayed><Skeleton className="h-40 w-full" /></Delayed> : <div key={whole ? "whole" : "changes"} className={cn(toggled && "rise-in")}>{
           whole ? (
             <div className="pointer-events-none flex flex-col gap-6 rounded-[16px] p-5 elevated">
               {Object.entries(schema.shape).map(([key, field]) => (
@@ -198,9 +196,9 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
           ) : !changes.length ? (
             <p className="rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Published with no changes from version {view.previous}.</p>
           ) : (
-            <ul className={cn("flex flex-col divide-y overflow-hidden rounded-[16px] well", !shown && "stagger")}>
-              {changes.map((change, i) => (
-                <li key={change.path} style={staggerIndex(i)} className="flex flex-col gap-1.5 px-4 py-3">
+            <ul className="flex flex-col divide-y overflow-hidden rounded-[16px] well">
+              {changes.map(change => (
+                <li key={change.path} className="flex flex-col gap-1.5 px-4 py-3">
                   <FieldName change={change} />
                   <ChangeView change={change} />
                 </li>
