@@ -50,8 +50,9 @@ export interface McpServer {
 export const CONTENT_INSTRUCTIONS = `Workflow:
 - Call schema_list for the content types and locales, then schema_get for a type before writing its documents: it returns JSON Schema for \`data\`.
 - Content types are defined in the site's code (vibe-cms.config.ts). These tools can't add or change fields; that's a code change (\`npx vibe-cms docs schemas\` in the site's repository).
-- documents_create and documents_update save drafts. Drafts save even when invalid and return \`issues\`; documents_publish (or \`publish: true\`) needs a valid document.
-- documents_update replaces the draft's fields: read the document with documents_get, change what you need, send all of \`data\` back, and pass its updatedAt as baseUpdatedAt so you don't overwrite someone else's edit (that fails with CONFLICT).
+- Each person has their own unpublished copy of a document (yours is the user's). documents_create and documents_update save to it, never to anyone else's or to the live site. They save even when invalid and return \`issues\`; publishing needs a valid document.
+- documents_update replaces your copy's fields: read the document with documents_get, change what you need, send all of \`data\` back, and pass its updatedAt as baseUpdatedAt and its baseVer as baseVer.
+- documents_publish merges everyone's unpublished changes, or the \`branches\` you name. When two people changed the same thing, it fails with CONFLICT and data.conflicts: look at documents_changes and ask the user which to keep before passing \`resolve\`. To publish only your own changes, pass your branch alone (\`publish: true\` on documents_update does this).
 - Media fields take \`{ "asset": "<id>", ...per-usage fields such as alt }\`. Upload with assets_upload first: \`file\` is \`{ name, type?, base64 }\` (type being its MIME type), and the input's own \`type\` and \`field\` (content type and field name) check the file against that field.
 - Reference fields take document IDs; references to any type take \`{ type, id }\`. A referenced document can't be deleted until nothing points at it (documents_references lists what does).
 - Pass \`locale\` to read or write a translation; updating a document in a new locale creates that translation. Each locale is published separately.

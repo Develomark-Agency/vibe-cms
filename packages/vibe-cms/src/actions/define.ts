@@ -66,7 +66,12 @@ export const errorMap = {
       /** Stored values that no longer fit their field (a schema change). */
       mismatches: z.array(z.object({ type: z.string(), id: z.string(), locale: z.string(), path, expected: z.string(), found: z.string() })).optional(),
       /** The unfinished restore in the way. */
-      restoreId: z.string().optional()
+      restoreId: z.string().optional(),
+      /**
+       * Unpublished changes that need a choice before publishing: two people changing the same thing
+       * (`conflict`), or a change to something published since (`stale`). Settle each by its `group`.
+       */
+      conflicts: z.array(z.object({ group: z.string(), status: z.enum(["conflict", "stale"]), owners: z.array(z.string()), paths: z.array(z.string()) })).optional()
     }).optional()
   },
   PAYLOAD_TOO_LARGE: {},

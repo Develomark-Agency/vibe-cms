@@ -18,7 +18,9 @@ import type { D1, R2 } from "./platform.ts";
  * the site as it was.
  */
 
-export const BACKUP_FORMAT = 1;
+export const BACKUP_FORMAT = 2;
+/** Format 1 kept one shared `draft` per document; its drafts restore as their last editor's branch. */
+const READS_FORMATS = new Set([1, 2]);
 
 interface TableSpec {
   table: string,
@@ -32,8 +34,13 @@ interface TableSpec {
 export const BACKUP_TABLES = {
   documents: {
     table: "vibe_documents",
-    columns: ["id", "type", "locale", "draft", "published", "published_ver", "schema_hash", "created_at", "updated_at", "published_at", "updated_by"],
+    columns: ["id", "type", "locale", "published", "published_ver", "schema_hash", "created_at", "updated_at", "published_at", "updated_by"],
     key: ["id", "locale"]
+  },
+  branches: {
+    table: "vibe_branches",
+    columns: ["id", "locale", "owner", "owner_name", "base_ver", "base", "data", "via", "created_at", "updated_at"],
+    key: ["id", "locale", "owner"]
   },
   versions: { table: "vibe_versions", columns: ["id", "locale", "ver", "data", "author", "created_at"], key: ["id", "locale", "ver"] },
   schedules: { table: "vibe_schedules", columns: ["id", "locale", "ver", "action", "run_at", "created_by"], key: ["id", "locale", "action"] },
@@ -240,7 +247,7 @@ export async function check(engine: Engine, snapshot: BackupManifest): Promise<R
   guard(engine, "read");
   const problems: string[] = [];
   const warnings: string[] = [];
-  if(snapshot.format !== BACKUP_FORMAT) problems.push(`This snapshot is format ${snapshot.format}; this site reads format ${BACKUP_FORMAT}. Update vibe-cms on the site.`);
+  if(!READS_FORMATS.has(snapshot.format)) problems.push(`This snapshot is format ${snapshot.format}; this site reads format ${BACKUP_FORMAT}. Update vibe-cms on the site.`);
   const hashes = await typeHashes(engine);
   for(const [type, info] of Object.entries(snapshot.types ?? {})) {
     if(!(type in hashes)) {
@@ -334,12 +341,33 @@ export async function restoreRows(engine: Engine, input: { restoreId: string, ta
   guard(engine, "write");
   await activeRestore(engine, input.restoreId);
   const spec: TableSpec = BACKUP_TABLES[input.table];
-  const values = input.rows.map((row, i) => checkRow(spec, row, i));
+  const rows = input.table === "documents" ? input.rows.map(row => splitDraft(row)) : input.rows.map(row => ({ row, branch: null }));
+  const values = rows.map(({ row }, i) => checkRow(spec, row, i));
+  const legacy = rows.flatMap(({ branch }) => (branch ? [checkRow(BACKUP_TABLES.branches, branch, 0)] : []));
+  if(legacy.length) {
+    const branchSpec: TableSpec = BACKUP_TABLES.branches;
+    const insert = `INSERT OR IGNORE INTO ${staging("branches")} (${branchSpec.columns.join(", ")}) VALUES (${branchSpec.columns.map(() => "?").join(", ")})`;
+    await engine.db.batch(legacy.map(row => engine.db.prepare(insert).bind(...row)));
+  }
   if(input.table === "settings" && values.some(row => row[0] !== "site")) throw new HttpError(400, "settings rows can only be the \"site\" key");
   const sql = `INSERT OR REPLACE INTO ${staging(input.table)} (${spec.columns.join(", ")}) VALUES (${spec.columns.map(() => "?").join(", ")})`;
   if(values.length) await engine.db.batch(values.map(row => engine.db.prepare(sql).bind(...row)));
   const staged = await first<{ n: number }>(engine.db, `SELECT count(*) AS n FROM ${staging(input.table)}`);
   return { written: values.length, staged: staged?.n ?? 0 };
+}
+
+/** A format 1 document row's `draft`, as the branch it becomes when it isn't what's live. */
+function splitDraft(input: unknown): { row: unknown, branch: Record<string, unknown> | null } {
+  if(typeof input !== "object" || input === null || !("draft" in input)) return { row: input, branch: null };
+  const { draft, ...row } = input as Record<string, unknown>;
+  if(draft === row.published || typeof draft !== "string") return { row, branch: null };
+  return {
+    row,
+    branch: {
+      id: row.id, locale: row.locale, owner: row.updated_by ?? "system", owner_name: null, base_ver: row.published_ver ?? null,
+      base: row.published ?? null, data: draft, via: "editor", created_at: row.updated_at, updated_at: row.updated_at
+    }
+  };
 }
 
 const ASSET_KEY = /^assets\/[\w-]{1,80}$/;

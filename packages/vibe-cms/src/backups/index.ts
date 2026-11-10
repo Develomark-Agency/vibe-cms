@@ -279,6 +279,8 @@ export async function restoreSnapshot(options: RunOptions & { path: string, forc
   const order: BackupTable[] = ["assets", "trash", ...BACKUP_TABLE_NAMES.filter(name => name !== "assets" && name !== "trash")];
   for(const table of order) {
     const text = await options.store.readText(`${options.path}/tables/${table}.jsonl`);
+    // Format 1 snapshots had no branches: their documents carry drafts, which the site turns into branches.
+    if(text === null && table === "branches" && manifest.format === 1) continue;
     if(text === null) throw new BackupError(`The snapshot has no ${table} table`);
     const rows = text ? text.split("\n").map(line => JSON.parse(line) as Record<string, unknown>) : [];
     for(let i = 0; i < rows.length || i === 0; i += PAGE) {

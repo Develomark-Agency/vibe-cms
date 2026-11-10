@@ -14,27 +14,28 @@ const searchTable = `CREATE VIRTUAL TABLE IF NOT EXISTS vibe_search USING fts5(
   tokenize = 'unicode61 remove_diacritics 2'
 )`;
 
-/** Expression indexes for every `indexed: true` field, on both the working copy and the published copy. */
+/** Expression indexes for every `indexed: true` field, on the published copy. */
 export function indexStatements(config: AnyConfig): string[] {
   const out: string[] = [];
   for(const [type, collection] of Object.entries(config.schemas as Record<string, Collection>)) {
     for(const path of indexedPaths(collection["~collection"].schema)) {
       const name = `vibe_idx_${type}_${path.join("_")}`.replace(/[^\w]/g, "_");
-      for(const [suffix, column] of [["d", "draft"], ["p", "published"]] as const) {
-        out.push(
-          `CREATE INDEX IF NOT EXISTS ${name}_${suffix} ON vibe_documents (json_extract(${column}, ${jsonPath(path)})) WHERE type = '${type}'`
-        );
-      }
+      out.push(`CREATE INDEX IF NOT EXISTS ${name}_p ON vibe_documents (json_extract(published, ${jsonPath(path)})) WHERE type = '${type}'`);
     }
   }
   return out;
 }
 
-/** A document's title, by its type's title field. */
+/** The newest branch's copy of the document row `row`, as JSON text. */
+function newestBranch(row: string): string {
+  return `(SELECT b.data FROM vibe_branches b WHERE b.id = ${row}.id AND b.locale = ${row}.locale ORDER BY b.updated_at DESC LIMIT 1)`;
+}
+
+/** A document's title, by its type's title field: as it's being edited, else as published. */
 function searchTitle(config: AnyConfig, row: string): string {
   const cases = Object.keys(config.schemas).flatMap(type => {
     const field = titleField(config, type);
-    return field ? [`WHEN '${type}' THEN json_extract(${row}.draft, ${jsonPath([field])})`] : [];
+    return field ? [`WHEN '${type}' THEN COALESCE(json_extract(${newestBranch(row)}, ${jsonPath([field])}), json_extract(${row}.published, ${jsonPath([field])}))`] : [];
   });
   return cases.length ? `CASE ${row}.type ${cases.join(" ")} END` : "NULL";
 }
@@ -53,33 +54,41 @@ function hiddenKeys(schema: AnySchema, prefix = "$"): string[] {
 
 /**
  * A document's readable text whatever its schema: every string with a space in it, anywhere in the
- * draft, blocks and rich text included, except in hidden fields. Ids, slugs, paths, URLs and option
- * values have no spaces.
+ * live copy or anyone's branch, blocks and rich text included, except in hidden fields. Ids, slugs,
+ * paths, URLs and option values have no spaces.
  */
 function searchBody(config: AnyConfig, row: string): string {
   const hidden = Object.entries(config.schemas as Record<string, Collection>).flatMap(([type, collection]) => {
     const keys = [...new Set(hiddenKeys(collection["~collection"].schema))];
     return keys.length ? [`(${row}.type = '${type}' AND (${keys.map(key => `fullkey GLOB '${key}' OR fullkey GLOB '${key}[.[]*'`).join(" OR ")}))`] : [];
   });
-  return `(SELECT group_concat(value, ' ') FROM json_tree(${row}.draft)
+  const copies = `(SELECT ${row}.published AS copy WHERE ${row}.published IS NOT NULL
+    UNION ALL SELECT b.data FROM vibe_branches b WHERE b.id = ${row}.id AND b.locale = ${row}.locale)`;
+  return `(SELECT group_concat(value, ' ') FROM ${copies} AS copies, json_tree(copies.copy)
     WHERE type = 'text' AND instr(trim(value), ' ') > 0
       AND value NOT LIKE 'http%' AND value NOT LIKE '/%' AND value NOT LIKE 'data:%'${hidden.length ? `
       AND NOT (${hidden.join(" OR ")})` : ""})`;
 }
 
-/** The triggers that keep `vibe_search` in step with `vibe_documents`. They depend on each type's title field. */
+/**
+ * The triggers that keep `vibe_search` in step with documents and their branches: one row per document
+ * and locale. They depend on each type's title field.
+ */
 export function searchTriggers(config: AnyConfig): string[] {
-  function insert(row: string) {
-    return `INSERT INTO vibe_search (id, locale, type, title, body) VALUES (${row}.id, ${row}.locale, ${row}.type, ${searchTitle(config, row)}, ${searchBody(config, row)});`;
+  function refresh(id: string, locale: string) {
+    return `DELETE FROM vibe_search WHERE id = ${id} AND locale = ${locale};
+      INSERT INTO vibe_search (id, locale, type, title, body)
+        SELECT d.id, d.locale, d.type, ${searchTitle(config, "d")}, ${searchBody(config, "d")} FROM vibe_documents d WHERE d.id = ${id} AND d.locale = ${locale};`;
   }
-  const remove = "DELETE FROM vibe_search WHERE id = OLD.id AND locale = OLD.locale;";
+  const names = ["insert", "update", "delete", "branch_insert", "branch_update", "branch_delete"];
   return [
-    "DROP TRIGGER IF EXISTS vibe_search_insert",
-    "DROP TRIGGER IF EXISTS vibe_search_update",
-    "DROP TRIGGER IF EXISTS vibe_search_delete",
-    `CREATE TRIGGER vibe_search_insert AFTER INSERT ON vibe_documents BEGIN ${insert("NEW")} END`,
-    `CREATE TRIGGER vibe_search_update AFTER UPDATE OF draft, type ON vibe_documents BEGIN ${remove} ${insert("NEW")} END`,
-    `CREATE TRIGGER vibe_search_delete AFTER DELETE ON vibe_documents BEGIN ${remove} END`
+    ...names.map(name => `DROP TRIGGER IF EXISTS vibe_search_${name}`),
+    `CREATE TRIGGER vibe_search_insert AFTER INSERT ON vibe_documents BEGIN ${refresh("NEW.id", "NEW.locale")} END`,
+    `CREATE TRIGGER vibe_search_update AFTER UPDATE OF published, type ON vibe_documents BEGIN ${refresh("NEW.id", "NEW.locale")} END`,
+    "CREATE TRIGGER vibe_search_delete AFTER DELETE ON vibe_documents BEGIN DELETE FROM vibe_search WHERE id = OLD.id AND locale = OLD.locale; END",
+    `CREATE TRIGGER vibe_search_branch_insert AFTER INSERT ON vibe_branches BEGIN ${refresh("NEW.id", "NEW.locale")} END`,
+    `CREATE TRIGGER vibe_search_branch_update AFTER UPDATE OF data ON vibe_branches BEGIN ${refresh("NEW.id", "NEW.locale")} END`,
+    `CREATE TRIGGER vibe_search_branch_delete AFTER DELETE ON vibe_branches BEGIN ${refresh("OLD.id", "OLD.locale")} END`
   ];
 }
 
@@ -106,6 +115,9 @@ function indexedPaths(schema: ObjectSchema, prefix: string[] = []): string[][] {
  * statement is idempotent, so concurrent isolates are harmless.
  */
 export async function migrate(db: D1, config: AnyConfig): Promise<void> {
+  // Indexes on the old shared draft column (`…_d`), which a migration drops: they'd block it.
+  const stale = await all<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'vibe_idx_%' AND sql LIKE '%json_extract(draft,%'");
+  if(stale.length) await db.batch(stale.map(row => db.prepare(`DROP INDEX IF EXISTS "${row.name}"`)));
   await runMigrations(db, migrations, "vibe_migrations");
   await db.batch([searchTable, ...indexStatements(config)].map(sql => db.prepare(sql)));
   // The search triggers change when a title field does; reinstall them and reindex, once per change.

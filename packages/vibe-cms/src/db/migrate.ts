@@ -9,7 +9,8 @@ export interface Migration {
 /**
  * Applies the migrations that haven't run, in order, and records each in `table`. Generated SQL is
  * written with `IF NOT EXISTS`, so a database made before migrations existed takes the first one as a
- * no-op. Concurrent isolates may both apply one; each statement is safe to repeat.
+ * no-op. Concurrent isolates may both apply one: statements are safe to repeat, or the migration
+ * fails as a whole for the one that came second, which then sees it recorded.
  */
 export async function runMigrations(d1: D1, migrations: readonly Migration[], table: string): Promise<void> {
   await d1.prepare(`CREATE TABLE IF NOT EXISTS ${table} (tag TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`).run();
@@ -17,9 +18,15 @@ export async function runMigrations(d1: D1, migrations: readonly Migration[], ta
   const done = new Set((results as Array<{ tag: string }>).map(row => row.tag));
   for(const migration of migrations) {
     if(done.has(migration.tag)) continue;
-    await d1.batch([
-      ...migration.statements.map(sql => d1.prepare(sql)),
-      d1.prepare(`INSERT OR IGNORE INTO ${table} (tag, applied_at) VALUES (?, ?)`).bind(migration.tag, Date.now())
-    ]);
+    try {
+      await d1.batch([
+        ...migration.statements.map(sql => d1.prepare(sql)),
+        d1.prepare(`INSERT OR IGNORE INTO ${table} (tag, applied_at) VALUES (?, ?)`).bind(migration.tag, Date.now())
+      ]);
+    } catch (error) {
+      // A statement that can't repeat (dropping a column) fails when another isolate got there first.
+      const applied = await d1.prepare(`SELECT 1 FROM ${table} WHERE tag = ?`).bind(migration.tag).first();
+      if(!applied) throw error;
+    }
   }
 }

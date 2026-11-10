@@ -275,8 +275,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
 
   function client(env: E): QueryClient<C> {
     return createQueryClient<C>(async queries => {
-      const engine = new Engine(await state(env), { origin: "", session: null, trusted: true });
       const preview = previewScope.getStore();
+      const engine = new Engine(await state(env), { origin: "", session: null, trusted: true, reader: preview?.session.sub });
       if(!preview) return engine.execute(queries);
       const results = await engine.execute(queries.map(query => (can(engine.state, preview.session, { action: "read", type: query.type }) ? { ...query, drafts: true } : query)));
       recordSources(schemas, preview.sources, queries.map(query => query.type), results);

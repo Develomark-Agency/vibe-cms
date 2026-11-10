@@ -71,6 +71,10 @@ export function isKeyedList(schema: AnySchema): boolean {
   return options.length > 0 && options.every(o => o.type === "object" && ITEM_KEY in (o as ObjectSchema).shape);
 }
 
+function isSystemField(schema: AnySchema): boolean {
+  return Boolean(schema.hidden || schema.readOnly || unwrap(schema).hidden || unwrap(schema).readOnly);
+}
+
 const SIMPLE = new Set(["text", "number", "boolean", "date", "enum", "literal", "ref", "asset"]);
 
 function detailOf(schema: AnySchema): Detail {
@@ -163,7 +167,8 @@ function walk(schema: AnySchema, before: unknown, after: unknown, segments: Segm
 
   if(!s.widget && s.type === "object" && isRecord(before) && isRecord(after)) {
     for(const [key, field] of Object.entries((s as ObjectSchema).shape)) {
-      if(key === ITEM_KEY) continue;
+      // Hidden and read-only fields are the system's: plugins derive them again when publishing.
+      if(key === ITEM_KEY || isSystemField(field)) continue;
       walk(field, before[key], after[key], [...segments, key], [...label, field.label ?? humanize(key)], out);
     }
     return;
@@ -331,7 +336,14 @@ function collides(a: Change, b: Change): boolean {
     return other.kind === "remove" && other.path === move.path;
   }
   // The same edit made twice isn't a conflict.
-  return !(a.path === b.path && a.kind === b.kind && deepEqual(a.after, b.after));
+  if(a.path === b.path && a.kind === b.kind && deepEqual(a.after, b.after)) return false;
+  // Nor is an edit made on top of the other (someone building on a copy that isn't published yet).
+  const [outer, inner] = a.segments.length <= b.segments.length ? [a, b] : [b, a];
+  if(outer.segments.length < inner.segments.length && outer.kind !== "remove" && inner.kind === "set") {
+    const underneath = getAt(outer.after, inner.segments.slice(outer.segments.length));
+    if(deepEqual(underneath, inner.before)) return false;
+  }
+  return true;
 }
 
 /** Whether live still holds what the branch changed from. */
@@ -411,6 +423,8 @@ export interface MergeResult {
   unresolved: Array<{ group: string, status: "stale" | "conflict", changes: Array<{ owner: string, change: CheckedChange }> }>,
   /** Owner → the branch's data after publishing: what's left pending, on top of the new live. `null` when nothing is. */
   rebased: Map<string, unknown | null>,
+  /** Owner → the changes left pending, for `rebase` onto what was finally published. */
+  pending: Map<string, Change[]>,
   /** Owner → the paths that went live (or were settled against). */
   published: Map<string, string[]>
 }
@@ -422,10 +436,11 @@ export function merge(schema: AnySchema, live: unknown, input: MergeInput): Merg
   const checked = check(schema, live, input.branches, (owner, path) => !skipped(owner, path));
   const unresolved = new Map<string, MergeResult["unresolved"][number]>();
   const resolutions = input.resolve ?? new Map();
-  let data = structuredClone(live ?? emptyLike(input.branches[0]?.data));
   const published = new Map<string, string[]>();
   const pending = new Map<string, Change[]>();
   const typed = new Set<string>();
+  // Applied outermost first, so an edit inside something another branch adds lands in it.
+  const apply: Array<{ change: Change, branch: unknown }> = [];
 
   for(const branch of input.branches) {
     const changes = checked.get(branch.owner)!;
@@ -439,7 +454,7 @@ export function merge(schema: AnySchema, live: unknown, input: MergeInput): Merg
       published.get(branch.owner)!.push(change.path);
       if(change.status === "live") continue;
       if(change.status === "clean") {
-        data = applyChange(data, change, branch.data) ?? data;
+        apply.push({ change, branch: branch.data });
         continue;
       }
       const group = change.group!;
@@ -454,22 +469,27 @@ export function merge(schema: AnySchema, live: unknown, input: MergeInput): Merg
       if("value" in resolution) {
         if(!typed.has(group)) {
           typed.add(group);
-          data = applyChange(data, { ...change, kind: "set", segments: segmentsOf(change, group), after: resolution.value }, branch.data) ?? data;
+          apply.push({ change: { ...change, kind: "set", segments: segmentsOf(change, group), after: resolution.value }, branch: branch.data });
         }
         continue;
       }
-      if(resolution.use === branch.owner) data = applyChange(data, change, branch.data) ?? data;
+      if(resolution.use === branch.owner) apply.push({ change, branch: branch.data });
     }
   }
+  let data = structuredClone(live ?? emptyLike(input.branches[0]?.data));
+  apply.sort((a, b) => a.change.segments.length - b.change.segments.length);
+  for(const { change, branch } of apply) data = applyChange(data, change, branch) ?? data;
 
   const rebased = new Map<string, unknown | null>();
-  for(const branch of input.branches) {
-    const left = pending.get(branch.owner)!;
-    let next = structuredClone(data);
-    for(const change of left) next = applyChange(next, change, branch.data) ?? next;
-    rebased.set(branch.owner, left.length && !deepEqual(next, data) ? next : null);
-  }
-  return { data, unresolved: [...unresolved.values()], rebased, published };
+  for(const branch of input.branches) rebased.set(branch.owner, rebase(data, pending.get(branch.owner)!, branch.data));
+  return { data, unresolved: [...unresolved.values()], rebased, pending, published };
+}
+
+/** A branch's pending changes on top of a new live copy, or `null` when that leaves nothing to publish. */
+export function rebase(live: unknown, changes: Change[], branch: unknown): unknown | null {
+  let next = structuredClone(live);
+  for(const change of changes) next = applyChange(next, change, branch) ?? next;
+  return changes.length && !deepEqual(next, live) ? next : null;
 }
 
 /** The segments of a group path, taken from a change inside it. */

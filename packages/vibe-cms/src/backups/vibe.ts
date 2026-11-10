@@ -185,7 +185,11 @@ export async function packSnapshot(store: BackupStore, path: string): Promise<Re
     }
     yield await small("manifest.json", `${path}/manifest.json`);
     yield await small("complete.json", `${path}/complete.json`);
-    for(const table of BACKUP_TABLE_NAMES) yield await small(`tables/${table}.jsonl`, `${path}/tables/${table}.jsonl`);
+    for(const table of BACKUP_TABLE_NAMES) {
+      // Format 1 snapshots have no branches table.
+      if(table === "branches" && await store.readText(`${path}/tables/${table}.jsonl`) === null) continue;
+      yield await small(`tables/${table}.jsonl`, `${path}/tables/${table}.jsonl`);
+    }
     const files = await small("files.json", `${path}/files.json`);
     yield files;
     for(const file of JSON.parse(decoder.decode(files.body)) as SnapshotFile[]) {

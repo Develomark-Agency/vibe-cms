@@ -266,7 +266,11 @@ describe("search", () => {
     // Slugs and option values aren't prose, so they aren't indexed.
     expect(await search("boxes default")).toEqual([]);
 
+    // Search covers what's live and what's being edited, so the old title matches until the new one is published.
     await t.api(`/api/documents/post/${faq.id}`, { method: "PUT", json: { data: { ...faq.draft, title: "Questions" }, baseUpdatedAt: faq.updatedAt } });
+    expect((await search("questi")).map(r => r.id)).toEqual([faq.id]);
+    expect((await search("faq")).map(r => r.id)).toEqual([faq.id, boxes.id]);
+    await t.api("/api/actions/documents.publish", { method: "POST", json: { type: "post", id: faq.id } });
     expect((await search("faq")).map(r => r.id)).toEqual([boxes.id]);
     await t.api(`/api/documents/post/${boxes.id}`, { method: "DELETE" });
     expect(await search("wardrobe")).toEqual([]);

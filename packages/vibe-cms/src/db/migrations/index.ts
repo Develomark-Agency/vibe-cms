@@ -46,5 +46,16 @@ export const migrations: Migration[] = [
       "CREATE INDEX IF NOT EXISTS `vibe_activity_actor` ON `vibe_activity` (`actor`,`at`);",
       "CREATE INDEX IF NOT EXISTS `vibe_activity_target` ON `vibe_activity` (`target_id`,`at`);"
     ]
+  },
+  {
+    tag: "0003_brave_old_lace",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS `vibe_branches` (\n\t`id` text NOT NULL,\n\t`locale` text NOT NULL,\n\t`owner` text NOT NULL,\n\t`owner_name` text,\n\t`base_ver` integer,\n\t`base` text,\n\t`data` text NOT NULL,\n\t`via` text NOT NULL,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`id`, `locale`, `owner`)\n);",
+      "-- Unpublished drafts become their last editor's branch, started from the live copy.\nINSERT OR IGNORE INTO `vibe_branches` (`id`, `locale`, `owner`, `owner_name`, `base_ver`, `base`, `data`, `via`, `created_at`, `updated_at`)\nSELECT `id`, `locale`, COALESCE(`updated_by`, 'system'), NULL, `published_ver`, `published`, `draft`, 'editor', `updated_at`, `updated_at`\nFROM `vibe_documents` WHERE `published` IS NULL OR `published` != `draft`;",
+      "-- The search triggers read the draft; `migrate()` reinstalls them over branches.\nDROP TRIGGER IF EXISTS `vibe_search_insert`;",
+      "DROP TRIGGER IF EXISTS `vibe_search_update`;",
+      "DROP TRIGGER IF EXISTS `vibe_search_delete`;",
+      "ALTER TABLE `vibe_documents` DROP COLUMN `draft`;"
+    ]
   }
 ];

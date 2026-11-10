@@ -24,7 +24,8 @@ import { detectFavicon, type SiteFetch } from "./favicon.ts";
 import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { createDb } from "../db/client.ts";
-import { assets, documents, folders, meta, schedules, trash, versions, type AssetRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "../db/schema.ts";
+import { assets, branches, documents, folders, meta, schedules, trash, versions, type AssetRow, type BranchRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "../db/schema.ts";
+import { assignKeys, check, deepEqual, merge, rebase, type Branch, type CheckedChange, type Resolution } from "../changes/index.ts";
 import { all, first, getMeta, newId } from "./db.ts";
 import type { D1, ExecutionContext, ImagesBinding, R2 } from "./platform.ts";
 import { serveTransformed, type ImageHealth } from "./images.ts";
@@ -73,6 +74,8 @@ export interface RequestScope {
   session: Session | null,
   /** In-process callers (site code, server plugins) may read drafts without a session. */
   trusted: boolean,
+  /** Whose unpublished changes draft reads show, when it isn't the session's: the editor behind a preview. */
+  reader?: string,
   ctx?: ExecutionContext,
   /** The channel this request came through, for the activity log. Defaults to `rest`, or `plugin` for trusted in-process callers. */
   activity?: ActivityScope
@@ -158,18 +161,62 @@ export interface DocumentState {
   locale: string,
   exists: boolean,
   locales: Array<{ locale: string, status: "draft" | "published" | "changed", updatedAt: string }>,
+  /** Your working copy: your branch, else the live copy, else (before the first publish) the newest branch. */
   draft: DocumentData | null,
   published: DocumentData | null,
   status: "draft" | "published" | "changed" | null,
   publishedVer: number | null,
+  /** The published version your copy started from. Pass it back as `baseVer` with your first save. */
+  baseVer: number | null,
+  /** Whether you have unpublished changes of your own. */
+  mine: boolean,
+  /** Everyone with unpublished changes, you included, newest first. */
+  pending: PendingBranch[],
   createdAt: string | null,
+  /** When you last saved your branch, 0 when you have none. Pass it back as `baseUpdatedAt`. */
   updatedAt: number | null,
+  /** The last save to anyone's branch, or the last publish. */
+  editedAt: string | null,
   updatedBy: string | null,
   publishedAt: string | null,
   schedules: Array<{ action: "publish" | "unpublish", runAt: string, ver: number | null, createdBy: string }>,
   fallback: DocumentData | null,
   issues?: Issue[]
 }
+
+/** Someone's unpublished changes to a document. */
+export interface PendingBranch {
+  owner: string,
+  name: string | null,
+  /** Where their last save came from: `editor`, `mcp`, `cli`, `rest`… */
+  via: string,
+  updatedAt: string
+}
+
+/** One person's branch with its changes, as the publish screen shows it. */
+export interface BranchChanges extends PendingBranch {
+  mine: boolean,
+  createdAt: string,
+  baseVer: number | null,
+  /** What the branch started from and what it holds, for working out conflicts as the selection changes. */
+  base: DocumentData | null,
+  data: DocumentData,
+  /** Its changes against live, all selected. Ones live already has are left out. */
+  changes: CheckedChange[]
+}
+
+/** What to publish: whose branches (all when omitted), which of their changes to leave pending, and how to settle conflicts. */
+export interface PublishSelection {
+  branches?: string[],
+  skip?: Array<{ owner: string, path: string }>,
+  resolve?: Array<{ group: string, use?: string, value?: unknown }>
+}
+
+/** A document row with the copy this reader edits (`draft`) and whether anyone has unpublished changes. */
+type WorkingRow = DocumentRow & { draft: string | null, pending: number };
+
+/** A trashed document row: its branches travel with it. Older entries carry a `draft` instead. */
+type TrashedDocument = DocumentRow & { branches?: BranchRow[], draft?: string };
 
 /** A file in the media library, as the API returns it. */
 export interface Asset {
@@ -241,9 +288,29 @@ function iso(ms: number | null): string | null {
   return ms === null ? null : new Date(ms).toISOString();
 }
 
-export function documentStatus(row: Pick<DocumentRow, "draft" | "published">): DocumentMeta["status"] {
+export function documentStatus(row: { published: string | null, pending?: number | boolean }): DocumentMeta["status"] {
   if(row.published === null) return "draft";
-  return row.published === row.draft ? "published" : "changed";
+  return row.pending ? "changed" : "published";
+}
+
+/** A branch row as the merge sees it. */
+function toBranch(row: BranchRow): Branch {
+  return { owner: row.owner, base: row.base === null ? null : JSON.parse(row.base), data: JSON.parse(row.data) };
+}
+
+/** SQL for a document row's columns plus `draft`, the copy the bound reader edits, and `pending`. Binds the reader. */
+function workingColumns(alias = "d"): string {
+  const branch = `FROM vibe_branches b WHERE b.id = ${alias}.id AND b.locale = ${alias}.locale`;
+  return `${alias}.*, COALESCE((SELECT b.data ${branch} AND b.owner = ?), ${alias}.published, (SELECT b.data ${branch} ORDER BY b.updated_at DESC LIMIT 1)) AS draft,
+    EXISTS (SELECT 1 ${branch}) AS pending`;
+}
+
+/** Matches a document whose live copy or any branch contains `pattern` (a LIKE pattern). */
+function mentions(pattern: string): SQL {
+  return or(
+    like(documents.published, pattern),
+    sql`EXISTS (SELECT 1 FROM vibe_branches b WHERE b.id = ${documents.id} AND b.locale = ${documents.locale} AND b.data LIKE ${pattern})`
+  )!;
 }
 
 export class Engine {
@@ -288,6 +355,16 @@ export class Engine {
 
   get db() {
     return this.state.db;
+  }
+
+  /** Whose branch this request reads and saves to: the person, or `system` for in-process callers. */
+  private get owner(): string {
+    return this.scope.session?.sub ?? "system";
+  }
+
+  /** Whose changes draft reads show: theirs, else live, else (never published) the newest branch. */
+  private get reader(): string {
+    return this.scope.reader ?? this.owner;
   }
 
   /** The typed query builder over the site's D1. */
@@ -363,12 +440,12 @@ export class Engine {
   private source(type: string, locale: string, drafts: boolean): { sql: string, params: unknown[] } {
     const published = drafts ? "" : " AND d.published IS NOT NULL";
     if(locale === this.defaultLocale) {
-      return { sql: `(SELECT d.* FROM vibe_documents d WHERE d.type = ? AND d.locale = ?${published})`, params: [type, locale] };
+      return { sql: `(SELECT ${workingColumns()} FROM vibe_documents d WHERE d.type = ? AND d.locale = ?${published})`, params: [this.reader, type, locale] };
     }
     return {
-      sql: `(SELECT * FROM (SELECT d.*, ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY CASE d.locale WHEN ? THEN 0 ELSE 1 END) AS rn
+      sql: `(SELECT * FROM (SELECT ${workingColumns()}, ROW_NUMBER() OVER (PARTITION BY d.id ORDER BY CASE d.locale WHEN ? THEN 0 ELSE 1 END) AS rn
         FROM vibe_documents d WHERE d.type = ? AND d.locale IN (?, ?)${published}) WHERE rn = 1)`,
-      params: [locale, type, locale, this.defaultLocale]
+      params: [this.reader, locale, type, locale, this.defaultLocale]
     };
   }
 
@@ -391,9 +468,9 @@ export class Engine {
     const where = sql.where(args.where);
     const order = sql.orderBy(args.orderBy, "c.updated_at DESC");
     const limit = Math.min(Math.max(args.limit ?? 100, 0), 1000);
-    const rows = await all<DocumentRow>(
+    const rows = await all<WorkingRow>(
       this.db,
-      `SELECT c.id, c.type, c.locale, c.draft, c.published, c.created_at, c.updated_at, c.published_at
+      `SELECT c.id, c.type, c.locale, c.draft, c.published, c.pending, c.created_at, c.updated_at, c.published_at
        FROM ${source.sql} c WHERE ${where} ORDER BY ${order}, c.id LIMIT ? OFFSET ?`,
       [...source.params, ...sql.params, limit, Math.max(args.offset ?? 0, 0)]
     );
@@ -414,7 +491,7 @@ export class Engine {
     return docs;
   }
 
-  private toDoc(row: DocumentRow, drafts: boolean): Doc {
+  private toDoc(row: WorkingRow, drafts: boolean): Doc {
     const data = JSON.parse((drafts ? row.draft : row.published) ?? "{}") as DocumentData;
     return {
       ...data,
@@ -577,31 +654,48 @@ export class Engine {
     return (await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.locale, locale))).limit(1))[0] ?? null;
   }
 
+  /** Every locale of a document, with this reader's working copy. */
+  private async workingRows(id: string): Promise<WorkingRow[]> {
+    return all<WorkingRow>(this.db, `SELECT ${workingColumns()} FROM vibe_documents d WHERE d.id = ?`, [this.owner, id]);
+  }
+
+  /** A document's branches in one locale, most recently saved first. */
+  private async branchRows(id: string, locale: string): Promise<BranchRow[]> {
+    return this.orm.select().from(branches).where(and(eq(branches.id, id), eq(branches.locale, locale))).orderBy(desc(branches.updated_at));
+  }
+
   /** The full editing state of one document in one locale. */
   async getDocument(type: string, id: string, localeInput?: string): Promise<DocumentState> {
     const locale = this.locale(localeInput);
     require(this.state, this.scope.session, { action: "read", type });
-    const rows = await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.type, type)));
+    const rows = (await this.workingRows(id)).filter(r => r.type === type);
     if(rows.length === 0) throw new HttpError(404, "Document not found");
     const row = rows.find(r => r.locale === locale);
-    const pending = await this.orm.select().from(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale)));
+    const scheduled = await this.orm.select().from(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale)));
+    const open = row ? await this.branchRows(id, locale) : [];
+    const own = open.find(b => b.owner === this.owner);
+    const fallback = rows.find(r => r.locale === this.defaultLocale) ?? rows[0]!;
     return {
       id,
       type,
       locale,
       exists: Boolean(row),
       locales: rows.map(r => ({ locale: r.locale, status: documentStatus(r), updatedAt: iso(r.updated_at)! })),
-      draft: row ? JSON.parse(row.draft) : null,
+      draft: row?.draft ? JSON.parse(row.draft) : null,
       published: row?.published ? JSON.parse(row.published) : null,
       status: row ? documentStatus(row) : null,
       publishedVer: row?.published_ver ?? null,
+      baseVer: own ? own.base_ver : row?.published_ver ?? null,
+      mine: Boolean(own),
+      pending: open.map(b => ({ owner: b.owner, name: b.owner_name, via: b.via, updatedAt: iso(b.updated_at)! })),
       createdAt: iso(row?.created_at ?? null),
-      updatedAt: row?.updated_at ?? null,
+      updatedAt: row ? own?.updated_at ?? 0 : null,
+      editedAt: iso(row?.updated_at ?? null),
       updatedBy: row?.updated_by ?? null,
       publishedAt: iso(row?.published_at ?? null),
-      schedules: pending.map(s => ({ action: s.action, runAt: iso(s.run_at)!, ver: s.ver, createdBy: s.created_by })),
+      schedules: scheduled.map(s => ({ action: s.action, runAt: iso(s.run_at)!, ver: s.ver, createdBy: s.created_by })),
       // Lets a translator start from the default locale's copy.
-      fallback: row ? null : JSON.parse((rows.find(r => r.locale === this.defaultLocale) ?? rows[0]!).draft)
+      fallback: row ? null : JSON.parse(fallback.draft ?? "{}")
     };
   }
 
@@ -668,12 +762,18 @@ export class Engine {
     };
   }
 
+  /**
+   * Saves to the caller's branch: their candidate for publishing. A branch that ends up the same as live
+   * is removed, since it has nothing to publish. `baseVer` is the published version the data started
+   * from, when the caller has no branch yet; the current one when omitted.
+   */
   async save(input: {
     type: string,
     id?: string,
     locale?: string,
     data: unknown,
     baseUpdatedAt?: number,
+    baseVer?: number | null,
     publish?: boolean
   }) {
     const schema = getSchema(this.config, input.type);
@@ -688,29 +788,63 @@ export class Engine {
       const other = (await this.orm.select({ type: documents.type }).from(documents).where(eq(documents.id, id)).limit(1))[0];
       if(other && other.type !== input.type) throw new HttpError(409, "Document ID belongs to another type");
     }
-    if(existing && input.baseUpdatedAt !== undefined && existing.updated_at !== input.baseUpdatedAt) {
-      throw new HttpError(409, "This document was changed by someone else. Reload to see their changes.", {
-        updatedAt: existing.updated_at,
-        updatedBy: existing.updated_by
+    const open = existing ? await this.branchRows(id, locale) : [];
+    const own = open.find(b => b.owner === this.owner);
+    // Only you write your branch, so this catches your own other tab, or an agent working as you.
+    if(existing && input.baseUpdatedAt !== undefined && (own?.updated_at ?? 0) !== input.baseUpdatedAt) {
+      throw new HttpError(409, "You saved this document somewhere else since you opened it. Reload to see that version.", {
+        updatedAt: own?.updated_at ?? 0,
+        updatedBy: this.owner
       });
     }
     const action: WriteAction = existing ? "update" : "create";
     const { doc, issues } = await this.prepare(schema, input.type, id, locale, action, input.data, session);
     if(input.publish && issues.length) throw new HttpError(422, "Validation failed", { issues });
+    assignKeys(schema, doc, () => newId("blk"));
     // Strictly increasing, so `baseUpdatedAt` always detects a concurrent edit.
-    const now = Math.max(Date.now(), (existing?.updated_at ?? 0) + 1);
-    const draft = JSON.stringify(doc);
+    const now = Math.max(Date.now(), (existing?.updated_at ?? 0) + 1, (own?.updated_at ?? 0) + 1);
+    const data = JSON.stringify(doc);
     const updatedBy = session?.sub ?? null;
-    this.note({ id, locale, fields: changedFields(existing ? JSON.parse(existing.draft) as DocumentData : {}, doc) });
-    await this.orm.insert(documents)
-      .values({ id, type: input.type, locale, draft, schema_hash: this.state.schemaHash, created_at: now, updated_at: now, updated_by: updatedBy })
-      .onConflictDoUpdate({
-        target: [documents.id, documents.locale],
-        set: { draft, schema_hash: this.state.schemaHash, updated_at: now, updated_by: updatedBy }
-      });
+    const base = own ? { ver: own.base_ver, data: own.base } : await this.branchBase(existing, open, input.baseVer);
+    const previous = own?.data ?? base.data;
+    this.note({ id, locale, fields: changedFields(previous ? JSON.parse(previous) as DocumentData : {}, doc) });
+    const ownBranch = and(eq(branches.id, id), eq(branches.locale, locale), eq(branches.owner, this.owner));
+    await this.batch([
+      existing
+        ? this.orm.update(documents).set({ schema_hash: this.state.schemaHash, updated_at: now, updated_by: updatedBy })
+          .where(and(eq(documents.id, id), eq(documents.locale, locale)))
+        : this.orm.insert(documents).values({ id, type: input.type, locale, schema_hash: this.state.schemaHash, created_at: now, updated_at: now, updated_by: updatedBy }),
+      existing?.published && deepEqual(doc, JSON.parse(existing.published))
+        ? this.orm.delete(branches).where(ownBranch)
+        : this.orm.insert(branches)
+          .values({ id, locale, owner: this.owner, owner_name: this.ownerName, base_ver: base.ver, base: base.data, data, via: this.activityScope.via, created_at: now, updated_at: now })
+          .onConflictDoUpdate({
+            target: [branches.id, branches.locale, branches.owner],
+            set: { data, owner_name: this.ownerName, via: this.activityScope.via, updated_at: now }
+          })
+    ]);
     this.afterWrite({ type: input.type, id, locale, action, valid: issues.length === 0, doc });
-    if(input.publish) return this.publish(input.type, id, locale);
+    if(input.publish) return this.publish(input.type, id, locale, { branches: [this.owner] });
     return { ...(await this.getDocument(input.type, id, locale)), issues };
+  }
+
+  private get ownerName(): string | null {
+    return this.scope.session?.name ?? this.scope.session?.email ?? null;
+  }
+
+  /**
+   * Where a new branch starts: the published version the caller read (`baseVer`), else the live copy.
+   * Before the first publish, the newest branch, so people build on what's there.
+   */
+  private async branchBase(existing: DocumentRow | null, open: BranchRow[], baseVer: number | null | undefined): Promise<{ ver: number | null, data: string | null }> {
+    if(!existing) return { ver: null, data: null };
+    if(existing.published === null) return { ver: null, data: open[0]?.data ?? null };
+    if(typeof baseVer === "number" && baseVer !== existing.published_ver) {
+      const read = (await this.orm.select({ data: versions.data }).from(versions)
+        .where(and(eq(versions.id, existing.id), eq(versions.locale, existing.locale), eq(versions.ver, baseVer))).limit(1))[0];
+      if(read) return { ver: baseVer, data: read.data };
+    }
+    return { ver: existing.published_ver, data: existing.published };
   }
 
   /**
@@ -757,7 +891,7 @@ export class Engine {
     return { doc: result.value, issues };
   }
 
-  /** `unique: true` text fields: no other document of the type has the value in this locale, as a draft or published. */
+  /** `unique: true` text fields: no other document of the type has the value in this locale, live or on anyone's branch. */
   private async checkUnique(schema: ObjectSchema, type: string, id: string, locale: string, doc: DocumentData): Promise<Issue[]> {
     const issues: Issue[] = [];
     for(const [key, field] of Object.entries(schema.shape)) {
@@ -772,8 +906,8 @@ export class Engine {
         eq(documents.locale, locale),
         ne(documents.id, id),
         or(
-          sql`json_extract(${documents.draft}, ${sql.raw(path)}) = ${value}`,
-          sql`json_extract(${documents.published}, ${sql.raw(path)}) = ${value}`
+          sql`json_extract(${documents.published}, ${sql.raw(path)}) = ${value}`,
+          sql`EXISTS (SELECT 1 FROM vibe_branches b WHERE b.id = ${documents.id} AND b.locale = ${documents.locale} AND json_extract(b.data, ${sql.raw(path)}) = ${value})`
         )
       )).limit(1))[0];
       if(taken) issues.push({ path: [key], message: `Another document already uses “${value}”` });
@@ -819,24 +953,133 @@ export class Engine {
     return issues;
   }
 
-  async publish(type: string, id: string, localeInput?: string) {
+  /**
+   * Merges branches into a new live version: every branch's changes unless `selection` narrows it. Fails
+   * with 409 and the `conflicts` while two of them change the same thing, or one changes something
+   * live has moved on from, until `resolve` settles it. Published branches keep only what was left out.
+   */
+  async publish(type: string, id: string, localeInput?: string, selection: PublishSelection = {}) {
     const locale = this.locale(localeInput);
     const session = this.writer({ action: "publish", type, locale });
     const row = await this.getRow(id, locale);
     if(!row || row.type !== type) throw new HttpError(404, "Document not found");
     const schema = getSchema(this.config, type);
-    const { doc, issues } = await this.prepare(schema, type, id, locale, "publish", JSON.parse(row.draft), session);
+    const open = await this.branchRows(id, locale);
+    const chosen = selection.branches ? open.filter(b => selection.branches!.includes(b.owner)) : open;
+    const live = row.published ? JSON.parse(row.published) as DocumentData : null;
+    if(!chosen.length) {
+      if(!live) throw new HttpError(409, "There's nothing to publish");
+      return { ...(await this.getDocument(type, id, locale)), issues: [] };
+    }
+    const skip = new Map<string, Set<string>>();
+    for(const item of selection.skip ?? []) skip.set(item.owner, (skip.get(item.owner) ?? new Set()).add(item.path));
+    const resolve = new Map<string, Resolution>((selection.resolve ?? []).map(r => [r.group, "value" in r ? { value: r.value } : { use: r.use ?? "live" }]));
+    const result = merge(schema, live, { branches: chosen.map(toBranch), skip, resolve });
+    if(result.unresolved.length) {
+      const conflicting = result.unresolved.some(u => u.status === "conflict");
+      throw new HttpError(409, conflicting ? "Some changes conflict. Choose which to publish." : "Some changes were made to an older version. Choose which to publish.", {
+        conflicts: result.unresolved.map(u => ({ group: u.group, status: u.status, owners: u.changes.map(c => c.owner), paths: u.changes.map(c => c.change.path) }))
+      });
+    }
+    // Hidden and read-only fields aren't anyone's changes; they come from the newest copy, and plugins derive them again.
+    const merged = result.data as DocumentData;
+    const newest = JSON.parse(chosen[0]!.data) as DocumentData;
+    for(const [key, field] of Object.entries(schema.shape)) {
+      if((field.hidden || field.readOnly || unwrap(field).hidden || unwrap(field).readOnly) && key in newest) merged[key] = newest[key];
+    }
+    const { doc, issues } = await this.prepare(schema, type, id, locale, "publish", merged, session);
     if(issues.length) throw new HttpError(422, "Fix the highlighted fields before publishing", { issues });
+    assignKeys(schema, doc, () => newId("blk"));
     const data = JSON.stringify(doc);
     const ver = await this.appendVersion(id, locale, data, session);
-    this.note({ ver, locale });
+    this.note({ ver, locale, branches: chosen.map(b => b.owner) });
     const now = Math.max(Date.now(), row.updated_at + 1);
-    await this.orm.update(documents)
-      .set({ draft: data, published: data, published_ver: ver, published_at: now, updated_at: now, updated_by: session?.sub ?? null })
-      .where(and(eq(documents.id, id), eq(documents.locale, locale)));
-    await this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, "publish")));
+    await this.batch([
+      this.orm.update(documents)
+        .set({ published: data, published_ver: ver, published_at: now, updated_at: now, updated_by: session?.sub ?? null })
+        .where(and(eq(documents.id, id), eq(documents.locale, locale))),
+      // Each published branch keeps what was left out, now on top of the new version. One saved since
+      // it was read is left as it is; its changes show against the new version.
+      ...chosen.map(b => {
+        const next = rebase(doc, result.pending.get(b.owner)!, JSON.parse(b.data));
+        const where = and(eq(branches.id, id), eq(branches.locale, locale), eq(branches.owner, b.owner), eq(branches.updated_at, b.updated_at));
+        return next === null
+          ? this.orm.delete(branches).where(where)
+          : this.orm.update(branches).set({ data: JSON.stringify(next), base: data, base_ver: ver }).where(where);
+      }),
+      this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, "publish")))
+    ]);
     this.afterWrite({ type, id, locale, action: "publish", valid: true, doc });
     return { ...(await this.getDocument(type, id, locale)), issues: [] };
+  }
+
+  /** Every branch with pending changes, each change checked against live and the other branches. */
+  async changes(type: string, id: string, localeInput?: string): Promise<{ live: DocumentData | null, publishedVer: number | null, branches: BranchChanges[] }> {
+    const locale = this.locale(localeInput);
+    require(this.state, this.scope.session, { action: "read", type });
+    const row = await this.getRow(id, locale);
+    if(!row || row.type !== type) throw new HttpError(404, "Document not found");
+    const schema = getSchema(this.config, type);
+    const open = await this.branchRows(id, locale);
+    const live = row.published ? JSON.parse(row.published) as DocumentData : null;
+    const checked = check(schema, live, open.map(toBranch));
+    return {
+      live,
+      publishedVer: row.published_ver,
+      branches: open.map(b => ({
+        owner: b.owner,
+        name: b.owner_name,
+        via: b.via,
+        mine: b.owner === this.owner,
+        createdAt: iso(b.created_at)!,
+        updatedAt: iso(b.updated_at)!,
+        baseVer: b.base_ver,
+        base: b.base === null ? null : JSON.parse(b.base) as DocumentData,
+        data: JSON.parse(b.data) as DocumentData,
+        changes: checked.get(b.owner)!.filter(c => c.status !== "live")
+      })).filter(b => b.changes.length)
+    };
+  }
+
+  /**
+   * Throws away someone's unpublished changes: yours by default, or another person's with the publish
+   * permission. Saved versions stay in the history.
+   */
+  async discardBranch(type: string, id: string, localeInput?: string, ownerInput?: string) {
+    const locale = this.locale(localeInput);
+    const owner = ownerInput ?? this.owner;
+    this.writer({ action: owner === this.owner ? "write" : "publish", type, locale });
+    const row = await this.getRow(id, locale);
+    if(!row || row.type !== type) throw new HttpError(404, "Document not found");
+    const open = await this.branchRows(id, locale);
+    if(!open.some(b => b.owner === owner)) return this.getDocument(type, id, locale);
+    if(row.published === null && open.length === 1) {
+      throw new HttpError(409, "This document has never been published, so discarding these changes would leave nothing. Delete the document instead.");
+    }
+    await this.orm.delete(branches).where(and(eq(branches.id, id), eq(branches.locale, locale), eq(branches.owner, owner)));
+    this.note({ locale, owner });
+    return this.getDocument(type, id, locale);
+  }
+
+  /** Branches whose every change live already has: nothing left to publish. */
+  private async pruneBranches(type: string, id: string, locale: string) {
+    const row = await this.getRow(id, locale);
+    if(!row?.published) return;
+    const open = await this.branchRows(id, locale);
+    const checked = check(getSchema(this.config, type), JSON.parse(row.published), open.map(toBranch));
+    const done = open.filter(b => checked.get(b.owner)!.every(c => c.status === "live"));
+    if(done.length) await this.orm.delete(branches).where(and(eq(branches.id, id), eq(branches.locale, locale), inArray(branches.owner, done.map(b => b.owner))));
+  }
+
+  /**
+   * Unpublishing leaves nothing to edit when no one has a branch, so the live copy becomes `owner`'s,
+   * started from nothing: publishing it again brings it all back.
+   */
+  private keepCopyStatement(id: string, locale: string, row: DocumentRow, open: BranchRow[], owner: string, name: string | null) {
+    if(open.length || row.published === null) return null;
+    const now = Date.now();
+    return this.orm.insert(branches).values({ id, locale, owner, owner_name: name, base_ver: null, base: null, data: row.published, via: this.activityScope.via, created_at: now, updated_at: now })
+      .onConflictDoNothing();
   }
 
   private async appendVersion(id: string, locale: string, data: string, session: Session | null): Promise<number> {
@@ -855,18 +1098,21 @@ export class Engine {
     this.writer({ action: "publish", type, locale });
     const row = await this.getRow(id, locale);
     if(!row || row.type !== type) throw new HttpError(404, "Document not found");
-    await this.orm.update(documents).set({ published: null, published_ver: null, published_at: null })
-      .where(and(eq(documents.id, id), eq(documents.locale, locale)));
-    await this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, "unpublish")));
+    const keep = this.keepCopyStatement(id, locale, row, await this.branchRows(id, locale), this.owner, this.ownerName);
+    await this.batch([
+      ...(keep ? [keep] : []),
+      this.orm.update(documents).set({ published: null, published_ver: null, published_at: null })
+        .where(and(eq(documents.id, id), eq(documents.locale, locale))),
+      this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, "unpublish")))
+    ]);
     this.afterWrite({ type, id, locale, action: "unpublish", valid: false, doc: null });
     return this.getDocument(type, id, locale);
   }
 
-  /** Documents whose draft or published copy mentions this ID. */
+  /** Documents whose live copy or any branch mentions this ID. */
   async incomingReferences(id: string) {
-    const pattern = `%"${id}"%`;
     return this.orm.select({ id: documents.id, type: documents.type, locale: documents.locale }).from(documents)
-      .where(and(ne(documents.id, id), or(like(documents.draft, pattern), like(documents.published, pattern))))
+      .where(and(ne(documents.id, id), mentions(`%"${id}"%`)))
       .limit(20);
   }
 
@@ -878,12 +1124,13 @@ export class Engine {
     if(options.locale && options.locale !== this.defaultLocale) {
       // Removing one translation only.
       const locale = this.locale(options.locale);
-      const rows = await this.orm.select().from(documents).where(and(eq(documents.id, id), eq(documents.locale, locale)));
+      const rows = await this.trashedRows(and(eq(documents.id, id), eq(documents.locale, locale))!);
       if(!rows.length) throw new HttpError(404, "Translation not found");
       const trash = this.trashStatement({ kind: "document", type, itemId: id, locale, label: this.noteLabel(this.documentLabel(type, rows)), payload: rows, session });
       await this.batch([
         trash.statement,
         this.orm.delete(documents).where(and(eq(documents.id, id), eq(documents.locale, locale))),
+        this.orm.delete(branches).where(and(eq(branches.id, id), eq(branches.locale, locale))),
         this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale)))
       ]);
       this.afterWrite({ type, id, locale, action: "delete", valid: false, doc: null });
@@ -896,23 +1143,32 @@ export class Engine {
     const output: { cancel?: string } = {};
     await this.state.plugins.transform("content.beforeDelete", { type, id, session: session ?? undefined }, output);
     if(output.cancel) throw new HttpError(409, output.cancel);
-    const rows = await this.orm.select().from(documents).where(eq(documents.id, id));
+    const rows = await this.trashedRows(eq(documents.id, id));
     const trash = this.trashStatement({ kind: "document", type, itemId: id, locale: null, label: this.noteLabel(this.documentLabel(type, rows)), payload: rows, session });
     // Pending schedules are dropped: a restored document shouldn't publish itself on an old timetable.
     await this.batch([
       trash.statement,
       this.orm.delete(documents).where(eq(documents.id, id)),
+      this.orm.delete(branches).where(eq(branches.id, id)),
       this.orm.delete(schedules).where(eq(schedules.id, id))
     ]);
     this.afterWrite({ type, id, locale: "*", action: "delete", valid: false, doc: null });
     return { deleted: true, trash: trash.id };
   }
 
-  /** The title the editor would show, from the default locale's draft when it's there. */
-  private documentLabel(type: string, rows: DocumentRow[]): string {
+  /** Document rows with their branches, as the trash keeps them. */
+  private async trashedRows(where: SQL): Promise<TrashedDocument[]> {
+    const rows = await this.orm.select().from(documents).where(where);
+    if(!rows.length) return [];
+    const open = await this.orm.select().from(branches).where(eq(branches.id, rows[0]!.id)).orderBy(desc(branches.updated_at));
+    return rows.map(row => ({ ...row, branches: open.filter(b => b.locale === row.locale) }));
+  }
+
+  /** The title the editor would show, from the default locale's newest copy. */
+  private documentLabel(type: string, rows: TrashedDocument[]): string {
     const row = rows.find(r => r.locale === this.defaultLocale) ?? rows[0];
     if(!row) return "Untitled";
-    return this.titleOf(type, JSON.parse(row.draft) as DocumentData);
+    return this.titleOf(type, JSON.parse(trashedCopy(row) ?? "{}") as DocumentData);
   }
 
   /** A document's title, as the editor shows it: the configured title field, else the first likely text field. */
@@ -962,9 +1218,18 @@ export class Engine {
     if(!row || row.type !== type) throw new HttpError(404, "Document not found");
     let ver: number | null = null;
     if(action === "publish") {
-      // Snapshot now, so later edits to the draft aren't published by surprise.
+      // Snapshot the merge of everyone's changes now, so later edits aren't published by surprise.
       const schema = getSchema(this.config, type);
-      const { doc, issues } = await this.prepare(schema, type, id, locale, "publish", JSON.parse(row.draft), session);
+      const open = await this.branchRows(id, locale);
+      const live = row.published ? JSON.parse(row.published) as DocumentData : null;
+      if(!open.length && !live) throw new HttpError(409, "There's nothing to publish");
+      const result = merge(schema, live, { branches: open.map(toBranch) });
+      if(result.unresolved.length) {
+        throw new HttpError(409, "Some changes conflict. Publish now to choose between them, or schedule once they're settled.", {
+          conflicts: result.unresolved.map(u => ({ group: u.group, status: u.status, owners: u.changes.map(c => c.owner), paths: u.changes.map(c => c.change.path) }))
+        });
+      }
+      const { doc, issues } = await this.prepare(schema, type, id, locale, "publish", result.data, session);
       if(issues.length) throw new HttpError(422, "Fix the highlighted fields before scheduling", { issues });
       ver = await this.appendVersion(id, locale, JSON.stringify(doc), session);
     }
@@ -1009,11 +1274,15 @@ export class Engine {
           }).where(and(eq(documents.id, item.id), eq(documents.locale, item.locale))),
           this.orm.delete(schedules).where(and(eq(schedules.id, item.id), eq(schedules.locale, item.locale), eq(schedules.action, "publish")))
         ]);
+        await this.pruneBranches(item.type, item.id, item.locale);
         const row = await this.getRow(item.id, item.locale);
         this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "publish", valid: Boolean(row?.published), doc: row?.published ? JSON.parse(row.published) as DocumentData : null });
         await this.recordActivity({ action: "documents.publish", ok: true, targetType: item.type, targetId: item.id, locale: item.locale, targetLabel: this.titleOf(item.type, row?.published ? JSON.parse(row.published) as DocumentData : null), summary: { ver: item.ver, scheduled: item.run_at } }, { via: "cron", system: "cron", onBehalfOf: item.created_by });
       } else if(item.action === "unpublish") {
+        const row = await this.getRow(item.id, item.locale);
+        const keep = row && this.keepCopyStatement(item.id, item.locale, row, await this.branchRows(item.id, item.locale), item.created_by, null);
         await this.batch([
+          ...(keep ? [keep] : []),
           this.orm.update(documents).set({ published: null, published_ver: null, published_at: null })
             .where(and(eq(documents.id, item.id), eq(documents.locale, item.locale))),
           this.orm.delete(schedules).where(and(eq(schedules.id, item.id), eq(schedules.locale, item.locale), eq(schedules.action, "unpublish")))
@@ -1174,9 +1443,8 @@ export class Engine {
     require(this.state, this.scope.session, { action: "read", scope: "media" });
     const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
-    const pattern = `%"${id}"%`;
     const usage = await this.orm.select({ id: documents.id, type: documents.type, locale: documents.locale }).from(documents)
-      .where(or(like(documents.draft, pattern), like(documents.published, pattern))).limit(50);
+      .where(mentions(`%"${id}"%`)).limit(50);
     return { ...this.toAsset(row), usage };
   }
 
@@ -1264,9 +1532,8 @@ export class Engine {
     const session = this.writer({ action: "delete", scope: "media" });
     const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
-    const pattern = `%"${id}"%`;
     const used = (await this.orm.select({ id: documents.id }).from(documents)
-      .where(or(like(documents.draft, pattern), like(documents.published, pattern))).limit(1))[0];
+      .where(mentions(`%"${id}"%`)).limit(1))[0];
     if(used) throw new HttpError(409, "This file is used by a document");
     if((await this.storedSite()).icon === id) throw new HttpError(409, "This file is the site's icon");
     // The R2 object stays until the trash is purged, so restoring brings back the same URL.
@@ -1349,10 +1616,15 @@ export class Engine {
       // Its public URL 404s while trashed; the editor fetches the bytes from here instead.
       return { ...item, asset: { ...asset, url: `${this.scope.origin}${this.state.prefix}/api/trash/${row.id}/file` } };
     }
-    const docs = JSON.parse(row.payload) as DocumentRow[];
+    const docs = JSON.parse(row.payload) as TrashedDocument[];
     return {
       ...item,
-      documents: docs.map(d => ({ locale: d.locale, status: documentStatus(d), data: JSON.parse(d.draft) as DocumentData, updatedAt: iso(d.updated_at)! }))
+      documents: docs.map(d => ({
+        locale: d.locale,
+        status: documentStatus({ published: d.published, pending: d.draft !== undefined ? d.draft !== d.published : Boolean(d.branches?.length) }),
+        data: JSON.parse(trashedCopy(d) ?? "{}") as DocumentData,
+        updatedAt: iso(d.updated_at)!
+      }))
     };
   }
 
@@ -1387,7 +1659,7 @@ export class Engine {
     }
     const type = row.type!;
     getSchema(this.config, type);
-    const docs = JSON.parse(row.payload) as DocumentRow[];
+    const docs = JSON.parse(row.payload) as TrashedDocument[];
     if(row.locale && !(await this.orm.select({ id: documents.id }).from(documents).where(eq(documents.id, row.item_id)).limit(1))[0]) {
       throw new HttpError(409, "Restore the document itself first; this is only one of its translations");
     }
@@ -1395,13 +1667,12 @@ export class Engine {
     if(taken.some(t => docs.some(d => d.locale === t.locale))) throw new HttpError(409, "A document with this ID and language exists again");
     // Files it used that were deleted since come back with it, so its references still resolve.
     const files = await this.orm.select().from(trash).where(eq(trash.kind, "asset"));
-    const used = files.filter(file => docs.some(d => d.draft.includes(`"${file.item_id}"`) || d.published?.includes(`"${file.item_id}"`)));
+    const used = files.filter(file => docs.some(d => JSON.stringify(d).includes(`\\"${file.item_id}\\"`)));
     await this.batch([
       ...docs.map(d => this.orm.insert(documents).values({
         id: d.id,
         type: d.type,
         locale: d.locale,
-        draft: d.draft,
         published: d.published,
         published_ver: d.published_ver,
         schema_hash: d.schema_hash,
@@ -1410,6 +1681,7 @@ export class Engine {
         published_at: d.published_at,
         updated_by: d.updated_by
       })),
+      ...docs.flatMap(d => trashedBranches(d).map(b => this.orm.insert(branches).values(b).onConflictDoNothing())),
       this.orm.delete(trash).where(eq(trash.id, id))
     ]);
     for(const file of used) {
@@ -1691,4 +1963,27 @@ export function mapAssets(schema: AnySchema, value: unknown, fn: (value: unknown
 function changedFields(before: DocumentData, after: DocumentData): string[] {
   const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
   return [...keys].filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key])).slice(0, 50);
+}
+
+/** A trashed document's newest copy: its newest branch, else live. Older entries kept a `draft`. */
+function trashedCopy(row: TrashedDocument): string | null {
+  return row.draft ?? row.branches?.[0]?.data ?? row.published;
+}
+
+/** The branches to restore with a trashed document. An older entry's unpublished draft becomes its last editor's. */
+function trashedBranches(row: TrashedDocument): BranchRow[] {
+  if(row.branches) return row.branches;
+  if(row.draft === undefined || row.draft === row.published) return [];
+  return [{
+    id: row.id,
+    locale: row.locale,
+    owner: row.updated_by ?? "system",
+    owner_name: null,
+    base_ver: row.published_ver,
+    base: row.published,
+    data: row.draft,
+    via: "editor",
+    created_at: row.updated_at,
+    updated_at: row.updated_at
+  }];
 }

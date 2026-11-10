@@ -9,7 +9,7 @@ const data = z.record(z.string(), z.unknown()).describe("The document's fields. 
 
 const documentsList = base({
   summary: "List documents",
-  description: "Documents of one type, drafts included, newest first unless sorted. `search` is full-text (each word matches as a prefix); with it, `total` counts matches, `all` counts the type, and `excerpts` maps document IDs to where the body matched.",
+  description: "Documents of one type, unpublished ones included, as you'd edit them (your changes, else live), newest first unless sorted. `search` is full-text (each word matches as a prefix); with it, `total` counts matches, `all` counts the type, and `excerpts` maps document IDs to where the body matched.",
   readOnly: true
 })
   .input(z.object({
@@ -29,7 +29,7 @@ const documentsList = base({
 
 const documentsSearch = base({
   summary: "Search documents",
-  description: "Full-text search across every content type you can read, drafts included, best matches first. Words match as prefixes; titles rank above body text.",
+  description: "Full-text search across every content type you can read, unpublished changes included, best matches first. Words match as prefixes; titles rank above body text.",
   readOnly: true
 })
   .input(z.object({
@@ -41,7 +41,7 @@ const documentsSearch = base({
 
 const documentsGet = base({
   summary: "Get a document",
-  description: "A document's draft and published copies in one language, with its status, other languages and pending schedules. Pass `updatedAt` back as `baseUpdatedAt` when updating.",
+  description: "A document in one language: `draft` is your working copy (your unpublished changes, else live), `published` the live copy, `pending` who else has unpublished changes, plus status, other languages and schedules. Pass `updatedAt` back as `baseUpdatedAt` and `baseVer` as `baseVer` when updating.",
   readOnly: true
 })
   .input(z.object({
@@ -53,7 +53,7 @@ const documentsGet = base({
 
 const documentsCreate = base({
   summary: "Create a document",
-  description: "Saves a new draft. Drafts save even when invalid and the response lists the `issues`; `publish: true` publishes it too, which needs it to be valid."
+  description: "Saves a new document as your unpublished changes. They save even when invalid and the response lists the `issues`; `publish: true` publishes it too, which needs it to be valid."
 })
   .input(z.object({
     type,
@@ -66,7 +66,7 @@ const documentsCreate = base({
 
 const documentsUpdate = base({
   summary: "Update a document",
-  description: "Replaces the draft's fields; the published copy changes only when published. Also creates a missing translation.",
+  description: "Replaces the fields of your copy: your branch of the document, a candidate for publishing. Other people's changes and the live copy aren't touched until someone publishes. Also creates a missing translation.",
   idempotent: true
 })
   .input(z.object({
@@ -74,8 +74,9 @@ const documentsUpdate = base({
     id,
     locale,
     data,
-    baseUpdatedAt: z.number().optional().describe("The `updatedAt` you read. If someone saved since, this fails with CONFLICT instead of overwriting"),
-    publish: z.boolean().optional()
+    baseUpdatedAt: z.number().optional().describe("The `updatedAt` you read. If you saved this document elsewhere since (another tab, another agent as you), this fails with CONFLICT instead of overwriting"),
+    baseVer: z.number().int().nullable().optional().describe("The `baseVer` you read: the published version your data started from, so changes published since aren't taken for yours"),
+    publish: z.boolean().optional().describe("Publish your changes too")
   }))
   .handler(({ context: { engine }, input }) => engine.save(input));
 
@@ -93,19 +94,51 @@ const documentsDelete = base({
 
 const documentsPublish = base({
   summary: "Publish a document",
-  description: "Makes the draft live and records a version. Fails with UNPROCESSABLE_CONTENT and the `issues` when the draft isn't valid.",
+  description: "Merges unpublished changes into a new live version and records it: everyone's by default, or the `branches` (owners) you name, minus the changes in `skip`. Fails with CONFLICT and the `conflicts` when two people changed the same thing differently, or someone changed what's since been published; settle each by its `group` in `resolve`. `documents.changes` lists the changes and groups. Fails with UNPROCESSABLE_CONTENT and the `issues` when the result isn't valid.",
   idempotent: true
+})
+  .input(z.object({
+    type,
+    id,
+    locale,
+    branches: z.array(z.string()).optional().describe("Owners whose changes to publish; everyone's when omitted"),
+    skip: z.array(z.object({ owner: z.string(), path: z.string() })).optional().describe("Changes to leave unpublished, by owner and `path`"),
+    resolve: z.array(z.object({
+      group: z.string().describe("The conflict's `group`"),
+      use: z.string().optional().describe("Whose change to keep: an owner, or `live` to keep what's live"),
+      value: z.unknown().optional().describe("A value to publish instead of either side")
+    })).optional()
+  }))
+  .handler(({ context: { engine }, input }) => engine.publish(input.type, input.id, input.locale, { branches: input.branches, skip: input.skip, resolve: input.resolve }));
+
+const documentsChanges = base({
+  summary: "List unpublished changes",
+  description: "Everyone's unpublished changes to a document, by person: each change's `path`, `before` and `after`, and its `status` against live: `clean`, `stale` (live changed since) or `conflict` (someone else changed it too). Changes with the same `group` are settled together when publishing.",
+  readOnly: true
 })
   .input(z.object({
     type,
     id,
     locale
   }))
-  .handler(({ context: { engine }, input }) => engine.publish(input.type, input.id, input.locale));
+  .handler(({ context: { engine }, input }) => engine.changes(input.type, input.id, input.locale));
+
+const documentsDiscardChanges = base({
+  summary: "Discard unpublished changes",
+  description: "Throws away one person's unpublished changes: yours, or with `owner` someone else's, which needs permission to publish. Published versions stay in the history.",
+  idempotent: true
+})
+  .input(z.object({
+    type,
+    id,
+    locale,
+    owner: z.string().optional().describe("Whose changes; yours when omitted")
+  }))
+  .handler(({ context: { engine }, input }) => engine.discardBranch(input.type, input.id, input.locale, input.owner));
 
 const documentsUnpublish = base({
   summary: "Unpublish a document",
-  description: "Takes the document off the site. The draft and its history stay.",
+  description: "Takes the document off the site. Unpublished changes and history stay.",
   idempotent: true
 })
   .input(z.object({
@@ -153,7 +186,7 @@ const documentsVersion = base({
 
 const documentsRestoreVersion = base({
   summary: "Restore a version",
-  description: "Copies a version into the draft. It isn't live until published."
+  description: "Copies a version into your unpublished changes. It isn't live until published."
 })
   .input(z.object({
     type,
@@ -167,7 +200,7 @@ const scheduleAction = z.enum(["publish", "unpublish"]);
 
 const documentsSchedule = base({
   summary: "Schedule publishing",
-  description: "Publishes or unpublishes at a time. Scheduling a publish snapshots the draft now, so later edits aren't published by surprise.",
+  description: "Publishes or unpublishes at a time. Scheduling a publish snapshots everyone's unpublished changes, merged, now, so later edits aren't published by surprise. Fails with CONFLICT while changes conflict.",
   idempotent: true
 })
   .input(z.object({
@@ -200,6 +233,8 @@ export const documents = router({
   update: documentsUpdate,
   delete: documentsDelete,
   publish: documentsPublish,
+  changes: documentsChanges,
+  discardChanges: documentsDiscardChanges,
   unpublish: documentsUnpublish,
   references: documentsReferences,
   versions: documentsVersions,

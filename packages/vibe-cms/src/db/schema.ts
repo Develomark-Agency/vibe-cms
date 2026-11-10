@@ -14,11 +14,14 @@ export const meta = sqliteTable("vibe_meta", {
   value: text().notNull()
 });
 
+/**
+ * One row per document and locale: what it is and its live copy. Unpublished changes live on each
+ * person's branch in `vibe_branches`. `updated_at` and `updated_by` are the last save to any branch, or the last publish.
+ */
 export const documents = sqliteTable("vibe_documents", {
   id: text().notNull(),
   type: text().notNull(),
   locale: text().notNull(),
-  draft: text().notNull(),
   published: text(),
   published_ver: integer(),
   schema_hash: text().notNull(),
@@ -30,6 +33,27 @@ export const documents = sqliteTable("vibe_documents", {
   primaryKey({ columns: [t.id, t.locale] }),
   index("vibe_documents_type").on(t.type, t.locale, t.updated_at)
 ]);
+
+/**
+ * Each person's working copy of a document in one locale: their candidate for publishing. Its changes
+ * are a diff of `base` (the copy it started from: a published version, or another branch before the
+ * first publish) against `data`. A branch with nothing left to publish is deleted.
+ */
+export const branches = sqliteTable("vibe_branches", {
+  id: text().notNull(),
+  locale: text().notNull(),
+  /** The session subject whose branch it is. An agent's edits land on its user's branch. */
+  owner: text().notNull(),
+  owner_name: text(),
+  /** The published version `base` is, or null when the branch started before the first publish. */
+  base_ver: integer(),
+  base: text(),
+  data: text().notNull(),
+  /** Where the last save came from: `editor`, `mcp`, `cli`, `api`… */
+  via: text().notNull(),
+  created_at: integer().notNull(),
+  updated_at: integer().notNull()
+}, t => [primaryKey({ columns: [t.id, t.locale, t.owner] })]);
 
 export const versions = sqliteTable("vibe_versions", {
   id: text().notNull(),
@@ -188,6 +212,7 @@ export const oauthGrants = oauth.grants;
 
 export type DocumentRow = typeof documents.$inferSelect;
 export type VersionRow = typeof versions.$inferSelect;
+export type BranchRow = typeof branches.$inferSelect;
 export type ScheduleRow = typeof schedules.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type TrashRow = typeof trash.$inferSelect;
