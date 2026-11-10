@@ -81,6 +81,8 @@ const SIMPLE = new Set(["text", "number", "boolean", "date", "enum", "literal", 
 
 function detailOf(schema: AnySchema): Detail {
   const s = unwrap(schema);
+  // A file shows as itself, whatever widget picks it.
+  if(s.type === "asset") return "value";
   if(s.widget) return "changed-only";
   if(SIMPLE.has(s.type)) return "value";
   if(s.type === "array") {

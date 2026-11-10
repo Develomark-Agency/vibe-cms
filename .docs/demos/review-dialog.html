@@ -1,0 +1,186 @@
+<title>Review Dialog Layouts</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: three mock review dialogs stacked, same data, each with a short verdict. */
+:root {
+  --bg: #f4f1ee; --panel: #fdfcfb; --field: #f1eeeb; --line: #e6e1dc; --fg: #1d1a18; --muted: #7a726b;
+  --accent: #e6247a; --accent-fg: #fff; --warn: #c77a06; --warn-soft: #f5a5231f; --add: #1f8a5b; --del: #b4473b;
+  --sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141211; --panel: #1d1b19; --field: #272421; --line: #35312d; --fg: #f2efec; --muted: #9b938c;
+  --accent: #ff4f98; --accent-fg: #fff; --warn: #f0a531; --warn-soft: #f0a53126; --add: #4cc38a; --del: #ef7d70; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141211; --panel: #1d1b19; --field: #272421; --line: #35312d; --fg: #f2efec; --muted: #9b938c;
+  --accent: #ff4f98; --accent-fg: #fff; --warn: #f0a531; --warn-soft: #f0a53126; --add: #4cc38a; --del: #ef7d70; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans) }
+main { max-width: 720px; margin: 0 auto; padding-block: 32px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 32px }
+h1 { font-size: 22px; font-weight: 600; margin: 0 }
+.intro { color: var(--muted); margin: 6px 0 0; max-width: 62ch }
+.opt h2 { font-size: 15px; margin: 0 0 4px; font-weight: 600 }
+.opt > p { margin: 0 0 12px; color: var(--muted); max-width: 62ch }
+.dlg { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 10px 30px #0000001a; padding: 18px; display: flex; flex-direction: column; gap: 14px }
+.dlg h3 { margin: 0; font-size: 15px; font-weight: 600 }
+.sub { color: var(--muted); font-size: 13px; margin-top: 2px }
+.foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center; border-top: 1px solid var(--line); padding-top: 12px }
+.foot .note { margin-right: auto; font-size: 12px; color: var(--muted) }
+.btn { border: 0; border-radius: 10px; padding: 7px 12px; font: inherit; font-weight: 500; cursor: pointer; background: var(--field); color: var(--fg) }
+.btn.primary { background: var(--accent); color: var(--accent-fg) }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.verdict { font-size: 12px; color: var(--muted); display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin-top: 12px }
+.verdict b { color: var(--fg); font-weight: 500 }
+.face { width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 9.5px; font-weight: 600; color: #fff; flex: none }
+.face.sm { width: 16px; height: 16px; font-size: 8px }
+.old { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--del) 60%, transparent) }
+.new { color: var(--fg) }
+.arrow { color: var(--muted); margin-inline: 4px }
+.chk { width: 16px; height: 16px; accent-color: var(--accent); flex: none; margin: 2px 0 0 }
+.muted { color: var(--muted) }
+.small { font-size: 12px }
+
+/* A: one list of fields */
+.rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; overflow: hidden }
+.row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); align-items: start }
+.row:first-child { border-top: 0 }
+.row.conflict { background: var(--warn-soft) }
+.name { font-weight: 500 }
+.val { min-width: 0; overflow-wrap: anywhere }
+.who { display: flex; gap: 4px; align-items: center }
+.choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px }
+.choice { border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 9px; padding: 5px 9px; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; max-width: 100% ; text-align: left }
+.choice[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) }
+.choice span.t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px }
+.flag { font-size: 11px; font-weight: 600; color: var(--warn); text-transform: uppercase; letter-spacing: .05em }
+
+/* B: by person, conflicts inline */
+.person { display: flex; flex-direction: column; gap: 6px }
+.phead { display: flex; align-items: center; gap: 8px }
+.phead .meta { color: var(--muted); font-size: 12px }
+.phead .discard { margin-left: auto; font-size: 12px; color: var(--muted); background: none; border: 0; cursor: pointer; font: inherit; font-size: 12px }
+.plist { border: 1px solid var(--line); border-radius: 14px; overflow: hidden }
+.pick { margin-left: auto; display: inline-flex; background: var(--field); border-radius: 8px; padding: 2px; flex: none }
+.pick button { border: 0; background: none; font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 6px; color: var(--muted); cursor: pointer }
+.pick button[aria-pressed="true"] { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px #0002 }
+.lost { opacity: .5 }
+
+/* C: table */
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px }
+table { border-collapse: collapse; width: 100%; min-width: 520px }
+th, td { text-align: left; padding: 9px 10px; border-top: 1px solid var(--line); vertical-align: top }
+thead th { border-top: 0; font-size: 12px; font-weight: 500; color: var(--muted); background: var(--field) }
+thead th .face { vertical-align: middle; margin-right: 4px }
+td.cell { cursor: pointer; border-left: 1px solid var(--line) }
+td.cell:hover { background: var(--field) }
+td.cell.on { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent) }
+td.same { color: var(--muted); border-left: 1px solid var(--line) }
+@media (max-width: 480px) { .verdict { grid-template-columns: 1fr } .choice span.t { max-width: 150px } }
+</style>
+
+<main>
+  <div>
+    <h1>Review dialog layouts</h1>
+    <p class="intro">The same document three ways: you changed the title, excerpt and body; Bob changed the title too. Every option is live: tick, untick and choose to see the button update.</p>
+  </div>
+  <section class="opt" id="a"></section>
+  <section class="opt" id="b"></section>
+  <section class="opt" id="c"></section>
+</main>
+
+<script>
+const LIVE = { title: "Running on Alchemy, in production", excerpt: "How we moved the blog over in an afternoon.", body: null };
+const PEOPLE = { you: { name: "You", color: "hsl(330 60% 50%)", meta: "1 min ago" }, bob: { name: "Bob Smith", color: "hsl(210 50% 45%)", meta: "via Agent · 30 min ago" } };
+const CHANGES = [
+  { field: "Title", key: "title", by: { you: "Running on Alchemy, in production!", bob: "Alchemy v1, a month later" } },
+  { field: "Excerpt", key: "excerpt", by: { you: "How we moved the blog over in an afternoon!" } },
+  { field: "Body", key: "body", by: { you: "changed" }, rich: true }
+];
+const initials = n => n === "You" ? "Y" : n.split(" ").map(w => w[0]).join("");
+const face = (p, sm) => `<span class="face${sm ? " sm" : ""}" style="background:${PEOPLE[p].color}" title="${PEOPLE[p].name}">${initials(PEOPLE[p].name)}</span>`;
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const conflict = c => Object.keys(c.by).length > 1;
+
+// One choice per field per option: "you" | "bob" | "live" | "skip". Clean fields default to their author, conflicts to skip.
+function fresh() { return Object.fromEntries(CHANGES.map(c => [c.key, conflict(c) ? "skip" : Object.keys(c.by)[0]])); }
+const state = { a: fresh(), b: fresh(), c: fresh() };
+const count = s => Object.values(s).filter(v => v !== "skip" && v !== "live").length;
+const publishLabel = s => count(s) ? `Publish ${count(s)} ${count(s) === 1 ? "change" : "changes"}` : "Nothing to publish";
+const pending = s => CHANGES.filter(c => conflict(c) && s[c.key] === "skip").length;
+const footer = s => `<div class="foot"><span class="note">${pending(s) ? `${pending(s)} left for later` : ""}</span><button class="btn">Schedule…</button><button class="btn primary"${count(s) ? "" : " disabled"}>${publishLabel(s)}</button></div>`;
+const diff = (c, p) => c.rich ? `<span class="muted">Rich text changed</span>` : `<span class="old">${esc(LIVE[c.key])}</span><span class="arrow">→</span><span class="new">${esc(c.by[p])}</span>`;
+
+function renderA() {
+  const s = state.a;
+  const rows = CHANGES.map(c => {
+    const people = Object.keys(c.by);
+    if (!conflict(c)) {
+      return `<div class="row"><input type="checkbox" class="chk" data-o="a" data-k="${c.key}" data-v="${people[0]}" ${s[c.key] !== "skip" ? "checked" : ""} aria-label="Publish ${c.field}">
+        <div class="val"><div class="name">${c.field}</div><div>${diff(c, people[0])}</div></div><div class="who">${people.map(p => face(p)).join("")}</div></div>`;
+    }
+    const opts = [...people.map(p => [p, c.by[p], face(p, true)]), ["live", "Keep live", ""], ["skip", "Later", ""]];
+    return `<div class="row conflict"><span class="flag" aria-hidden="true">!</span>
+      <div class="val"><div class="name">${c.field} <span class="muted small">· live: ${esc(LIVE[c.key])}</span></div>
+        <div class="choices">${opts.map(([v, t, f]) => `<button class="choice" data-o="a" data-k="${c.key}" data-v="${v}" aria-pressed="${s[c.key] === v}">${f}<span class="t">${esc(t)}</span></button>`).join("")}</div></div>
+      <div class="who">${people.map(p => face(p)).join("")}</div></div>`;
+  }).join("");
+  document.getElementById("a").innerHTML = `<h2>A. By field</h2>
+    <p>One row per field, whoever changed it. A clash is that field's row, with the choices as buttons right there. Faces say who.</p>
+    <div class="dlg"><div><h3>Review “Running on Alchemy”</h3><div class="sub">${count(s)} of 3 changes selected · from ${face("you", true)} ${face("bob", true)}</div></div>
+      <div class="rows">${rows}</div>${footer(s)}</div>
+    <div class="verdict"><b>Good</b><span>Shortest. Each field appears once, and its clash is settled where it's shown. Reads like the page, not like a list of people.</span><b>Weak</b><span>Who did what is only a face; discarding someone's whole set needs a separate menu.</span></div>`;
+}
+
+function renderB() {
+  const s = state.b;
+  const people = Object.keys(PEOPLE);
+  const sections = people.map(p => {
+    const mine = CHANGES.filter(c => p in c.by);
+    const items = mine.map(c => {
+      if (conflict(c)) {
+        const lost = s[c.key] !== p && s[c.key] !== "skip";
+        return `<div class="row conflict ${lost ? "lost" : ""}"><span class="flag" aria-hidden="true">!</span>
+          <div class="val"><div class="name">${c.field}</div><div>${diff(c, p)}</div></div>
+          <div class="pick" role="group" aria-label="Which ${c.field}">${[["you", "You"], ["bob", "Bob"], ["live", "Live"], ["skip", "Later"]].map(([v, t]) => `<button data-o="b" data-k="${c.key}" data-v="${v}" aria-pressed="${s[c.key] === v}">${t}</button>`).join("")}</div></div>`;
+      }
+      return `<div class="row"><input type="checkbox" class="chk" data-o="b" data-k="${c.key}" data-v="${p}" ${s[c.key] !== "skip" ? "checked" : ""} aria-label="Publish ${c.field}">
+        <div class="val"><div class="name">${c.field}</div><div>${diff(c, p)}</div></div><span></span></div>`;
+    }).join("");
+    return `<div class="person"><div class="phead">${face(p)}<b style="font-weight:500">${PEOPLE[p].name}</b><span class="meta">${PEOPLE[p].meta}</span><button class="discard">Discard</button></div><div class="plist">${items}</div></div>`;
+  }).join("");
+  document.getElementById("b").innerHTML = `<h2>B. By person, clashes inline</h2>
+    <p>Today's grouping, without the separate card: a clash sits in each person's list with a small switch. Picking one side fades the other.</p>
+    <div class="dlg"><div><h3>Review “Running on Alchemy”</h3><div class="sub">${count(s)} of 3 changes selected</div></div>${sections}${footer(s)}</div>
+    <div class="verdict"><b>Good</b><span>Closest to today. Clear who did what, and Discard stays per person.</span><b>Weak</b><span>A clashing field still appears once per person, so with many people it repeats.</span></div>`;
+}
+
+function renderC() {
+  const s = state.c;
+  const people = Object.keys(PEOPLE);
+  const body = CHANGES.map(c => {
+    const cells = [["live", c.rich ? "Rich text" : LIVE[c.key]], ...people.map(p => [p, c.by[p]])].map(([v, t]) => {
+      if (v !== "live" && t === undefined) return `<td class="same">—</td>`;
+      const on = s[c.key] === v || (v === "live" && s[c.key] === "skip");
+      return `<td class="cell ${on ? "on" : ""}" data-o="c" data-k="${c.key}" data-v="${v}" tabindex="0">${c.rich && v !== "live" ? "Changed" : esc(t)}</td>`;
+    }).join("");
+    return `<tr><th scope="row" class="name">${c.field}${conflict(c) ? ` <span class="flag">clash</span>` : ""}</th>${cells}</tr>`;
+  }).join("");
+  document.getElementById("c").innerHTML = `<h2>C. Side by side</h2>
+    <p>A grid: fields down, Live and each person across. Click the cell that should go live. Live is the default for clashes, which means "later".</p>
+    <div class="dlg"><div><h3>Review “Running on Alchemy”</h3><div class="sub">${count(s)} of 3 changes selected</div></div>
+      <div class="tablewrap"><table><thead><tr><th>Field</th><th>Live</th>${people.map(p => `<th>${face(p, true)}${PEOPLE[p].name}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>${footer(s)}</div>
+    <div class="verdict"><b>Good</b><span>Everything visible at once; the choice is the value itself. Great for two or three people.</span><b>Weak</b><span>Doesn't fit more than three or four people, or on a phone, without scrolling sideways.</span></div>`;
+}
+
+function render() { renderA(); renderB(); renderC(); }
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-o]");
+  if (!el) return;
+  const { o, k, v } = el.dataset;
+  if (el.type === "checkbox") state[o][k] = el.checked ? v : "skip";
+  else state[o][k] = o === "c" && v === "live" ? "skip" : v;
+  render();
+});
+document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("td.cell")) e.target.click(); });
+render();
+</script>
