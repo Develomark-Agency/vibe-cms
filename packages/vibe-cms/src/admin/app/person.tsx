@@ -1,3 +1,4 @@
+import { UserRoundIcon } from "lucide-react";
 import { cn } from "../lib/utils.ts";
 
 /** A hue from someone's ID, so the same person has the same color everywhere, with nothing from their sign-in provider. */
@@ -14,8 +15,22 @@ function initials(name: string): string {
   return (words.length > 1 ? `${words[0]![0]}${words.at(-1)![0]}` : words[0]![0]!).toUpperCase();
 }
 
-/** Someone's initials on their color. */
-export function PersonFace({ id, name, className }: { id: string, name: string, className?: string }) {
+/** Someone in a list of faces. `self` is the person looking: they get a marker of their own, not initials. */
+export interface FacePerson {
+  id: string,
+  name: string,
+  self?: boolean
+}
+
+/** Someone's initials on their color; for yourself, a person icon in the accent color. */
+export function PersonFace({ id, name, self, className }: FacePerson & { className?: string }) {
+  if(self) {
+    return (
+      <span aria-hidden title="You" className={cn("inline-grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground ring-2 ring-background", className)}>
+        <UserRoundIcon className="size-3" strokeWidth={2.5} />
+      </span>
+    );
+  }
   return (
     <span
       aria-hidden
@@ -29,11 +44,11 @@ export function PersonFace({ id, name, className }: { id: string, name: string, 
 }
 
 /** Up to `max` faces, overlapping, then "+N". */
-export function PersonFaces({ people, max = 3, count = true, className }: { people: Array<{ id: string, name: string }>, max?: number, count?: boolean, className?: string }) {
+export function PersonFaces({ people, max = 3, count = true, className }: { people: FacePerson[], max?: number, count?: boolean, className?: string }) {
   const shown = people.slice(0, max);
   return (
-    <span className={cn("inline-flex shrink-0 items-center", className)} title={people.map(p => p.name).join(", ")}>
-      {shown.map((person, i) => <PersonFace key={person.id} id={person.id} name={person.name} className={i ? "-ml-1.5" : undefined} />)}
+    <span className={cn("inline-flex shrink-0 items-center", className)} title={people.map(p => (p.self ? "You" : p.name)).join(", ")}>
+      {shown.map((person, i) => <PersonFace key={person.id} {...person} className={i ? "-ml-1.5" : undefined} />)}
       {count && people.length > max && <span className="ml-1 text-[11px] text-muted-foreground tabular-nums">+{people.length - max}</span>}
     </span>
   );

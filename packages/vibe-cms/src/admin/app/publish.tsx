@@ -7,6 +7,7 @@ import {
   CircleCheckIcon,
   ClockIcon,
   CloudUploadIcon,
+  ExternalLinkIcon,
   FileArchiveIcon,
   FileAudioIcon,
   FileIcon,
@@ -43,8 +44,10 @@ import { cn } from "../lib/utils.ts";
 import { isActionError } from "../../actions/errors.ts";
 import { VIA_LABELS } from "./via.ts";
 import { collectionSchema, displayUser, documentTitle, formatDate, formatRelative, useAdmin } from "./context.tsx";
-import { formatBytes, useAsset } from "./pickers.tsx";
-import { PersonFace, PersonFaces } from "./person.tsx";
+import { AssetPreview, describeAsset, formatBytes, useAsset } from "./pickers.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover.tsx";
+import { Link } from "./router.tsx";
+import { PersonFace, PersonFaces, type FacePerson } from "./person.tsx";
 
 /** One person's change, as publishing names it: `owner` + `change.path`. */
 interface Entry {
@@ -142,10 +145,9 @@ export function PublishDialog({ open, onOpenChange, type, id, title, canPublish 
   function nameOf(owner: string) {
     return names.get(owner) ?? displayUser(owner, session);
   }
-  /** Who a face shows: your own name rather than "You", so the initials are yours. */
-  function faceOf(owner: string) {
-    const name = owner === session.user.sub ? session.user.name ?? session.user.email?.split("@")[0] ?? nameOf(owner) : nameOf(owner);
-    return { id: owner, name };
+  /** Who a face shows. You get your own marker, which reads as "you" better than any initials. */
+  function faceOf(owner: string): FacePerson {
+    return { id: owner, name: nameOf(owner), self: owner === session.user.sub };
   }
   const schema = collectionSchema(config, type);
   const rows = useMemo(() => rowsOf(changes.data?.live ?? null, branches, Object.keys(schema.shape)), [changes.data, schema]);
@@ -366,14 +368,14 @@ function toLocalInput(date: Date): string {
 }
 
 /** A person whose changes are in the review: their face and name, and a menu to discard what they changed. */
-function PersonChip({ branch, name, face, onDiscard }: { branch: BranchChanges, name: string, face: { id: string, name: string }, onDiscard?: () => Promise<void> }) {
+function PersonChip({ branch, name, face, onDiscard }: { branch: BranchChanges, name: string, face: FacePerson, onDiscard?: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const via = branch.via !== "ui" ? `via ${VIA_LABELS[branch.via as Via] ?? branch.via}` : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={
         <button type="button" className="inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-foreground well hover:bg-foreground/[0.06]">
-          <PersonFace id={face.id} name={face.name} className="ring-0" />
+          <PersonFace {...face} className="ring-0" />
           <span className="text-xs font-medium">{name}</span>
           <ChevronDownIcon className="size-3 text-muted-foreground" />
         </button>
@@ -404,7 +406,7 @@ function PersonChip({ branch, name, face, onDiscard }: { branch: BranchChanges, 
 function MorePeople({ branches, nameOf, faceOf, onDiscard }: {
   branches: BranchChanges[],
   nameOf(owner: string): string,
-  faceOf(owner: string): { id: string, name: string },
+  faceOf(owner: string): FacePerson,
   onDiscard(owner: string): (() => Promise<void>) | undefined
 }) {
   return (
@@ -424,7 +426,7 @@ function MorePeople({ branches, nameOf, faceOf, onDiscard }: {
           return (
             <DropdownMenuSub key={branch.owner}>
               <DropdownMenuSubTrigger>
-                <PersonFace id={branch.owner} name={faceOf(branch.owner).name} className="ring-0" />
+                <PersonFace {...faceOf(branch.owner)} className="ring-0" />
                 <span className="min-w-0 flex-1 truncate">{name}</span>
                 <span className="shrink-0 text-xs text-muted-foreground">{via}{formatRelative(branch.updatedAt)}</span>
               </DropdownMenuSubTrigger>
@@ -443,7 +445,7 @@ function MorePeople({ branches, nameOf, faceOf, onDiscard }: {
 function ReviewRow({ row, nameOf, faceOf, readOnly, ticked, onTick, choice, open, onChoose, onReopen }: {
   row: Row,
   nameOf(owner: string): string,
-  faceOf(owner: string): { id: string, name: string },
+  faceOf(owner: string): FacePerson,
   readOnly: boolean,
   ticked: boolean,
   onTick(on: boolean): void,
@@ -555,7 +557,7 @@ function optionsOf(row: Row): Array<{ owners: string[], entries: Entry[] }> {
 function Choices({ row, nameOf, faceOf, choice, onChoose, readOnly }: {
   row: Row,
   nameOf(owner: string): string,
-  faceOf(owner: string): { id: string, name: string },
+  faceOf(owner: string): FacePerson,
   choice: Choice | undefined,
   onChoose(choice: Choice): void,
   readOnly: boolean
@@ -564,79 +566,93 @@ function Choices({ row, nameOf, faceOf, choice, onChoose, readOnly }: {
   const options = optionsOf(row);
   const outer = row.outer;
   const values = options.map(o => o.entries.find(e => e.change.path === outer.path)?.change.after);
-  // Buttons when every side is a short value; otherwise each side gets room to show itself.
-  const compact = outer.kind === "set" && outer.detail === "value" && SHORT_FIELDS.has(outer.field)
-    && !isLongText(row.live, ...values) && options.length <= SHOWN_OPTIONS
-    && options.every(o => o.entries.length === 1 && o.entries[0]!.change.path === outer.path);
   const typable = !readOnly && outer.kind === "set" && outer.detail === "value" && outer.field === "text" && !isLongText(row.live, ...values);
   const visible = all ? options : options.slice(0, SHOWN_OPTIONS);
   const typing = typeof choice === "object" && "value" in choice;
 
-  function people(owners: string[]) {
-    return owners.map(faceOf);
-  }
   function who(owners: string[]) {
-    const first = owners.map(o => nameOf(o).split(/\s+/)[0]!);
-    return first.length <= 2 ? first.join(" and ") : `${first[0]}, ${first[1]} and ${first.length - 2} others`;
+    const names = owners.map(o => nameOf(o));
+    const first = names.length > 1 ? names.map(n => (n === "You" ? "you" : n.split(/\s+/)[0]!)) : names;
+    const said = first.length <= 2 ? first.join(" and ") : `${first[0]}, ${first[1]} and ${first.length - 2} others`;
+    return said.charAt(0).toUpperCase() + said.slice(1);
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      {row.status === "stale" && row.live !== undefined && (
-        <p className="text-xs text-muted-foreground">Published differently since {nameOf(row.entries[0]!.owner) === "You" ? "you" : nameOf(row.entries[0]!.owner).split(/\s+/)[0]} changed it.</p>
+    <div className="flex flex-col gap-1.5" role="radiogroup" aria-label={`Which ${outer.label.join(" ")} to publish`}>
+      {/* What's live comes first: the version nobody has to change anything for. */}
+      <ChoiceCard tone="live" checked={sameChoice(choice, { use: "live" })} disabled={readOnly} onSelect={() => onChoose({ use: "live" })}
+        head={<><Undo2Icon className="size-3.5" /> {row.status === "stale" ? "Live now, published since" : "Live"}</>}>
+        {row.live === undefined ? <Quiet>Not set</Quiet> : <OptionValue change={{ ...outer, kind: "set", after: row.live }} live={row.live} />}
+      </ChoiceCard>
+      {visible.map(option => (
+        <ChoiceCard key={option.owners[0]} tone="person" checked={sameChoice(choice, { use: option.owners[0]! })} disabled={readOnly}
+          onSelect={() => onChoose({ use: option.owners[0]! })}
+          head={<><PersonFaces people={option.owners.map(faceOf)} count={false} /> {who(option.owners)}{option.owners.length > 1 && <span className="text-muted-foreground/70">· same change</span>}</>}>
+          {option.entries.map(entry => <OptionValue key={entry.change.path} change={entry.change} live={row.live} />)}
+        </ChoiceCard>
+      ))}
+      {options.length > SHOWN_OPTIONS && (
+        <button type="button" className="w-fit text-xs text-muted-foreground underline underline-offset-3 hover:text-foreground" onClick={() => setAll(!all)}>
+          {all ? "Show fewer" : `Show ${options.length - SHOWN_OPTIONS} more ${options.length - SHOWN_OPTIONS === 1 ? "version" : "versions"}`}
+        </button>
       )}
-      {compact ? (
-        <div className="flex flex-wrap gap-1.5">
-          {visible.map((option, i) => (
-            <ChoiceButton key={option.owners[0]} disabled={readOnly} pressed={sameChoice(choice, { use: option.owners[0]! })}
-              onClick={() => onChoose({ use: option.owners[0]! })} title={who(option.owners)}>
-              <PersonFaces people={people(option.owners)} max={2} />
-              <span className="max-w-60 truncate"><Value change={outer} value={values[i]} /></span>
-            </ChoiceButton>
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {visible.map(option => (
-            <button key={option.owners[0]} type="button" disabled={readOnly} aria-pressed={sameChoice(choice, { use: option.owners[0]! })}
-              onClick={() => onChoose({ use: option.owners[0]! })}
-              className={cn("flex w-full flex-col gap-1.5 rounded-[10px] bg-background p-2.5 text-left shadow-[inset_0_0_0_1px] shadow-foreground/10 transition-shadow enabled:hover:shadow-foreground/25 disabled:cursor-default",
-                sameChoice(choice, { use: option.owners[0]! }) && "shadow-[inset_0_0_0_2px] shadow-primary enabled:hover:shadow-primary")}>
-              <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                <PersonFaces people={people(option.owners)} count={false} />
-                <span className="truncate">{who(option.owners)}</span>
-              </span>
-              {option.entries.map(entry => <OptionValue key={entry.change.path} change={entry.change} live={row.live} />)}
-            </button>
-          ))}
-          {options.length > SHOWN_OPTIONS && (
-            <button type="button" className="w-fit text-xs text-muted-foreground underline underline-offset-3 hover:text-foreground" onClick={() => setAll(!all)}>
-              {all ? "Show fewer" : `Show ${options.length - SHOWN_OPTIONS} more ${options.length - SHOWN_OPTIONS === 1 ? "version" : "versions"}`}
-            </button>
-          )}
-        </div>
+      {typing && (
+        <ChoiceCard tone="own" checked disabled={readOnly} onSelect={() => {}} head={<><PencilLineIcon className="size-3.5" /> Your own value</>}>
+          <Input autoFocus value={(choice as { value: string }).value} onChange={e => onChoose({ value: e.target.value })}
+            onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
+            aria-label={`Value for ${outer.label.join(" ")}`} placeholder="What to publish" />
+        </ChoiceCard>
       )}
       {!readOnly && (
-        <div className="flex flex-wrap gap-1.5">
-          <ChoiceButton tone="live" pressed={sameChoice(choice, { use: "live" })} onClick={() => onChoose({ use: "live" })}
-            title={row.live === undefined ? undefined : "Keep what's published"}>
-            <Undo2Icon className="size-3.5" />
-            {compact && row.live !== undefined ? <span className="max-w-48 truncate">Keep <Value change={outer} value={row.live} /></span> : <span>Keep live</span>}
-          </ChoiceButton>
-          {typable && (
-            <ChoiceButton tone="own" pressed={typing} onClick={() => onChoose({ value: typing ? (choice as { value: string }).value : "" })}>
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {typable && !typing && (
+            <ChoiceButton tone="own" pressed={false} onClick={() => onChoose({ value: "" })}>
               <PencilLineIcon className="size-3.5" /> Write my own
             </ChoiceButton>
           )}
           <ChoiceButton tone="later" pressed={choice === "later"} onClick={() => onChoose("later")}>
-            <ClockIcon className="size-3.5" /> Later
+            <ClockIcon className="size-3.5" /> Decide later
           </ChoiceButton>
         </div>
       )}
-      {typing && (
-        <Input autoFocus value={(choice as { value: string }).value} onChange={e => onChoose({ value: e.target.value })}
-          aria-label={`Value for ${outer.label.join(" ")}`} placeholder="What to publish" />
-      )}
+    </div>
+  );
+}
+
+/**
+ * One side of a choice, as a card: who (or "Live") on top, the value under it. Not a button, so a file
+ * inside can still be opened; it acts as a radio by click, Enter or Space.
+ */
+function ChoiceCard({ tone, checked, disabled, onSelect, head, children }: {
+  tone: "person" | "live" | "own",
+  checked: boolean,
+  disabled?: boolean,
+  onSelect(): void,
+  head: ReactNode,
+  children: ReactNode
+}) {
+  const ring = { person: "shadow-primary hover:shadow-primary", live: "shadow-sky-500 hover:shadow-sky-500", own: "shadow-violet-500 hover:shadow-violet-500" }[tone];
+  const color = { person: "text-muted-foreground", live: "text-sky-700 dark:text-sky-300", own: "text-violet-700 dark:text-violet-300" }[tone];
+  return (
+    <div
+      role="radio"
+      aria-checked={checked}
+      aria-disabled={disabled || undefined}
+      tabIndex={disabled ? -1 : 0}
+      onClick={() => !disabled && onSelect()}
+      onKeyDown={event => {
+        if(disabled || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        onSelect();
+      }}
+      className={cn("flex flex-col gap-1.5 rounded-[10px] bg-background p-2.5 shadow-[inset_0_0_0_1px] shadow-foreground/10 transition-shadow outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        !disabled && "cursor-pointer hover:shadow-foreground/25", checked && cn("shadow-[inset_0_0_0_2px] hover:shadow-[inset_0_0_0_2px]", ring))}
+    >
+      <span className={cn("flex min-w-0 items-center gap-2 text-xs", color)}>
+        {head}
+        {checked && <CheckIcon className="ml-auto size-3.5 shrink-0" aria-hidden />}
+      </span>
+      {children}
     </div>
   );
 }
@@ -875,31 +891,57 @@ function fileKind(filename: string, mime: string): string {
 
 /**
  * A file as a card: a preview (the image itself, a video's first frame, or an icon for anything else)
- * beside its name, kind and size, so two files can be told apart even when they look alike. No players:
- * it may sit inside a choice.
+ * beside its name, where it lives, its kind and size. Clicking it opens a bigger preview with the file's
+ * details and a link to it in the media library. No players inline: it may sit inside a choice.
  */
 function AssetThumb({ value }: { value: unknown }) {
+  const { session } = useAdmin();
   const asset = useAsset(assetId(value));
   if(value === undefined || value === null) return <span className="flex h-14 w-fit items-center rounded-[10px] px-3 text-xs text-muted-foreground well">No file</span>;
   if(!asset.data) return <span className="inline-block h-14 w-48 rounded-[10px] well" />;
-  const { url, filename, mime, size } = asset.data;
+  const file = asset.data;
   const tile = "relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-background shadow-[0_0_0_1px] shadow-foreground/10";
+  const where = file.folder ?? "Media library";
   return (
-    <span className="flex h-14 max-w-64 min-w-0 items-center gap-2.5 rounded-[10px] py-2 pr-3 pl-2 shadow-[inset_0_0_0_1px] shadow-foreground/10 well" title={filename}>
-      {mime.startsWith("image/") ? (
-        <img src={url} alt="" className={cn(tile, "object-cover")} />
-      ) : mime.startsWith("video/") ? (
-        <span className={cn(tile, "bg-black")}>
-          <video src={`${url}#t=0.1`} preload="metadata" muted playsInline className="absolute inset-0 size-full object-cover" />
-          <PlayIcon className="relative size-4 fill-white text-white drop-shadow" aria-hidden />
-        </span>
-      ) : (
-        <span className={tile}><FileGlyph mime={mime} className="size-5" /></span>
-      )}
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate text-sm">{filename}</span>
-        <span className="text-[11px] text-muted-foreground tabular-nums">{fileKind(filename, mime)} · {formatBytes(size)}</span>
-      </span>
-    </span>
+    <Popover>
+      <PopoverTrigger render={
+        <button type="button" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}
+          className="flex h-14 max-w-72 min-w-0 items-center gap-2.5 rounded-[10px] py-2 pr-3 pl-2 text-left shadow-[inset_0_0_0_1px] shadow-foreground/10 transition-shadow well hover:shadow-foreground/25"
+          aria-label={`${file.filename}, in ${where}. Show details`}>
+          {file.mime.startsWith("image/") ? (
+            <img src={file.url} alt="" className={cn(tile, "object-cover")} />
+          ) : file.mime.startsWith("video/") ? (
+            <span className={cn(tile, "bg-black")}>
+              <video src={`${file.url}#t=0.1`} preload="metadata" muted playsInline className="absolute inset-0 size-full object-cover" />
+              <PlayIcon className="relative size-4 fill-white text-white drop-shadow" aria-hidden />
+            </span>
+          ) : (
+            <span className={tile}><FileGlyph mime={file.mime} className="size-5" /></span>
+          )}
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-sm">{file.filename}</span>
+            <span className="truncate text-[11px] text-muted-foreground tabular-nums">{where} · {fileKind(file.filename, file.mime)} · {formatBytes(file.size)}</span>
+          </span>
+        </button>
+      } />
+      <PopoverContent align="start" className="w-80 gap-3 p-3" onClick={event => event.stopPropagation()}>
+        <div className="overflow-hidden rounded-[10px] well">
+          <AssetPreview asset={file} />
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium [overflow-wrap:anywhere]">{file.filename}</span>
+          <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{file.folder ? `${file.folder}/${file.filename}` : file.filename}</span>
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">File</dt><dd>{describeAsset(file)}</dd>
+          {typeof file.meta.alt === "string" && file.meta.alt && <><dt className="text-muted-foreground">Alt text</dt><dd>{file.meta.alt}</dd></>}
+          <dt className="text-muted-foreground">Uploaded</dt><dd>{formatDate(file.createdAt)} by {displayUser(file.createdBy, session)}</dd>
+        </dl>
+        <Link to={`/media?file=${encodeURIComponent(file.id)}`} target="_blank" rel="noreferrer"
+          className="inline-flex w-fit items-center gap-1 text-xs underline underline-offset-3 hover:text-foreground">
+          Open in the media library <ExternalLinkIcon className="size-3" />
+        </Link>
+      </PopoverContent>
+    </Popover>
   );
 }
