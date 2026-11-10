@@ -512,8 +512,8 @@ function SiteWarningsBanner() {
 function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: string): void }) {
   const { config } = useAdmin();
   const { path } = useLocation();
-  // The editor header has its own language tabs.
-  if(match("/content/:type/:id", path)) return null;
+  // The editor header has its own language tabs; its review is of the language it came from, and its header holds Publish.
+  if(match("/content/:type/:id", path) || match("/content/:type/:id/review", path)) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="h-8 rounded-[10px]"><LanguagesIcon /> {localeName(locale)}</Button>} />

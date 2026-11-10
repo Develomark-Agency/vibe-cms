@@ -4,7 +4,6 @@ import {
   CalendarClockIcon,
   CheckIcon,
   ChevronLeftIcon,
-  ChevronDownIcon,
   CircleCheckIcon,
   ClockIcon,
   CloudUploadIcon,
@@ -27,14 +26,6 @@ import type { BranchChanges, DocumentState } from "../../handler/engine.ts";
 import type { Via } from "../../handler/activity.ts";
 import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger
-} from "../components/ui/dropdown-menu.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
@@ -129,6 +120,12 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState<string | null>(null);
   const publishButton = useRef<HTMLButtonElement>(null);
+  const schedulePanel = useRef<HTMLDivElement>(null);
+  const isScheduling = scheduling !== null;
+  // On a phone the sidebar is under the changes: bring the schedule into view when it opens.
+  useEffect(() => {
+    if(isScheduling) schedulePanel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [isScheduling]);
 
   function reset() {
     setUnticked(new Set());
@@ -235,65 +232,62 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
   const shown = onlyChoices ? rows.filter(row => row.kind === "choice") : rows;
   const conflicts = rows.length - clean.length;
 
+  function discardFor(owner: string) {
+    return canPublish || owner === session.user.sub ? () => discard(owner) : undefined;
+  }
+  const status = error ?? reason ?? (undecided > 0 ? `${undecided} skipped` : null);
+
   return (
     <div className="flex min-h-full flex-col">
-      <header className="sticky top-0 z-20 flex items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
+      {/* The editor's header, with this page's actions where the editor has Save and Review. */}
+      <header className="sticky top-0 z-20 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur-md md:px-6">
         <Button variant="ghost" size="icon-sm" className="-ml-1.5 rounded-[8px] md:-ml-3.5" aria-label="Back to the editor" nativeButton={false} render={<Link to={editorPath} />}>
           <ChevronLeftIcon />
         </Button>
-        <h1 className="min-w-0 truncate text-[15px] font-semibold">Review “{title}”</h1>
-      </header>
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-6 md:px-8">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm text-muted-foreground">
-          {changes.isPending ? "Checking what's changed…"
-            : !branches.length ? "There are no unpublished changes."
-              : (
-                <>
-                  <span>{canPublish ? `${chosen.length} of ${rows.length} selected` : `${rows.length} unpublished ${rows.length === 1 ? "change" : "changes"}`} from</span>
-                  {/* A few people by name; the rest behind "+N", so twenty contributors don't fill the header. */}
-                  {branches.slice(0, branches.length > 4 ? 3 : 4).map(branch => (
-                    <span key={branch.owner} className="max-sm:hidden">
-                      <PersonChip branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)}
-                        onDiscard={canPublish || branch.owner === session.user.sub ? () => discard(branch.owner) : undefined} />
-                    </span>
-                  ))}
-                  {branches.length > 4 && (
-                    <span className="max-sm:hidden">
-                      <MorePeople branches={branches.slice(3)} label={`${branches.length - 3} more`} nameOf={nameOf} faceOf={faceOf}
-                        onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
-                    </span>
-                  )}
-                  {/* On a phone, everyone sits behind one menu, so the header stays one line. */}
-                  <span className="sm:hidden">
-                    <MorePeople branches={branches} label={branches.length === 1 ? nameOf(branches[0]!.owner) : `${branches.length} people`} nameOf={nameOf} faceOf={faceOf}
-                      onDiscard={owner => (canPublish || owner === session.user.sub ? () => discard(owner) : undefined)} />
-                  </span>
-                </>
-              )}
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-[15px] font-semibold">{title}</h1>
+          <p className="truncate text-xs text-muted-foreground">
+            {changes.isPending ? "Checking what's changed…" : !rows.length ? "No unpublished changes" : canPublish ? `Review · ${chosen.length} of ${rows.length} selected` : `Review · ${rows.length} unpublished`}
+          </p>
         </div>
-
-        {canPublish && rows.length > 0 && (clean.length > 1 || rows.length > MANY_ROWS) && (
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            {clean.length > 1 && (
-              <label className="flex items-center gap-2">
-                <Checkbox checked={allClean} indeterminate={!allClean && clean.some(row => !unticked.has(row.id))}
-                  onCheckedChange={checked => setUnticked(checked ? new Set() : new Set(clean.map(row => row.id)))} />
-                Select all
-              </label>
-            )}
-            {conflicts > 0 && rows.length > MANY_ROWS && (
-              <button type="button" className={cn("ml-auto rounded-full px-2 py-0.5", onlyChoices ? "bg-amber-500/15 text-amber-800 dark:text-amber-300" : "hover:text-foreground")}
-                aria-pressed={onlyChoices} onClick={() => setOnlyChoices(!onlyChoices)}>
-                {onlyChoices ? `Showing ${conflicts} to decide` : `Only show ${conflicts} to decide`}
-              </button>
-            )}
+        {canPublish && (
+          <div className="flex items-center gap-1.5">
+            <Button variant="outline" size="sm" disabled={busy || reason !== null} aria-label="Schedule"
+              onClick={() => setScheduling(scheduling === null ? toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)) : null)}>
+              <CalendarClockIcon /> <span className="max-sm:hidden">Schedule…</span>
+            </Button>
+            <Button ref={publishButton} size="sm" disabled={busy || reason !== null} onClick={() => void publish()}>
+              {busy && scheduling === null ? <Spinner /> : <CloudUploadIcon />} Publish{chosen.length ? <> {chosen.length}<span className="max-sm:hidden"> {chosen.length === 1 ? "change" : "changes"}</span></> : ""}
+            </Button>
           </div>
         )}
+      </header>
 
-        <div>
-          {changes.isPending && <Skeleton className="h-24 w-full" />}
+      <div className="mx-auto grid w-full max-w-6xl flex-1 items-start gap-8 px-4 py-6 md:px-8 lg:grid-cols-[minmax(0,1fr)_17rem]">
+        <main className="flex min-w-0 flex-col gap-3">
+          {canPublish && rows.length > 0 && (clean.length > 1 || rows.length > MANY_ROWS) && (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              {clean.length > 1 && (
+                <label className="flex items-center gap-2">
+                  <Checkbox checked={allClean} indeterminate={!allClean && clean.some(row => !unticked.has(row.id))}
+                    onCheckedChange={checked => setUnticked(checked ? new Set() : new Set(clean.map(row => row.id)))} />
+                  Select all
+                </label>
+              )}
+              {conflicts > 0 && rows.length > MANY_ROWS && (
+                <button type="button" className={cn("ml-auto rounded-full px-2 py-0.5 text-xs", onlyChoices ? "bg-amber-500/15 text-amber-800 dark:text-amber-300" : "hover:text-foreground")}
+                  aria-pressed={onlyChoices} onClick={() => setOnlyChoices(!onlyChoices)}>
+                  {onlyChoices ? `Showing ${conflicts} to decide` : `Only show ${conflicts} to decide`}
+                </button>
+              )}
+            </div>
+          )}
+          {changes.isPending && <Skeleton className="h-40 w-full" />}
+          {!changes.isPending && !rows.length && (
+            <p className="rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Everything on this document is published.</p>
+          )}
           {shown.length > 0 && (
-            <ul className="flex flex-col divide-y overflow-hidden rounded-[14px] well">
+            <ul className="flex flex-col divide-y overflow-hidden rounded-[16px] well">
               {shown.map(row => (
                 <ReviewRow
                   key={row.id}
@@ -316,49 +310,40 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
               ))}
             </ul>
           )}
-        </div>
+        </main>
 
-        {scheduling !== null && (
-          <div className="flex flex-wrap items-center gap-2 rounded-[14px] bg-violet-500/8 p-3 shadow-[inset_0_0_0_1px] shadow-violet-500/20">
-            <CalendarClockIcon className="size-4 text-violet-600" />
-            <span>Publish at</span>
-            <Input type="datetime-local" className="w-auto" value={scheduling} onChange={e => setScheduling(e.target.value)} aria-label="When to publish" />
-            <span className="basis-full text-xs text-muted-foreground">Captured now: later saves aren't included.</span>
-          </div>
-        )}
-
-      </main>
-      {/* Stays in reach at the bottom however long the list. One row at every width: the note takes its own line on a phone, and Schedule shrinks to its icon. */}
-      <footer className="sticky bottom-0 z-20 border-t bg-background/95 backdrop-blur-md" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
-        <div className="mx-auto flex w-full max-w-3xl flex-row flex-wrap items-center justify-end gap-2 px-4 py-3 md:px-8">
-          {(error || reason || undecided > 0) && canPublish && (
-            <p className={cn("mr-auto basis-full text-xs sm:basis-auto", error ? "text-destructive" : "text-muted-foreground")}>
-              {error ?? reason ?? `${undecided} skipped`}
-            </p>
+        {/* Like the editor's sidebar: what's going on, and who. Under the changes on a phone, which come first. */}
+        <aside className="flex flex-col gap-4 lg:sticky lg:top-20">
+          {(status || scheduling !== null) && canPublish && (
+            <section className={cn("flex flex-col gap-3 rounded-[16px] p-4 elevated", error && "shadow-[inset_0_0_0_1px] shadow-destructive/30")}>
+              {status && <p className={cn("text-sm", error ? "text-destructive" : "text-muted-foreground")}>{status}</p>}
+              {scheduling !== null && (
+                <div className="flex flex-col gap-2" ref={schedulePanel}>
+                  <h3 className="flex items-center gap-1.5 text-sm font-medium text-violet-700 dark:text-violet-300"><CalendarClockIcon className="size-3.5" /> Schedule</h3>
+                  <Input type="datetime-local" value={scheduling} onChange={e => setScheduling(e.target.value)} aria-label="When to publish" />
+                  <p className="text-xs text-muted-foreground">What's selected now is captured; later saves aren't included.</p>
+                  <div className="flex gap-1.5">
+                    <Button size="sm" disabled={busy || reason !== null || !scheduling} onClick={() => void publish(new Date(scheduling).toISOString())}>
+                      {busy ? <Spinner /> : <CalendarClockIcon />} Schedule{chosen.length ? ` ${counted}` : ""}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setScheduling(null)}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+            </section>
           )}
-          {!canPublish ? (
-            <Button variant="outline" nativeButton={false} render={<Link to={editorPath} />}>Back to the editor</Button>
-          ) : scheduling === null ? (
-            <>
-              <Button variant="ghost" disabled={busy || reason !== null} aria-label="Schedule" className="max-sm:mr-auto max-sm:px-2"
-                onClick={() => setScheduling(toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)))}>
-                <CalendarClockIcon /> <span className="max-sm:hidden">Schedule…</span>
-              </Button>
-              <Button variant="outline" nativeButton={false} render={<Link to={editorPath} />}>Cancel</Button>
-              <Button ref={publishButton} disabled={busy || reason !== null} onClick={() => void publish()}>
-                {busy ? <Spinner /> : <CloudUploadIcon />} Publish{chosen.length ? ` ${counted}` : ""}
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="outline" className="max-sm:mr-auto" onClick={() => setScheduling(null)}>Back</Button>
-              <Button disabled={busy || reason !== null || !scheduling} onClick={() => void publish(new Date(scheduling).toISOString())}>
-                {busy ? <Spinner /> : <CalendarClockIcon />} Schedule{chosen.length ? ` ${counted}` : ""}
-              </Button>
-            </>
+          {branches.length > 0 && (
+            <section className="flex flex-col gap-2 rounded-[16px] p-4 elevated">
+              <h3 className="text-sm font-medium">{branches.length === 1 ? "1 person" : `${branches.length} people`}</h3>
+              <ul className={cn("flex flex-col gap-1", branches.length > 8 && "max-h-96 overflow-y-auto")}>
+                {branches.map(branch => (
+                  <PersonRow key={branch.owner} branch={branch} name={nameOf(branch.owner)} face={faceOf(branch.owner)} onDiscard={discardFor(branch.owner)} />
+                ))}
+              </ul>
+            </section>
           )}
-        </div>
-      </footer>
+        </aside>
+      </div>
     </div>
   );
 }
@@ -392,89 +377,37 @@ function toLocalInput(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** A person whose changes are in the review: their face and name, and a menu to discard what they changed. */
-function PersonChip({ branch, name, face, onDiscard }: { branch: BranchChanges, name: string, face: FacePerson, onDiscard?: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
-  const via = branch.via !== "ui" ? `via ${VIA_LABELS[branch.via as Via] ?? branch.via}` : null;
+/** Someone whose changes are in the review: who, where from and when, and a way to discard what they changed. */
+function PersonRow({ branch, name, face, onDiscard }: { branch: BranchChanges, name: string, face: FacePerson, onDiscard?: () => Promise<void> }) {
+  const via = branch.via !== "ui" ? `${VIA_LABELS[branch.via as Via] ?? branch.via} · ` : "";
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={
-        <button type="button" className="inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-foreground well hover:bg-foreground/[0.06]">
-          <PersonFace {...face} className="ring-0" />
-          <span className="text-xs font-medium">{name}</span>
-          <ChevronDownIcon className="size-3 text-muted-foreground" />
-        </button>
-      } />
-      <DropdownMenuContent align="start" className="w-60">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel className="font-normal">
-            <span className="block font-medium text-foreground">{name}</span>
-            <span className="block text-xs text-muted-foreground" title={formatDate(branch.updatedAt)}>
-              {[via, `saved ${formatRelative(branch.updatedAt)}`].filter(Boolean).join(" · ")}
-            </span>
-          </DropdownMenuLabel>
-        </DropdownMenuGroup>
-        {onDiscard && (
-          <DropdownMenuItem variant="destructive" disabled={busy} onClick={async () => {
-            setBusy(true);
-            await onDiscard();
-            setBusy(false);
-          }}>
-            Discard {name === "You" ? "your" : `${name.split(/\s+/)[0]}'s`} changes
-          </DropdownMenuItem>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function MorePeople({ branches, label, nameOf, faceOf, onDiscard }: {
-  branches: BranchChanges[],
-  label: string,
-  nameOf(owner: string): string,
-  faceOf(owner: string): FacePerson,
-  onDiscard(owner: string): (() => Promise<void>) | undefined
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={
-        <button type="button" className="inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 text-foreground well hover:bg-foreground/[0.06]">
-          <PersonFaces people={branches.map(b => faceOf(b.owner))} max={3} count={false} />
-          <span className="text-xs font-medium">{label}</span>
-          <ChevronDownIcon className="size-3 text-muted-foreground" />
-        </button>
-      } />
-      <DropdownMenuContent align="start" className="max-h-80 w-72 overflow-y-auto">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Choose someone to discard their changes</DropdownMenuLabel>
-          {/* Discarding is the only thing to do with someone here, so choosing them asks to. */}
-          {branches.map(branch => {
-            const discard = onDiscard(branch.owner);
-            const name = nameOf(branch.owner);
-            const via = branch.via !== "ui" ? `${VIA_LABELS[branch.via as Via] ?? branch.via} · ` : "";
-            return (
-              <DropdownMenuItem key={branch.owner} disabled={!discard} onClick={async () => {
-                if(!discard) return;
+    <li className="group/person -mx-1.5 flex items-center gap-2.5 rounded-[10px] px-1.5 py-1 hover:bg-foreground/[0.04]">
+      <PersonFace {...face} className="ring-0" />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sm">{name}</span>
+        <span className="truncate text-xs text-muted-foreground" title={formatDate(branch.updatedAt)}>{via}{formatRelative(branch.updatedAt)}</span>
+      </span>
+      {onDiscard && (
+        <Tooltip>
+          <TooltipTrigger render={
+            <Button variant="ghost" size="icon-xs" aria-label={`Discard ${name === "You" ? "your" : `${name}'s`} changes`}
+              className="text-muted-foreground opacity-60 group-hover/person:opacity-100 focus-visible:opacity-100"
+              onClick={async () => {
                 const ok = await askConfirm({
-                  title: `Discard ${name}'s changes?`,
-                  description: "Their unpublished changes to this document are thrown away. This can't be undone.",
+                  title: name === "You" ? "Discard your changes?" : `Discard ${name}'s changes?`,
+                  description: "These unpublished changes to the document are thrown away. This can't be undone.",
                   action: "Discard",
                   destructive: true
                 });
-                if(ok) await discard();
+                if(ok) await onDiscard();
               }}>
-                <PersonFace {...faceOf(branch.owner)} className="ring-0" />
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate">{name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{via}{formatRelative(branch.updatedAt)}</span>
-                </span>
-                <Trash2Icon className="text-muted-foreground" />
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+              <Trash2Icon />
+            </Button>
+          } />
+          <TooltipContent>Discard {name === "You" ? "your" : "their"} changes</TooltipContent>
+        </Tooltip>
+      )}
+    </li>
   );
 }
 
