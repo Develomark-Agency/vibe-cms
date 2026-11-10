@@ -38,6 +38,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/toolti
 import { Link, navigate } from "./router.tsx";
 import { PersonFace, PersonFaces, type FacePerson } from "./person.tsx";
 import { askConfirm } from "./confirm.tsx";
+import { useArrival } from "./delayed.tsx";
+import { staggerIndex } from "./pages.tsx";
 
 /** One person's change, as publishing names it: `owner` + `change.path`. */
 interface Entry {
@@ -232,6 +234,7 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
   const shown = onlyChoices ? rows.filter(row => row.kind === "choice") : rows;
   const conflicts = rows.length - clean.length;
 
+  const arrival = useArrival(!changes.isPending);
   function discardFor(owner: string) {
     return canPublish || owner === session.user.sub ? () => discard(owner) : undefined;
   }
@@ -287,10 +290,11 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
             <p className="rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Everything on this document is published.</p>
           )}
           {shown.length > 0 && (
-            <ul className="flex flex-col divide-y overflow-hidden rounded-[16px] well">
-              {shown.map(row => (
+            <ul className="stagger flex flex-col divide-y overflow-hidden rounded-[16px] well">
+              {shown.map((row, i) => (
                 <ReviewRow
                   key={row.id}
+                  index={i}
                   row={row}
                   nameOf={nameOf}
                   faceOf={faceOf}
@@ -314,7 +318,7 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
 
         {/* Like the editor's sidebar: what's going on, and who. Under the changes on a phone, which come first. */}
         {/* Pinned while the changes scroll, and never taller than the window under the app bar and this header (10.5rem): the people list scrolls instead. */}
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-20 lg:max-h-[calc(100dvh-10.5rem)]">
+        <aside className={cn("flex flex-col gap-4 lg:sticky lg:top-20 lg:max-h-[calc(100dvh-10.5rem)]", arrival)}>
           {(status || scheduling !== null) && canPublish && (
             <section className={cn("flex flex-col gap-3 rounded-[16px] p-4 elevated", error && "shadow-[inset_0_0_0_1px] shadow-destructive/30")}>
               {status && <p className={cn("text-sm", error ? "text-destructive" : "text-muted-foreground")}>{status}</p>}
@@ -412,8 +416,10 @@ function PersonRow({ branch, name, face, onDiscard }: { branch: BranchChanges, n
   );
 }
 
-function ReviewRow({ row, nameOf, faceOf, readOnly, ticked, onTick, choice, open, onChoose, onReopen }: {
+function ReviewRow({ row, index, nameOf, faceOf, readOnly, ticked, onTick, choice, open, onChoose, onReopen }: {
   row: Row,
+  /** Its place in the list, for the arriving cascade. */
+  index: number,
   nameOf(owner: string): string,
   faceOf(owner: string): FacePerson,
   readOnly: boolean,
@@ -430,7 +436,7 @@ function ReviewRow({ row, nameOf, faceOf, readOnly, ticked, onTick, choice, open
   // Unsettled clashes are amber; a settled one takes the color of its answer, as its button had.
   const tone = row.kind === "clean" ? "" : !settled ? "bg-amber-500/[0.07]" : { person: "bg-emerald-500/[0.06]", live: "bg-sky-500/[0.06]", own: "bg-violet-500/[0.06]", later: "" }[kind!];
   return (
-    <li className={cn("flex items-start gap-3 px-3 py-2.5 transition-colors", tone)}>
+    <li style={staggerIndex(index)} className={cn("flex items-start gap-3 px-3 py-2.5 transition-colors", tone)}>
       <span className="flex h-5 w-4 shrink-0 items-center justify-center">
         {row.kind === "clean"
           ? !readOnly && <Checkbox checked={ticked} onCheckedChange={checked => onTick(Boolean(checked))} aria-label={`Publish ${row.outer.label.join(" ")}`} />

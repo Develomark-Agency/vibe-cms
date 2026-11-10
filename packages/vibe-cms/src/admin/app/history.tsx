@@ -15,6 +15,7 @@ import { Field } from "./fields.tsx";
 import { ChangeView, FieldName } from "./publish.tsx";
 import { Link, navigate, useLocation } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
+import { staggerIndex } from "./pages.tsx";
 
 type Tab = "versions" | "activity";
 
@@ -118,14 +119,15 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
   }
 
   if(versions.isPending) return <Delayed><Skeleton className="h-48 w-full" /></Delayed>;
-  if(!list.length) return <p className="rounded-[14px] p-8 text-center text-sm text-muted-foreground well">Not published yet. Each publish is kept here.</p>;
+  if(!list.length) return <p className="rise-in rounded-[14px] p-8 text-center text-sm text-muted-foreground well">Not published yet. Each publish is kept here.</p>;
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
       <aside className="lg:sticky lg:top-20">
-        <ul className="flex flex-col gap-0.5 max-lg:max-h-64 max-lg:overflow-y-auto lg:max-h-[calc(100dvh-10.5rem)] lg:overflow-y-auto">
-          {list.map(v => (
-            <li key={v.ver}>
+        {/* Padded inside its scroll box, so the selected version's raised shadow isn't cut off. */}
+        <ul className="stagger -m-1.5 flex flex-col gap-0.5 p-1.5 max-lg:max-h-64 max-lg:overflow-y-auto lg:max-h-[calc(100dvh-10.5rem)] lg:overflow-y-auto">
+          {list.map((v, i) => (
+            <li key={v.ver} style={staggerIndex(i)}>
               <button type="button" onClick={() => setPicked(v.ver)} aria-current={selected === v.ver || undefined}
                 className={cn("flex w-full flex-col rounded-[10px] px-3 py-2 text-left text-sm transition-colors hover:bg-foreground/[0.04]", selected === v.ver && "raised")}>
                 <span className="flex items-center gap-2 font-medium">
@@ -158,17 +160,18 @@ function Versions({ type, id, liveVer, canRestore, editorPath }: { type: string,
 
         {!current.data ? <Delayed><Skeleton className="h-40 w-full" /></Delayed>
           : whole ? (
-            <div className="pointer-events-none flex flex-col gap-6 rounded-[16px] p-5 elevated">
+            <div key={`whole-${selected}`} className="rise-in pointer-events-none flex flex-col gap-6 rounded-[16px] p-5 elevated">
               {Object.entries(schema.shape).map(([key, field]) => (
                 <Field key={key} schema={field} name={key} path={[key]} value={(current.data.data as DocumentData)[key]} issues={[]} readOnly doc={{ type, id }} onChange={() => {}} />
               ))}
             </div>
           ) : !changes.length ? (
-            <p className="rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Published with no changes from version {previous}.</p>
+            <p key={`none-${selected}`} className="rise-in rounded-[14px] p-6 text-center text-sm text-muted-foreground well">Published with no changes from version {previous}.</p>
           ) : (
-            <ul className="flex flex-col divide-y overflow-hidden rounded-[16px] well">
-              {changes.map(change => (
-                <li key={change.path} className="flex flex-col gap-1.5 px-4 py-3">
+            // Keyed by version, so picking another one plays the cascade again.
+            <ul key={`changes-${selected}`} className="stagger flex flex-col divide-y overflow-hidden rounded-[16px] well">
+              {changes.map((change, i) => (
+                <li key={change.path} style={staggerIndex(i)} className="flex flex-col gap-1.5 px-4 py-3">
                   <FieldName change={change} />
                   <ChangeView change={change} />
                 </li>
