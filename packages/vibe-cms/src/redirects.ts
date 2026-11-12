@@ -43,7 +43,57 @@ export function variablesOf(path: string): string[] {
 
 /** Whether a path has a variable or a wildcard, so more than one request can match it. */
 export function isDynamic(path: string): boolean {
-  return isWildcard(path) || /\{[^{}/]*\}/.test(path);
+  return isWildcard(path) || path.includes("?") || /\{[^{}/]*\}/.test(path);
+}
+
+/** A rule's `from`, apart: the path, and the query parameters it asks for (`/place?town={name}`). No `?`, no parameters. */
+export function fromParts(from: string): { path: string, query: Array<[string, string]> } {
+  const mark = from.indexOf("?");
+  if(mark < 0) return { path: from, query: [] };
+  return {
+    path: from.slice(0, mark),
+    query: from.slice(mark + 1).split("&").map(pair => {
+      const equals = pair.indexOf("=");
+      return (equals < 0 ? [pair, ""] : [pair.slice(0, equals), pair.slice(equals + 1)]) as [string, string];
+    })
+  };
+}
+
+/** A `from` with its variables' names left out: two rules with the same shape match the same requests. */
+export function shapeOf(from: string): string {
+  return from.replace(VARIABLE, "{}");
+}
+
+function decode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** The query a rule's `from` asks for, checked and in a fixed order, so the same rule can't be added twice by writing it differently. */
+function checkQuery(query: string): { canonical: string, names: string[] } {
+  const pairs = query.split("&");
+  const keys: string[] = [];
+  const names: string[] = [];
+  for(const pair of pairs) {
+    const equals = pair.indexOf("=");
+    if(equals < 1) throw new RedirectError(`“${pair}” in the query needs a name and a value: name=value or name={variable}`);
+    const key = pair.slice(0, equals);
+    const value = pair.slice(equals + 1);
+    if(!/^[\w.~%-]+$/.test(key)) throw new RedirectError(`“${key}” isn't a query parameter name: letters, digits and _ . - ~ only`);
+    if(keys.includes(key)) throw new RedirectError(`The query asks for “${key}” twice`);
+    keys.push(key);
+    const name = /^\{(\w+)\}$/.exec(value)?.[1];
+    if(name) {
+      if(names.includes(name)) throw new RedirectError(`{${name}} is used twice in “from”`);
+      names.push(name);
+    } else if(/[{}=?]/.test(value)) {
+      throw new RedirectError(`“${value}” isn't a value: write a plain value, or a whole variable like {name}`);
+    }
+  }
+  return { canonical: [...pairs].sort((a, b) => (a.split("=")[0]! < b.split("=")[0]! ? -1 : 1)).join("&"), names };
 }
 
 function isAbsolute(target: string): boolean {
@@ -69,11 +119,14 @@ export interface CheckedRule {
  * `prefix` is the editor's mount point (`/_vibe`), which can't be redirected.
  */
 export function checkRule(input: RuleInput, prefix: string): CheckedRule {
-  const from = input.from.trim();
+  const whole = input.from.trim();
   const to = input.to.trim();
-  if(!from.startsWith("/")) throw new RedirectError("“From” has to be a path starting with /");
-  if(/[?#\s]/.test(from)) throw new RedirectError("“From” is a path only: no spaces, query or fragment");
-  const declared = variableProblems(from, to);
+  if(!whole.startsWith("/")) throw new RedirectError("“From” has to be a path starting with /");
+  if(/[#\s]/.test(whole)) throw new RedirectError("“From” can't have spaces or a #");
+  const mark = whole.indexOf("?");
+  const from = mark < 0 ? whole : whole.slice(0, mark);
+  const query = mark < 0 ? null : checkQuery(whole.slice(mark + 1));
+  const declared = variableProblems(from, query?.names ?? [], to);
   if(declared) throw new RedirectError(declared);
   const stars = from.split("*").length - 1;
   if(stars > 1 || (stars === 1 && !from.endsWith("*"))) throw new RedirectError("“From” can have one * and only at the end, like /blog/*");
@@ -107,18 +160,22 @@ export function checkRule(input: RuleInput, prefix: string): CheckedRule {
   const status = input.status ?? 301;
   if(!REDIRECT_STATUSES.includes(status as RedirectStatus)) throw new RedirectError("Status is 301, 302, 307 or 308");
   const target = isAbsolute(to) ? to : to.startsWith("/") ? (to.includes("?") || to.includes("#") ? to : to === "/" || toStars ? to : normalizePath(to)) : to;
-  if(!isWildcard(normalized) && target === normalized) throw new RedirectError("“From” and “to” are the same");
-  return { from: normalized, to: target, status: status as RedirectStatus, keepQuery: input.keepQuery ?? true };
+  if(!query && !isWildcard(normalized) && target === normalized) throw new RedirectError("“From” and “to” are the same");
+  return { from: query ? `${normalized}?${query.canonical}` : normalized, to: target, status: status as RedirectStatus, keepQuery: input.keepQuery ?? true };
 }
 
 /** What's wrong with the variables of a rule, or null. A rule without any (the usual one) is never touched. */
-function variableProblems(from: string, to: string): string | null {
-  if(!/[{}]/.test(from) && !/[{}]/.test(to)) return null;
+function variableProblems(from: string, queryNames: string[], to: string): string | null {
+  if(!/[{}]/.test(from) && !queryNames.length && !/[{}]/.test(to)) return null;
   const names: string[] = [];
   for(const segment of from.split("/")) {
     if(!/[{}]/.test(segment)) continue;
     const name = /^\{(\w+)\}$/.exec(segment)?.[1];
     if(!name) return `“${segment}” isn't a variable: write a whole segment like {name}, with letters, digits or _`;
+    if(names.includes(name)) return `{${name}} is used twice in “from”`;
+    names.push(name);
+  }
+  for(const name of queryNames) {
     if(names.includes(name)) return `{${name}} is used twice in “from”`;
     names.push(name);
   }
@@ -139,10 +196,11 @@ interface Pattern {
   names: string[],
   regex: RegExp,
   /** Fixed segments, for ordering: more specific patterns first. */
-  literals: number
+  literals: number,
+  wildcard: boolean
 }
 
-function compile(rule: MatchRule): Pattern {
+function compile(rule: MatchRule, original: MatchRule = rule): Pattern {
   const names: string[] = [];
   const wildcard = isWildcard(rule.from);
   const body = wildcard ? rule.from.slice(0, -1) : rule.from;
@@ -155,7 +213,7 @@ function compile(rule: MatchRule): Pattern {
     return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   });
   const literals = body.split("/").filter(segment => segment && !/^\{\w+\}$/.test(segment)).length;
-  return { rule, names, regex: new RegExp(`^${parts.join("/")}${wildcard ? "(.+)" : ""}$`), literals };
+  return { rule: original, names, regex: new RegExp(`^${parts.join("/")}${wildcard ? "(.+)" : ""}$`), literals, wildcard };
 }
 
 /** Where a pattern sends a path, or null when it doesn't match. Variables and `*` are filled in as they came in the path. */
@@ -165,6 +223,29 @@ function fillPattern(pattern: Pattern, path: string): string | null {
   const values = new Map(pattern.names.map((name, index) => [name, match[index + 1]!]));
   const rest = isWildcard(pattern.rule.from) ? match[pattern.names.length + 1]! : "";
   return pattern.rule.to.replace(VARIABLE, (_, name: string) => values.get(name) ?? "").replace("*", () => rest);
+}
+
+/** Where a rule that asks for query parameters sends a request, or null when the path or any parameter doesn't match. */
+function fillQueried(pattern: Pattern, pairs: Array<[string, string]>, path: string, raw: Array<[string, string]>): { target: string, consumed: string[] } | null {
+  const match = pattern.regex.exec(path);
+  if(!match) return null;
+  const values = new Map(pattern.names.map((name, index) => [name, match[index + 1]!]));
+  const rest = pattern.wildcard ? match[pattern.names.length + 1]! : "";
+  const consumed: string[] = [];
+  for(const [key, want] of pairs) {
+    const given = raw.find(([name]) => name === key);
+    if(!given) return null;
+    const name = /^\{(\w+)\}$/.exec(want)?.[1];
+    // A variable takes any value but an empty one; as in a path, it's passed on as it came.
+    if(name) {
+      if(given[1] === "") return null;
+      values.set(name, given[1]);
+    } else if(decode(given[1]) !== decode(want)) {
+      return null;
+    }
+    consumed.push(key);
+  }
+  return { target: pattern.rule.to.replace(VARIABLE, (_, name: string) => values.get(name) ?? "").replace("*", () => rest), consumed };
 }
 
 /** What a wildcard rule matched and where it sends the visit; `null` when the rule doesn't apply. */
@@ -181,29 +262,49 @@ export class RedirectIndex {
   private readonly wild: Array<{ prefix: string, rule: MatchRule }> = [];
   /** Rules with `{name}` segments. Empty for a site that doesn't use them, which then never looks here. */
   private readonly patterns: Pattern[] = [];
+  /** Rules that ask for query parameters (`/place?town={name}`). Empty unless the site has any, and then checked first. */
+  private readonly queried: Array<{ pattern: Pattern, pairs: Array<[string, string]> }> = [];
 
   constructor(rules: readonly MatchRule[]) {
     for(const rule of rules) {
-      if(/\{\w+\}/.test(rule.from)) this.patterns.push(compile(rule));
+      if(rule.from.includes("?")) {
+        const { path, query } = fromParts(rule.from);
+        this.queried.push({ pattern: compile({ ...rule, from: path }, rule), pairs: query });
+      } else if(/\{\w+\}/.test(rule.from)) this.patterns.push(compile(rule));
       else if(isWildcard(rule.from)) this.wild.push({ prefix: rule.from.slice(0, -1), rule });
       else this.exact.set(rule.from, rule);
     }
+    // More parameters asked for first, then more fixed segments.
+    this.queried.sort((a, b) => b.pairs.length - a.pairs.length || b.pattern.literals - a.pattern.literals || b.pattern.rule.from.length - a.pattern.rule.from.length);
     this.wild.sort((a, b) => b.prefix.length - a.prefix.length);
     // More fixed segments first, a pattern without a wildcard before one with, then the longer.
     this.patterns.sort((a, b) => b.literals - a.literals || Number(isWildcard(a.rule.from)) - Number(isWildcard(b.rule.from)) || b.rule.from.length - a.rule.from.length);
   }
 
   get size(): number {
-    return this.exact.size + this.wild.length + this.patterns.length;
+    return this.exact.size + this.wild.length + this.patterns.length + this.queried.length;
   }
 
   /** The rule for a normalized path: an exact match first, then patterns with variables, then the longest wildcard prefix. */
-  find(path: string): MatchRule | null {
-    return this.match(path)?.rule ?? null;
+  find(path: string, query = ""): MatchRule | null {
+    return this.match(path, query)?.rule ?? null;
   }
 
-  /** The rule for a path and the target it sends the path to. */
-  match(path: string): { rule: MatchRule, target: string } | null {
+  /**
+   * The rule for a path (and the request's raw query, without the `?`) and the target it sends it to. `consumed`
+   * names the query parameters a rule asked for, which aren't passed on.
+   */
+  match(path: string, query = ""): { rule: MatchRule, target: string, consumed?: string[] } | null {
+    if(this.queried.length && query) {
+      const raw = query.split("&").map(pair => {
+        const equals = pair.indexOf("=");
+        return (equals < 0 ? [decode(pair), ""] : [decode(pair.slice(0, equals)), pair.slice(equals + 1)]) as [string, string];
+      });
+      for(const { pattern, pairs } of this.queried) {
+        const found = fillQueried(pattern, pairs, path, raw);
+        if(found) return { rule: pattern.rule, ...found };
+      }
+    }
     const exact = this.exact.get(path);
     if(exact) return { rule: exact, target: exact.to };
     for(const pattern of this.patterns) {
@@ -229,12 +330,14 @@ export interface Resolved {
  * style, so a site that uses `/about/` doesn't get a second redirect to add it back.
  */
 export function resolveRedirect(index: RedirectIndex, url: URL): Resolved | null {
-  const found = index.match(normalizePath(url.pathname));
+  const found = index.match(normalizePath(url.pathname), url.search.slice(1));
   if(!found) return null;
-  const { rule, target } = found;
+  const { rule, target, consumed } = found;
   let location = target;
   if(target.startsWith("/") && !target.includes("?") && !target.includes("#") && url.pathname.length > 1 && url.pathname.endsWith("/") && target !== "/" && !target.endsWith("/")) location = `${target}/`;
-  if(rule.keepQuery && url.search) location += (location.includes("?") ? "&" : "?") + url.search.slice(1);
+  // The parameters a rule matched on are used up in its target; the rest go along.
+  const passed = consumed ? url.search.slice(1).split("&").filter(pair => pair && !consumed.includes(decode(pair.split("=")[0]!))).join("&") : url.search.slice(1);
+  if(rule.keepQuery && passed) location += (location.includes("?") ? "&" : "?") + passed;
   return { rule, location, status: rule.status };
 }
 
@@ -248,15 +351,16 @@ export function findLoop(rules: readonly MatchRule[], candidate: MatchRule): str
   // Every rule the candidate touches starts a chain: the candidate itself, and rules that lead into it.
   const starts = [candidate, ...others.filter(rule => leadsTo(rule, candidate))];
   for(const start of starts) {
-    let path = sampleOf(start.from);
+    const first = sampleRequest(start.from);
+    let path = first.path;
+    let query = first.query;
     const seen = [path];
     for(let hop = 0; hop < MAX_HOPS; hop++) {
-      const found = index.match(normalizePath(path));
+      const found = index.match(normalizePath(path), query);
       if(!found) break;
       const next = found.target;
       if(!next.startsWith("/")) break;
-      const bare = next.split(/[?#]/)[0]!;
-      path = bare;
+      [path, query = ""] = next.split("#")[0]!.split("?") as [string, string?];
       if(seen.includes(path)) return [...seen, path];
       seen.push(path);
       if(hop === MAX_HOPS - 1) return seen;
@@ -271,15 +375,23 @@ function sampleOf(path: string): string {
   return isWildcard(filled) ? `${filled.slice(0, -1)}sample` : filled;
 }
 
-/** Whether `rule`'s target can land on a path `candidate` matches. */
+/** A request a rule's `from` matches: variables and the wildcard replaced by a word, and the query it asks for. */
+function sampleRequest(from: string): { path: string, query: string } {
+  const { path, query } = fromParts(from);
+  return { path: sampleOf(path), query: query.map(([key, value]) => `${key}=${value.replace(VARIABLE, "sample")}`).join("&") };
+}
+
+/** Whether `rule`'s target can land on a request `candidate` matches. */
 function leadsTo(rule: MatchRule, candidate: MatchRule): boolean {
   if(!rule.to.startsWith("/")) return false;
-  const to = rule.to.split(/[?#]/)[0]!;
-  return new RedirectIndex([candidate]).find(normalizePath(sampleOf(to))) !== null || isWildcard(rule.to) && candidate.from.startsWith(rule.to.slice(0, -1));
+  const [to, query = ""] = rule.to.split("#")[0]!.split("?") as [string, string?];
+  return new RedirectIndex([candidate]).find(normalizePath(sampleOf(to)), query.replace(VARIABLE, "sample")) !== null || isWildcard(rule.to) && candidate.from.startsWith(rule.to.slice(0, -1));
 }
 
 /** The paths a `from` covers that a live page at `path` would be hidden by. */
 export function covers(from: string, path: string): boolean {
+  // A rule that asks for query parameters leaves the page's own address alone.
+  if(from.includes("?")) return false;
   const normalized = normalizePath(path);
   if(variablesOf(from).length) return new RedirectIndex([{ id: "", from, to: "/", status: 301, keepQuery: true }]).find(normalized) !== null;
   if(!isWildcard(from)) return from === normalized;

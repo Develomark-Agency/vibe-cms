@@ -67,7 +67,7 @@ describe("checkRule", () => {
       expect(() => check(from, to)).toThrow(message);
     }
     refused("old", "/new", /starting with \//);
-    refused("/a?b=1", "/new", /path only/);
+    refused("/a#b", "/new", /spaces or a #/);
     refused("/a/*/b", "/new", /only at the end/);
     refused("/blog*", "/new", /after a slash/);
     refused("/*", "/new", /whole site/);
@@ -176,4 +176,80 @@ test("rules without variables behave exactly as before", () => {
   expect(go([rule("/a/b", "/c")], "/a/x")).toBeNull();
   expect(go([rule("/blog/*", "/news/*")], "/blog/x$&y")?.location).toBe("/news/x$&y");
   expect(checkRule({ from: "/a/*", to: "/b/*" }, "/_vibe")).toEqual({ from: "/a/*", to: "/b/*", status: 301, keepQuery: true });
+});
+
+describe("query parameters", () => {
+  const rules = [rule("/place?town={townName}", "/connecticut/{townName}")];
+
+  test("match a parameter and fill the target", () => {
+    expect(go(rules, "/place?town=hartford")?.location).toBe("/connecticut/hartford");
+    expect(go(rules, "/place/?town=hartford")?.location).toBe("/connecticut/hartford/");
+  });
+
+  test("the matched parameter is used up; others go along", () => {
+    expect(go(rules, "/place?x=1&town=hartford&y=2")?.location).toBe("/connecticut/hartford?x=1&y=2");
+    expect(go([{ ...rules[0]!, keepQuery: false }], "/place?x=1&town=hartford")?.location).toBe("/connecticut/hartford");
+  });
+
+  test("no match without the parameter, with it empty, or on another path", () => {
+    expect(go(rules, "/place")).toBeNull();
+    expect(go(rules, "/place?other=1")).toBeNull();
+    expect(go(rules, "/place?town=")).toBeNull();
+    expect(go(rules, "/elsewhere?town=x")).toBeNull();
+  });
+
+  test("values are passed on as they came", () => {
+    expect(go(rules, "/place?town=New%20Haven")?.location).toBe("/connecticut/New%20Haven");
+  });
+
+  test("literal values, several parameters, variables in the target's query", () => {
+    const all = [
+      rule("/s?kind=town&name={n}", "/towns/{n}"),
+      rule("/s?kind=state&name={n}", "/states/{n}?from=search"),
+      rule("/s?name={n}", "/any/{n}")
+    ];
+    expect(go(all, "/s?kind=town&name=a")?.location).toBe("/towns/a");
+    expect(go(all, "/s?name=a&kind=state")?.location).toBe("/states/a?from=search");
+    expect(go(all, "/s?name=a&kind=other")?.location).toBe("/any/a?kind=other");
+  });
+
+  test("with a path variable or wildcard", () => {
+    expect(go([rule("/{state}/find?town={t}", "/{state}/{t}")], "/ct/find?town=x")?.location).toBe("/ct/x");
+    expect(go([rule("/old/*?v=2", "/new/*")], "/old/a/b?v=2")?.location).toBe("/new/a/b");
+  });
+
+  test("a rule with a query wins over one for the same path without", () => {
+    const both = [rule("/place", "/plain"), ...rules];
+    expect(go(both, "/place?town=x")?.location).toBe("/connecticut/x");
+    expect(go(both, "/place")?.location).toBe("/plain");
+    expect(go(both, "/place?other=1")?.location).toBe("/plain?other=1");
+  });
+
+  test("checks", () => {
+    function check(from: string, to: string) {
+      return checkRule({ from, to }, "/_vibe");
+    }
+    expect(check("/place?town={t}", "/c/{t}").from).toBe("/place?town={t}");
+    // Written in any order, the same rule.
+    expect(check("/s?b=2&a=1", "/x").from).toBe("/s?a=1&b=2");
+    expect(() => check("/p?town", "/x")).toThrow(/name=value/);
+    expect(() => check("/p?a={x}&b={x}", "/x")).toThrow(/twice/);
+    expect(() => check("/p?a=1&a=2", "/x")).toThrow(/twice/);
+    expect(() => check("/p?a=x{y}", "/x")).toThrow(/whole variable/);
+    expect(() => check("/p?a={t}", "/c/{nope}")).toThrow(/Available: \{t\}/);
+    expect(() => check("/p/{t}?a={t}", "/x")).toThrow(/twice/);
+    expect(check("/p?a=1", "/p").to).toBe("/p");
+  });
+
+  test("loops and covers", () => {
+    expect(findLoop([rule("/a?x={v}", "/b?x={v}")], rule("/b?x={w}", "/a?x={w}"))).not.toBeNull();
+    expect(findLoop([], rule("/a?x={v}", "/b/{v}"))).toBeNull();
+    expect(covers("/a?x=1", "/a")).toBe(false);
+  });
+});
+
+test("rules without a query never look at it", () => {
+  expect(go([rule("/a", "/b")], "/a?town=x&y=2")?.location).toBe("/b?town=x&y=2");
+  expect(go([rule("/a/{x}", "/b/{x}")], "/a/q?x=1")?.location).toBe("/b/q?x=1");
+  expect(go([rule("/a/*", "/b/*")], "/a/q?x=1&x=2")?.location).toBe("/b/q?x=1&x=2");
 });

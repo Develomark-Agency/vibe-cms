@@ -257,11 +257,11 @@ export function RedirectsPage() {
             >
               <DialogHeader>
                 <DialogTitle>{draft.id ? "Edit redirect" : "Add redirect"}</DialogTitle>
-                <DialogDescription>End “from” with /* to match everything under a path, and use * in “to” for what it matched: /blog/* → /news/*. Or name segments with {"{name}"} and use them in “to”, path or query: {"/items/{id} → /products?id={id}"}.</DialogDescription>
+                <DialogDescription>End “from” with /* to match everything under a path, and use * in “to” for what it matched: /blog/* → /news/*. Or name parts with {"{name}"}, in the path or a query parameter, and use them in “to”: {"/items/{id} → /products?id={id}"}, {"/place?town={name} → /towns/{name}"}.</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-from">From</Label>
-                <Input id="redirect-from" autoFocus placeholder="/old-page" value={draft.from} onChange={event => setDraft({ ...draft, from: event.target.value })} />
+                <Input id="redirect-from" autoFocus placeholder="/old-page or /place?town={name}" value={draft.from} onChange={event => setDraft({ ...draft, from: event.target.value })} />
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-to">To</Label>

@@ -145,6 +145,15 @@ describe("rules", () => {
     expect((await add("/p/{id}", "/q/{nope}")).status).toBe(400);
   });
 
+  test("query parameters are matched and used up", async () => {
+    expect((await add("/place?town={townName}", "/connecticut/{townName}", { status: 302 })).status).toBe(201);
+    const hit = await t.visit("/place?town=hartford&utm=1");
+    expect(hit.status).toBe(302);
+    expect(hit.headers.get("location")).toBe("/connecticut/hartford?utm=1");
+    expect((await t.visit("/place")).status).toBe(200);
+    expect((await add("/place?town={other}", "/x/{other}")).status).toBe(409);
+  });
+
   test("refuses duplicates and loops", async () => {
     await add("/a", "/b");
     expect((await add("/a", "/c")).status).toBe(409);

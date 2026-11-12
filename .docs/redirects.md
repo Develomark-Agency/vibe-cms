@@ -77,5 +77,6 @@ The handler checks redirects before passing the request to the site's own `fetch
 - Besides what the proposal lists, an automatic rule disappears when its page returns: restored from the trash, or renamed back to the address it left.
 - `redirects.import` and the REST routes `GET/POST /redirects`, `POST /redirects/import`, `PATCH/DELETE /redirects/:id` and `GET /documents/:type/:id/redirect` exist.
 - Named segments (`/hello/{a}/bye/{b}`) are matched by a separate list that rules without them never reach, so static rules behave as before. Variables are single segments, copied as they came in the path, and can be used in the target's path or query.
+- `from` may ask for query parameters (`/place?town={name}`), matched by a list checked before the others that is empty on sites without such rules. Matched parameters are consumed; two rules differing only in a variable's name count as the same rule.
 - Not built: choosing the trash target from a list of pages (the editor takes a path), "Recent 404s", and offering the redirect when a slug change is scheduled rather than published.
 

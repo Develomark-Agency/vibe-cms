@@ -3,7 +3,7 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { HttpError } from "../config.ts";
 import { createDb } from "../db/client.ts";
 import { meta, redirects, type RedirectRow } from "../db/schema.ts";
-import { checkRule, findLoop, isDynamic, RedirectIndex, resolveRedirect, type MatchRule, type RedirectSource, type Resolved, type RuleInput } from "../redirects.ts";
+import { checkRule, findLoop, isDynamic, RedirectIndex, resolveRedirect, shapeOf, type MatchRule, type RedirectSource, type Resolved, type RuleInput } from "../redirects.ts";
 import { getMeta, newId } from "./db.ts";
 import type { D1, ExecutionContext } from "./platform.ts";
 
@@ -196,8 +196,8 @@ export class RedirectStore {
       throw new HttpError(400, (error as Error).message);
     }
     const rows = await this.all();
-    const taken = rows.find(row => row.from === checked.from && row.id !== id);
-    if(taken && !options.replace) throw new HttpError(409, `There's already a redirect from ${checked.from}`);
+    const taken = rows.find(row => shapeOf(row.from) === shapeOf(checked.from) && row.id !== id);
+    if(taken && !options.replace) throw new HttpError(409, `There's already a redirect from ${taken.from}`);
     const replaced = taken?.id;
     const existing = id ? rows.find(row => row.id === id) : undefined;
     if(id && !existing) throw new HttpError(404, "Redirect not found");
