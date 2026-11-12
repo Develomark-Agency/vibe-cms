@@ -7,6 +7,7 @@ import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { read, siteApi, type SessionState, type SiteInfo } from "./client.ts";
 import { useAdmin } from "./context.tsx";
+import { Page, PageHeader } from "./page.tsx";
 
 /**
  * Connecting an agent or the CLI to a site that signs people in itself. The site's OAuth server sends
@@ -107,13 +108,14 @@ export function ConnectionsPage() {
   }, [info.site.name]);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6 md:px-8">
-      <header className="space-y-2 pt-6">
-        <h1 className="text-3xl font-medium tracking-[-0.03em]">Connected apps</h1>
-        <p className="text-sm text-muted-foreground">
+    <Page>
+      <PageHeader
+        eyebrow="Settings"
+        title="Connected apps"
+        summary={<>
           AI agents and the <span className="whitespace-nowrap">Vibe CMS</span> CLI you connected to this site. Add <code className="font-mono text-xs">{`${location.origin}${info.prefix}/api/mcp`}</code> to an agent as a custom connector, or run <code className="font-mono text-xs">{`vibe-cms login --site ${location.origin}`}</code>.
-        </p>
-      </header>
+        </>}
+      />
       <section className="flex flex-col divide-y rounded-[16px] elevated">
         {!connections.data && <div className="p-4"><Spinner className="size-4" /></div>}
         {connections.data?.connections.length === 0 && <p className="p-4 text-sm text-muted-foreground">Nothing connected.</p>}
@@ -130,6 +132,6 @@ export function ConnectionsPage() {
           </div>
         ))}
       </section>
-    </div>
+    </Page>
   );
 }

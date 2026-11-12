@@ -12,6 +12,7 @@ import { Delayed, useArrival } from "./delayed.tsx";
 import { collectionLabel, collectionSettings, displayUser, documentTitle, formatDate, formatRelative, localeName, titleField, useAdmin } from "./context.tsx";
 import { EditorPage } from "./editor.tsx";
 import { Marked, markTitle } from "./marked.tsx";
+import { Page, PageHeader } from "./page.tsx";
 import { Link, navigate, useLocation } from "./router.tsx";
 import { StatusBadge, StatusDot, StatusIcon, statusLabel } from "./status.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
@@ -109,18 +110,14 @@ export function ListPage({ type }: { type: string }) {
   // The search the shown rows answer, which lags typing while the next page loads.
   const matched = list.isPlaceholderData ? "" : query.trim();
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 md:px-8">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1.5">
-          <p className="eyebrow" data-shared="eyebrow">Content{config.locales!.length > 1 ? ` · ${localeName(locale)}` : ""}</p>
-          <h1 className="text-2xl font-medium tracking-[-0.025em]" data-shared="title">{label}</h1>
-          <p className="text-sm text-muted-foreground" data-shared="summary">
-            {!list.data ? " " : query.trim()
-              ? `${total} of ${all} ${all === 1 ? "document" : "documents"}`
-              : `${total} ${total === 1 ? "document" : "documents"}`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2" data-shared="actions">
+    <Page>
+      <PageHeader
+        eyebrow={`Content${config.locales!.length > 1 ? ` · ${localeName(locale)}` : ""}`}
+        title={label}
+        summary={!list.data ? undefined : query.trim()
+          ? `${total} of ${all} ${all === 1 ? "document" : "documents"}`
+          : `${total} ${total === 1 ? "document" : "documents"}`}
+        actions={<>
           <div className="relative">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search" className="w-56 pl-8" aria-label={`Search ${label}`} />
@@ -130,8 +127,8 @@ export function ListPage({ type }: { type: string }) {
               <PlusIcon /> New
             </Button>
           )}
-        </div>
-      </div>
+        </>}
+      />
 
       {list.isLoading ? (
         <Delayed><div className="space-y-2">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-11 w-full" />)}</div></Delayed>
@@ -195,7 +192,7 @@ export function ListPage({ type }: { type: string }) {
           </div>
         </div>
       )}
-    </div>
+    </Page>
   );
 }
 
@@ -242,27 +239,17 @@ export function Dashboard() {
   const hour = new Date().getHours();
   const greeting = hour < 5 ? "Working late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-4 py-6 md:px-8">
-      <header>
-        <div className="flex flex-wrap items-end justify-between gap-6 pt-6">
-          <div className="space-y-2">
-            <p className="eyebrow">{location.host}</p>
-            <h1 className="text-3xl font-medium tracking-[-0.03em] md:text-4xl">{site.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              {greeting}{session.user.name ? `, ${session.user.name.split(" ")[0]}` : ""}.
-            </p>
-          </div>
-          {writable.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {writable.slice(0, 3).map(type => (
-                <Button key={type} variant="outline" size="sm" nativeButton={false} render={<Link to={`/content/${type}/new`} />}>
-                  <PlusIcon /> {collectionLabel(config, type, false)}
-                </Button>
-              ))}
-            </div>
-          )}
-        </div>
-      </header>
+    <Page className="gap-10">
+      <PageHeader
+        eyebrow={location.host}
+        title={site.name}
+        summary={`${greeting}${session.user.name ? `, ${session.user.name.split(" ")[0]}` : ""}.`}
+        actions={writable.slice(0, 3).map(type => (
+          <Button key={type} variant="outline" size="sm" nativeButton={false} render={<Link to={`/content/${type}/new`} />}>
+            <PlusIcon /> {collectionLabel(config, type, false)}
+          </Button>
+        ))}
+      />
 
       <section className="flex flex-col gap-3">
         <h2 className="eyebrow">Content</h2>
@@ -313,7 +300,7 @@ export function Dashboard() {
               ))}
         </div>
       </section>
-    </div>
+    </Page>
   );
 }
 

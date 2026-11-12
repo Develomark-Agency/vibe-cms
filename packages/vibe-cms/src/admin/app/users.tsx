@@ -9,6 +9,7 @@ import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { read, siteApi } from "./client.ts";
 import { useAdmin } from "./context.tsx";
+import { Page, PageHeader } from "./page.tsx";
 import { callHub } from "./session.ts";
 import { askConfirm } from "./confirm.tsx";
 import { SitePeople, type SitePeopleData } from "./site-people.tsx";
@@ -61,15 +62,14 @@ export function UsersPage() {
   if(mode === "hub") return <HubUsers />;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6 md:px-8">
-      <header className="space-y-2 pt-6">
-        <h1 className="text-3xl font-medium tracking-[-0.03em]">Users</h1>
-        <p className="text-sm text-muted-foreground">
-          {passkeys
-            ? "People sign in with a passkey they create from their invite. To add a device or replace a lost passkey, invite them again."
-            : "People sign in with your identity provider. Roles here are matched to their verified email."}
-        </p>
-      </header>
+    <Page>
+      <PageHeader
+        eyebrow="Access"
+        title="Users"
+        summary={passkeys
+          ? "People sign in with a passkey they create from their invite. To add a device or replace a lost passkey, invite them again."
+          : "People sign in with your identity provider. Roles here are matched to their verified email."}
+      />
 
       <InviteForm roles={roles} assignable={assignable} pending={inviteMutation.isPending} onInvite={input => inviteMutation.mutate(input)} />
       {invited && <InviteResult invited={invited} passkeys={passkeys} onClose={() => setInvited(null)} />}
@@ -100,7 +100,7 @@ export function UsersPage() {
           </div>
         ))}
       </section>
-    </div>
+    </Page>
   );
 }
 
@@ -125,13 +125,12 @@ function HubUsers() {
     onError: error => toast.error((error as Error).message)
   });
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-6 md:px-8">
-      <header className="space-y-2 pt-6">
-        <h1 className="text-3xl font-medium tracking-[-0.03em]">Users</h1>
-        <p className="text-sm text-muted-foreground">
-          People sign in through your org's panel. These are the roles it gives them on this site; changes apply from their next sign-in, within about 10 minutes.
-        </p>
-      </header>
+    <Page>
+      <PageHeader
+        eyebrow="Access"
+        title="Users"
+        summary="People sign in through your org's panel. These are the roles it gives them on this site; changes apply from their next sign-in, within about 10 minutes."
+      />
       {people.isError && <p className="text-sm text-destructive">{(people.error as Error).message}</p>}
       {!people.data && !people.isError && <div className="flex justify-center p-12"><Spinner className="size-5" /></div>}
       {people.data && (
@@ -142,7 +141,7 @@ function HubUsers() {
           onUnassign={principal => unassign.mutateAsync(principal)}
         />
       )}
-    </div>
+    </Page>
   );
 }
 

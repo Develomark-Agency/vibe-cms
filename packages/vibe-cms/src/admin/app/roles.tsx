@@ -16,6 +16,7 @@ import { cn } from "../lib/utils.ts";
 import { read, siteApi } from "./client.ts";
 import { collectionLabel, useAdmin } from "./context.tsx";
 import { editableRules, RoleRulesEditor, sameRules } from "./role-rules.tsx";
+import { Page, PageHeader } from "./page.tsx";
 import { setNavigationBlocker } from "./router.tsx";
 import { confirmLeave } from "./confirm.tsx";
 
@@ -76,14 +77,13 @@ export function RolesPage() {
   if(!roles.data) return <div className="flex justify-center p-12"><Spinner className="size-5" /></div>;
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-8">
-      <header className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-2">
-          <h1 className="text-3xl font-medium tracking-[-0.03em]">Roles</h1>
-          <p className="text-sm text-muted-foreground">What each role can do on {info.site.name}. Stored on this site{info.signIn === "hub" ? "; your org's panel gives people these roles" : ""}.</p>
-        </div>
-        {canEdit && (
-          <div className="flex gap-2">
+    <Page>
+      <PageHeader
+        eyebrow="Access"
+        title="Roles"
+        summary={`What each role can do on ${info.site.name}. Stored on this site${info.signIn === "hub" ? "; your org's panel gives people these roles" : ""}.`}
+        actions={canEdit && (
+          <>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="outline">Add from preset <ChevronDownIcon /></Button>} />
               <DropdownMenuContent align="end" className="w-72">
@@ -98,9 +98,9 @@ export function RolesPage() {
               </DropdownMenuContent>
             </DropdownMenu>
             <Button onClick={() => startCreating({ name: "", rules: {}, title: "New role" })}><PlusIcon /> New role</Button>
-          </div>
+          </>
         )}
-      </header>
+      />
 
       <div className="grid gap-6 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] md:items-start">
         {/* Stays in view beside a long role, scrolling on its own when there are many roles. */}
@@ -135,7 +135,7 @@ export function RolesPage() {
         onClose={() => setCreating(null)}
         onCreate={(name, rules) => create.mutate({ name, rules })}
       />
-    </div>
+    </Page>
   );
 }
 

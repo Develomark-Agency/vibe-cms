@@ -27,6 +27,7 @@ import { Delayed, useArrival } from "./delayed.tsx";
 import { Field, FormValueContext } from "./fields.tsx";
 import { staggerIndex } from "./pages.tsx";
 import { AssetPreview, describeAsset } from "./pickers.tsx";
+import { Page, PageHeader } from "./page.tsx";
 import { navigate } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
 import { StatusDot } from "./status.tsx";
@@ -107,20 +108,17 @@ export function TrashPage() {
 
   const items = trash.data?.items ?? [];
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 md:px-8">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1.5">
-          <h1 className="text-2xl font-medium tracking-[-0.025em]" data-shared="title">Trash</h1>
-          <p className="text-sm text-muted-foreground">
-            {trash.data ? `Deleted items are kept for ${trash.data.days} ${trash.data.days === 1 ? "day" : "days"}, then removed for good.` : " "}
-          </p>
-        </div>
-        {items.length > 0 && (
+    <Page>
+      <PageHeader
+        eyebrow="Site"
+        title="Trash"
+        summary={trash.data ? `Deleted items are kept for ${trash.data.days} ${trash.data.days === 1 ? "day" : "days"}, then removed for good.` : undefined}
+        actions={items.length > 0 && (
           <Button variant="outline" className="text-destructive" disabled={busy !== null} onClick={() => setPending({ kind: "empty" })}>
             {busy === "empty" ? <Spinner /> : <Trash2Icon />} Empty trash
           </Button>
         )}
-      </div>
+      />
 
       {trash.isLoading ? (
         <Delayed><div className="space-y-2">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-11 w-full" />)}</div></Delayed>
@@ -206,7 +204,7 @@ export function TrashPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </Page>
   );
 }
 

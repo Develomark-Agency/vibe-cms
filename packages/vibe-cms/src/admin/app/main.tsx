@@ -34,6 +34,7 @@ import { RolesPage } from "./roles.tsx";
 import { ConnectApp, ConnectionsPage, takeConnectRequest } from "./connect.tsx";
 import { TrashPage } from "./trash.tsx";
 import { ActivityPage } from "./activity.tsx";
+import { Page } from "./page.tsx";
 import { createAdminRouter, Link, match, navigate, useLocation, useNavigationGuard, useNavigationSync, usePageTransitions, useParams } from "./router.tsx";
 import { closePreview, getPreview, onPreviewPick, setPreviewPrefix, showPreview, subscribePreview } from "./preview.ts";
 import { openPick, type PreviewPick } from "./reveal.ts";
@@ -535,7 +536,7 @@ function LocaleMenu({ locale, setLocale }: { locale: string, setLocale(locale: s
 }
 
 function PluginPage({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8">{children}</div>;
+  return <Page>{children}</Page>;
 }
 
 interface PaletteCommand {

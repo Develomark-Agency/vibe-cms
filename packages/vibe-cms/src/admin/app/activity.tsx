@@ -12,6 +12,7 @@ import type { SessionState } from "./client.ts";
 import { collectionLabel, displayUser, formatDate, formatRelative, localeName, useAdmin } from "./context.tsx";
 import { Delayed, useArrival } from "./delayed.tsx";
 import { Collapse } from "./fields.tsx";
+import { Page, PageHeader } from "./page.tsx";
 import { Link } from "./router.tsx";
 import { VIA_LABELS } from "./via.ts";
 
@@ -367,18 +368,17 @@ export function ActivityPage() {
   const suggestions = SUGGESTIONS.filter(s => !tokens.some(t => s.startsWith(`${t.key}:`)) && s.startsWith(draft.split(/\s+/).pop() ?? "") && (everyone || !s.startsWith("user:")));
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-6 md:px-8">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1.5">
-          <h1 className="text-2xl font-medium tracking-[-0.025em]" data-shared="title">Activity</h1>
-          <p className="text-sm text-muted-foreground">
-            {everyone ? "Who changed what on this site, and how." : "What you changed on this site, and how."}
-            {" "}{since === "all" ? "All time" : `Last ${since === "24h" ? "24 hours" : since === "7d" ? "7 days" : "30 days"}`}
-            {refused > 0 && <> · <span className="text-destructive">{refused} refused</span></>}
-          </p>
-        </div>
-        <Button variant="outline" disabled={shown.length === 0} onClick={exportCsv}><DownloadIcon /> Export CSV</Button>
-      </div>
+    <Page>
+      <PageHeader
+        eyebrow="Site"
+        title="Activity"
+        summary={<>
+          {everyone ? "Who changed what on this site, and how." : "What you changed on this site, and how."}
+          {" "}{since === "all" ? "All time" : `Last ${since === "24h" ? "24 hours" : since === "7d" ? "7 days" : "30 days"}`}
+          {refused > 0 && <> · <span className="text-destructive">{refused} refused</span></>}
+        </>}
+        actions={<Button variant="outline" disabled={shown.length === 0} onClick={exportCsv}><DownloadIcon /> Export CSV</Button>}
+      />
 
       <div className="relative">
         <div className="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[12px] bg-background px-3 py-1.5 shadow-[0_0_0_1px_var(--border)] focus-within:shadow-[0_0_0_2px_var(--ring)]">
@@ -420,6 +420,6 @@ export function ActivityPage() {
       </div>
 
       <ActivityList filter={filter} text={draft} onEntries={setShown} />
-    </div>
+    </Page>
   );
 }

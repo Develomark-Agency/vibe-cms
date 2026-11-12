@@ -308,6 +308,24 @@
 ::view-transition-old(page-bar) { animation: none; opacity: 0; }
 ::view-transition-new(page-bar) { animation: none; }
 
+/*
+ * Header pieces that change text hand over in place. Their boxes differ in width with the text, and by default the
+ * browser would scale one snapshot into the other's box (a title swelling or shrinking), so the group doesn't animate
+ * and each snapshot keeps its natural size.
+ */
+::view-transition-group(page-eyebrow),
+::view-transition-group(page-title),
+::view-transition-group(page-summary),
+::view-transition-group(page-actions) { animation: none; }
+::view-transition-old(page-eyebrow),
+::view-transition-new(page-eyebrow),
+::view-transition-old(page-title),
+::view-transition-new(page-title),
+::view-transition-old(page-summary),
+::view-transition-new(page-summary),
+::view-transition-old(page-actions),
+::view-transition-new(page-actions) { width: auto; height: auto; }
+
 ::view-transition-old(*.changed) {
   animation: 100ms ease-out both vibe-fade-out;
 }

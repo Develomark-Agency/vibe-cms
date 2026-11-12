@@ -47,6 +47,7 @@ import { formatDate, useAdmin } from "./context.tsx";
 import { Delayed } from "./delayed.tsx";
 import { UsageLink, staggerIndex, useDebounced } from "./pages.tsx";
 import { AssetPreview, AssetThumb, describeAsset, formatBytes, useUpload } from "./pickers.tsx";
+import { Page, PageHeader } from "./page.tsx";
 import { navigate, useLocation } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
 import { assetTextKind, TextEditorDialog, TextPreview } from "./text-file.tsx";
@@ -688,8 +689,8 @@ export function MediaPage() {
   const searching = query.length > 0;
 
   return (
-    <div
-      className="mx-auto flex min-h-full w-full max-w-7xl flex-col gap-5 px-4 py-6 md:px-8"
+    <Page
+      className="min-h-full"
       // Capture: folders and the list stop the event, and while one of them is highlighted this outline steps aside.
       onDragOverCapture={event => {
         if(!library.canWrite || !event.dataTransfer.types.includes("Files")) return;
@@ -703,56 +704,51 @@ export function MediaPage() {
       onDrop={event => void dropInto(folder, event)}
     >
       {/* The breadcrumb gets its own line so the toolbar doesn't jump as paths get longer. */}
-      <header className="flex flex-col gap-2 pt-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-3xl font-medium tracking-[-0.03em]">Media</h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search all files" className="w-48 pl-8" />
-            </div>
-            <Segmented<View>
-              label="View"
-              value={view}
-              onChange={next => {
-                setView(next);
-                store("vibe:media-view", next);
-              }}
-              options={[
-                { value: "tree", label: <><ListTreeIcon className="size-4" /> Tree</> },
-                { value: "grid", label: <><LayoutGridIcon className="size-4" /> Folders</> }
-              ]}
-            />
-            {library.canWrite && (
-              <>
-                <Tooltip>
-                  <TooltipTrigger render={
-                    <Button variant="ghost" size="icon" aria-label={history.length ? `Undo ${history.at(-1)!.label}` : "Nothing to undo"} disabled={history.length === 0} onClick={() => void undo()}>
-                      <Undo2Icon />
-                    </Button>
-                  } />
-                  <TooltipContent>{history.length ? <>Undo {history.at(-1)!.label} <Kbd>⌘Z</Kbd></> : "Nothing to undo"}</TooltipContent>
-                </Tooltip>
-                <Button variant="outline" onClick={() => setDialog({ kind: "new-folder", parent: folder })}><FolderPlusIcon /> New folder</Button>
-                <input ref={fileInput} type="file" multiple hidden onChange={e => {
-                  if(e.target.files) void uploadInto(folder, e.target.files);
-                  e.target.value = "";
-                }} />
-                <Button onClick={() => fileInput.current?.click()} disabled={uploading}>{uploading ? <Spinner /> : <UploadIcon />} Upload</Button>
-              </>
-            )}
+      <PageHeader eyebrow="Library" title="Media" actions={<>
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search all files" className="w-48 pl-8" />
+        </div>
+        <Segmented<View>
+          label="View"
+          value={view}
+          onChange={next => {
+            setView(next);
+            store("vibe:media-view", next);
+          }}
+          options={[
+            { value: "tree", label: <><ListTreeIcon className="size-4" /> Tree</> },
+            { value: "grid", label: <><LayoutGridIcon className="size-4" /> Folders</> }
+          ]}
+        />
+        {library.canWrite && (
+          <>
             <Tooltip>
               <TooltipTrigger render={
-                <Button variant="ghost" size="icon" aria-label={paneOpen ? "Hide preview" : "Show preview"} aria-pressed={paneOpen} onClick={() => togglePane()} className="hidden lg:inline-flex">
-                  {paneOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
+                <Button variant="ghost" size="icon" aria-label={history.length ? `Undo ${history.at(-1)!.label}` : "Nothing to undo"} disabled={history.length === 0} onClick={() => void undo()}>
+                  <Undo2Icon />
                 </Button>
               } />
-              <TooltipContent>{paneOpen ? "Hide preview" : "Show preview"}</TooltipContent>
+              <TooltipContent>{history.length ? <>Undo {history.at(-1)!.label} <Kbd>⌘Z</Kbd></> : "Nothing to undo"}</TooltipContent>
             </Tooltip>
-          </div>
-        </div>
-        <Breadcrumb folder={folder} onOpen={path => go({ folder: path, file: null })} onDrop={dropInto} />
-      </header>
+            <Button variant="outline" onClick={() => setDialog({ kind: "new-folder", parent: folder })}><FolderPlusIcon /> New folder</Button>
+            <input ref={fileInput} type="file" multiple hidden onChange={e => {
+              if(e.target.files) void uploadInto(folder, e.target.files);
+              e.target.value = "";
+            }} />
+            <Button onClick={() => fileInput.current?.click()} disabled={uploading}>{uploading ? <Spinner /> : <UploadIcon />} Upload</Button>
+          </>
+        )}
+        <Tooltip>
+          <TooltipTrigger render={
+            <Button variant="ghost" size="icon" aria-label={paneOpen ? "Hide preview" : "Show preview"} aria-pressed={paneOpen} onClick={() => togglePane()} className="hidden lg:inline-flex">
+              {paneOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
+            </Button>
+          } />
+          <TooltipContent>{paneOpen ? "Hide preview" : "Show preview"}</TooltipContent>
+        </Tooltip>
+      </>} />
+      <Breadcrumb folder={folder} onOpen={path => go({ folder: path, file: null })} onDrop={dropInto} />
 
       <SelectionContext.Provider value={selection}>
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
@@ -860,7 +856,7 @@ export function MediaPage() {
           setDialog(null);
         }}
       />
-    </div>
+    </Page>
   );
 }
 

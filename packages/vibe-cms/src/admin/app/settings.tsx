@@ -11,6 +11,7 @@ import { Spinner } from "../components/ui/spinner.tsx";
 import { Switch } from "../components/ui/switch.tsx";
 import { cn } from "../lib/utils.ts";
 import { useAdmin } from "./context.tsx";
+import { PageForm, PageHeader } from "./page.tsx";
 import { MediaLibraryDialog } from "./pickers.tsx";
 import { getPanelAccent, postToPanel } from "./session.ts";
 import { setAccent } from "./theme.ts";
@@ -63,11 +64,8 @@ export function SiteSettingsPage() {
   }
 
   return (
-    <form onSubmit={submit} className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-6 md:px-8">
-      <header className="space-y-2 pt-6">
-        <h1 className="text-3xl font-medium tracking-[-0.03em]">Site</h1>
-        <p className="text-sm text-muted-foreground">How this site appears in the editor, in your agency's panel and in browser tabs.</p>
-      </header>
+    <PageForm onSubmit={submit}>
+      <PageHeader eyebrow="Settings" title="Site" summary="How this site appears in the editor, in your agency's panel and in browser tabs." />
 
       <section className="flex flex-col gap-6 rounded-[16px] elevated p-5">
         <div className="flex flex-col gap-2">
@@ -159,7 +157,7 @@ export function SiteSettingsPage() {
           setLibraryOpen(false);
         }}
       />
-    </form>
+    </PageForm>
   );
 }
 
