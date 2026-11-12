@@ -9,6 +9,7 @@ import { and, desc, eq, gt, has, inArray } from "../src/query/index.ts";
 import { defineConfig } from "../src/index.ts";
 import { image } from "../src/media/index.ts";
 import v from "../src/schema/index.ts";
+import pkg from "../package.json" with { type: "json" };
 import { calls, config, roles } from "./fixture.ts";
 import { createD1, createR2, ctx, png } from "./helpers.ts";
 
@@ -463,6 +464,7 @@ describe("auth", () => {
     const response = await t.vibe.handle(new Request("https://site.test/.well-known/vibe-cms"), t.env, ctx);
     expect(await response.json()).toEqual({
       protocol: 1,
+      version: pkg.version,
       id: expect.stringMatching(/^site_[a-z0-9]{17}$/),
       name: "site.test",
       accent: null,

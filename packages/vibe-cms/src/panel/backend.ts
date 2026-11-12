@@ -146,6 +146,8 @@ export interface PanelAgent {
 
 export interface SiteDescriptor {
   protocol: number,
+  /** The Vibe CMS release the site runs. Older sites don't send one. */
+  version?: string | null,
   id: string,
   name: string,
   accent?: string | null,

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { serializeConfig, type AnyConfig } from "../../config.ts";
+import pkg from "../../../package.json" with { type: "json" };
 import type { OrgStatus } from "../../org/index.ts";
 import { Engine, type EngineState, type SiteSettings } from "../engine.ts";
 import type { SiteWarning } from "../images.ts";
@@ -10,6 +11,8 @@ import type { ExecutionContext } from "../platform.ts";
 export function descriptor(config: AnyConfig, url: URL, prefix: string, site: SiteSettings, org: OrgStatus, warnings: SiteWarning[] = []) {
   return {
     protocol: 1,
+    /** The Vibe CMS release the site runs, so a panel can tell which sites are behind. */
+    version: pkg.version,
     id: site.id,
     name: site.name,
     accent: site.accent,

@@ -62,6 +62,7 @@ import { AccessPage, PeoplePage, SetupCard, TemplatePicker, TemplatesPage } from
 import type { SiteWarning } from "../handler/images.ts";
 import { DEFAULT_BRANDING, fetchDescriptor, isClaimLink, PanelError, type PanelBackend, type PanelBranding, type PanelSite, type PanelUser } from "./backend.ts";
 import { ReviewPage } from "./review.tsx";
+import pkg from "../../package.json" with { type: "json" };
 
 /**
  * Clicks inside the framed editor never reach this document, so popups can't
@@ -86,11 +87,26 @@ function sortSites<T extends PanelSite>(sites: T[]): T[] {
   return [...sites].sort((a, b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name));
 }
 
-/** The shared mark at panel sizes; without an accent, a colour derived from the site's ID tells sites apart. */
-function SiteMark({ site, className }: { site: PanelSite, className?: string }) {
+/** The site's accent; without one, a colour derived from its ID tells sites apart. */
+function siteColor(site: PanelSite): string {
   let hue = 0;
   for(const char of site.id) hue = (hue * 31 + char.charCodeAt(0)) % 360;
-  return <SharedSiteMark name={site.name} icon={site.icon} color={site.accent ?? `oklch(0.55 0.15 ${hue})`} className={cn("size-6 rounded-[6px] text-[10px]", className)} />;
+  return site.accent ?? `oklch(0.55 0.15 ${hue})`;
+}
+
+/** Whether release `a` is older than `b`. */
+function isOlder(a: string, b: string): boolean {
+  const x = a.split(".").map(Number), y = b.split(".").map(Number);
+  for(let i = 0; i < 3; i++) if((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+  return false;
+}
+
+/** The release the panel itself is built from, which is the newest a site can be on. */
+const LATEST_VERSION = pkg.version;
+
+/** The shared mark at panel sizes. */
+function SiteMark({ site, className }: { site: PanelSite, className?: string }) {
+  return <SharedSiteMark name={site.name} icon={site.icon} color={siteColor(site)} className={cn("size-6 rounded-[6px] text-[10px]", className)} />;
 }
 
 /** The agency's logo, else the first letter of its name on the accent. */
@@ -108,7 +124,9 @@ type LiveSite = PanelSite & {
   /** Not checked yet: whether it's up, and its live name, aren't known. */
   pending?: boolean,
   /** Setup problems the site reports, e.g. image optimization failing. */
-  warnings?: SiteWarning[]
+  warnings?: SiteWarning[],
+  /** The Vibe CMS release the site runs; absent on sites that predate it. */
+  version?: string | null
 };
 
 function siteProblem(error: unknown): LiveSite["problem"] {
@@ -147,7 +165,7 @@ function useLiveSites(sites: PanelSite[] | undefined): LiveSite[] | undefined {
   });
   return sites?.map((site, i) => {
     const { data: live, error, isFetching } = descriptors[i] ?? {};
-    if(live) return { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null, warnings: live.warnings };
+    if(live) return { ...site, name: live.name, accent: live.accent ?? null, icon: live.icon ?? null, warnings: live.warnings, version: live.version ?? null };
     if(error) return { ...site, problem: siteProblem(error), checking: isFetching };
     return { ...site, pending: true };
   });
@@ -661,9 +679,24 @@ function SitePortal({ state }: { state: PortalHover }) {
   const springy = { stiffness: 400, damping: 40, mass: 0.6 };
   const x = useSpring(state.x, springy);
   const y = useSpring(state.y, springy);
+  // The pages that have been hovered, oldest first. Each is fetched once, on its first hover, and its frame stays
+  // mounted (the window only hides) so hovering it again shows the page already there instead of asking the site again.
+  // A page can't be turned into an image: the browser doesn't let this panel read pixels from another origin.
   const [loaded, setLoaded] = useState<LiveSite[]>([]);
   const site = state.site;
-  if(site && !loaded.some(s => s.id === site.id)) setLoaded([...loaded.slice(-4), site]);
+  const ready = useRef(new Set<string>());
+  if(site && !loaded.some(s => s.id === site.id)) {
+    // The oldest page is dropped once there are eight, and fetched again if it's hovered later.
+    for(const old of loaded.slice(0, -7)) ready.current.delete(old.id);
+    setLoaded([...loaded.slice(-7), site]);
+  }
+  // The page on show. It changes once the next one has loaded, so the old page stays until the new one can replace it.
+  const [shownId, setShownId] = useState<string | null>(null);
+  const wanted = useRef<string | null>(null);
+  wanted.current = site?.id ?? null;
+  useEffect(() => {
+    if(site && ready.current.has(site.id)) setShownId(site.id);
+  }, [site?.id]);
   // Jump to the cursor rather than gliding in from wherever it was last hidden.
   const visible = useRef(false);
   if(site && !visible.current) {
@@ -672,42 +705,113 @@ function SitePortal({ state }: { state: PortalHover }) {
   }
   visible.current = !!site;
   return createPortal(
-    <AnimatePresence>
-      {site && (
-        <motion.div
-          aria-hidden
-          className="pointer-events-none fixed top-0 left-0 z-50 overflow-hidden rounded-[14px] bg-background shadow-2xl ring-1 ring-foreground/10"
-          style={{ x, y, width: PORTAL.width, height: PORTAL.height }}
-          initial={{ opacity: 0, scale: 0.92 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.92 }}
-          transition={spring}
-        >
-          {loaded.map(s => (
-            <iframe
-              key={s.id}
-              src={s.url}
-              title={`${s.name} preview`}
-              tabIndex={-1}
-              loading="eager"
-              className="absolute top-0 left-0 origin-top-left border-0 transition-opacity duration-150"
-              style={{
-                width: PORTAL.width / PORTAL.scale,
-                height: PORTAL.height / PORTAL.scale,
-                transform: `scale(${PORTAL.scale})`,
-                opacity: s.id === site.id ? 1 : 0
-              }}
-            />
-          ))}
-        </motion.div>
-      )}
-    </AnimatePresence>,
+    <motion.div
+      aria-hidden
+      className="pointer-events-none fixed top-0 left-0 z-50 overflow-hidden rounded-[14px] bg-background shadow-2xl ring-1 ring-foreground/10"
+      style={{ x, y, width: PORTAL.width, height: PORTAL.height }}
+      initial={false}
+      animate={site ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.92 }}
+      transition={spring}
+    >
+      {loaded.map(s => {
+        const shown = s.id === shownId;
+        return (
+          <iframe
+            key={s.id}
+            src={s.url}
+            title={`${s.name} preview`}
+            tabIndex={-1}
+            loading="eager"
+            onLoad={() => {
+              ready.current.add(s.id);
+              if(wanted.current === s.id) setShownId(s.id);
+            }}
+            className="absolute top-0 left-0 origin-top-left border-0"
+            style={{
+              width: PORTAL.width / PORTAL.scale,
+              height: PORTAL.height / PORTAL.scale,
+              transform: `scale(${PORTAL.scale})`,
+              // Blur and fade together: the old page softens as it goes, the new one sharpens as it arrives.
+              opacity: shown ? 1 : 0,
+              filter: shown ? "blur(0px)" : "blur(12px)",
+              transition: "opacity 260ms ease-out, filter 260ms ease-out"
+            }}
+          />
+        );
+      })}
+    </motion.div>,
     document.body
   );
 }
 
 const spring = { type: "spring", duration: 0.4, bounce: 0.12 } as const;
 const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: spring };
+
+/** The release a site runs. Amber when it's behind the panel's own; a dash when the site can't say. */
+function VersionChip({ site }: { site: LiveSite }) {
+  if(site.pending) return null;
+  const base = "inline-flex shrink-0 items-center gap-1.5 rounded-[2px] bg-card px-2.5 py-0.5 font-mono text-xs font-medium shadow-[inset_0_0_0_1px_var(--border)]";
+  if(!site.version) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={<span className={cn(base, "text-muted-foreground")}>—</span>} />
+        <TooltipContent>{site.problem ? "The version is unknown while the site isn't reachable" : "This site hasn't reported its version"}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  if(isOlder(site.version, LATEST_VERSION)) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={
+          <span className={cn(base, "bg-amber-100 text-amber-700 shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-amber-600)_35%,transparent)] dark:bg-amber-950 dark:text-amber-300")}>
+            <span className="size-1.5 rounded-full bg-current" />
+            {site.version} <span className="font-sans text-[11.5px]">update</span>
+          </span>
+        } />
+        <TooltipContent>The latest release is {LATEST_VERSION}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return <span className={base}>{site.version}</span>;
+}
+
+function SiteStatus({ site }: { site: LiveSite }) {
+  if(site.pending) return <span className="font-normal text-muted-foreground">Checking…</span>;
+  if(site.problem) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={
+          <span className="inline-flex items-center gap-1.5 text-destructive">
+            <span className="size-1.5 rounded-full bg-current" />
+            {site.checking ? "Checking…" : site.problem.kind === "offline" ? "Not running" : <>Not a <span className="whitespace-nowrap">Vibe CMS</span> site</>}
+          </span>
+        } />
+        <TooltipContent>{site.problem.message}</TooltipContent>
+      </Tooltip>
+    );
+  }
+  if(site.warnings?.length) {
+    return (
+      <Tooltip>
+        <TooltipTrigger render={
+          <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+            <span className="size-1.5 rounded-full bg-current" />
+            {site.warnings.length === 1 ? "1 warning" : `${site.warnings.length} warnings`}
+          </span>
+        } />
+        <TooltipContent className="max-w-xs">
+          {site.warnings.map(w => <p key={w.code}>{w.message}</p>)}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 font-normal text-muted-foreground">
+      <span className="size-1.5 rounded-full bg-green-500" />
+      Online
+    </span>
+  );
+}
 
 function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }: {
   title: string,
@@ -728,7 +832,9 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
   return (
     <motion.section ref={ref} layout="position" className="grid gap-3" {...fade}>
       <h3 className="flex items-baseline gap-2 text-sm font-medium">{title} <span className="font-normal text-muted-foreground tabular-nums">{sites.length}</span></h3>
-      <div className="relative grid gap-3 lg:grid-cols-2">
+      {/* Square cells that touch. Each overlaps its neighbour by the width of its border (-mt-px -ml-px, with the
+            container's pt-px pl-px making room), so two cells share one line and no edge is drawn twice. */}
+      <div className="relative grid auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,15rem),1fr))] pt-px pl-px">
         <AnimatePresence mode="popLayout">
           {sites.map((site, i) => (
             <motion.div
@@ -748,65 +854,49 @@ function SiteGroup({ title, sites, backend, portal, onBackups, offset = 0, ref }
                 recheck.cancel();
                 portal.leave();
               }}
-              className="group/card relative flex items-center gap-3 rounded-[18px] elevated p-2.5 transition-[box-shadow,scale] duration-200 ease-out hover:shadow-(--shadow-raised-hover) has-[[data-open-site]:active]:scale-[0.985]"
+              style={{ "--site": siteColor(site) } as React.CSSProperties}
+              className={cn(
+                "group/card relative -mt-px -ml-px flex min-w-0 flex-col gap-4.5 border border-border bg-card p-4.5 transition-[background-color,border-color,scale] duration-200 ease-out has-[[data-open-site]:active]:scale-[0.99]",
+                // Color arrives on hover only. The border is raised above its neighbours so it recolors the shared line.
+                "hover:z-10 hover:border-[color-mix(in_oklab,var(--site)_70%,var(--card))] hover:bg-[color-mix(in_oklab,var(--site)_4%,var(--card))]",
+                site.problem && "hover:border-[color-mix(in_oklab,var(--foreground)_40%,var(--card))] hover:bg-card"
+              )}
             >
-              <SiteMark site={site} className={cn("size-11 rounded-[8px] text-sm transition-[filter,opacity]", site.problem && "opacity-30 grayscale")} />
-              <button data-open-site className="min-w-0 flex-1 text-left outline-none after:absolute after:inset-0 after:rounded-[18px] focus-visible:after:ring-3 focus-visible:after:ring-ring/50" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
-                <span className={cn("block truncate font-medium", site.problem && "text-muted-foreground")}>{site.name}</span>
-                <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  {site.problem && (
-                    <Tooltip>
-                      <TooltipTrigger render={
-                        <span className="relative z-10 inline-flex shrink-0 items-center gap-1.5 font-medium text-destructive">
-                          <span className="size-1.5 rounded-full bg-current" />
-                          {site.checking ? "Checking…" : site.problem.kind === "offline" ? "Not running" : <>Not a <span className="whitespace-nowrap">Vibe CMS</span> site</>}
-                        </span>
-                      } />
-                      <TooltipContent>{site.problem.message}</TooltipContent>
-                    </Tooltip>
-                  )}
-                  {!site.problem && site.warnings?.length ? (
-                    <Tooltip>
-                      <TooltipTrigger render={
-                        <span className="relative z-10 inline-flex shrink-0 items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
-                          <span className="size-1.5 rounded-full bg-current" />
-                          {site.warnings.length === 1 ? "1 warning" : `${site.warnings.length} warnings`}
-                        </span>
-                      } />
-                      <TooltipContent className="max-w-xs">
-                        {site.warnings.map(w => <p key={w.code}>{w.message}</p>)}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
-                  {(site.problem || !!site.warnings?.length) && <span aria-hidden>·</span>}
-                  <span className="truncate">{new URL(site.url).host}</span>
-                </span>
+              <div className="flex items-start justify-between gap-3">
+                <SiteMark site={site} className={cn("size-13 rounded-none text-lg shadow-none ring-1 ring-border transition-[filter,opacity]", site.problem && "opacity-30 grayscale")} />
+                <VersionChip site={site} />
+              </div>
+              <button data-open-site className="min-w-0 text-left outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring/60 focus-visible:after:ring-inset" onClick={() => go(`/s/${encodeURIComponent(site.id)}/`)}>
+                <span className={cn("block truncate text-lg leading-tight font-semibold tracking-tight", site.problem && "text-muted-foreground")}>{site.name}</span>
+                <span className="mt-0.5 block truncate text-[13px] text-muted-foreground">{new URL(site.url).host}</span>
               </button>
-              {/* Same 44px square and 8px corner as the mark: both sit 10px inside the 18px card. */}
-              <div className="relative z-10 flex items-center">
-                <Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label={site.favorite ? "Unstar" : "Star"} onClick={async () => {
-                  await backend.setFavorite(site.id, !site.favorite);
-                  void queryClient.invalidateQueries({ queryKey: ["sites"] });
-                }}>
-                  <StarIcon className={cn(site.favorite ? "fill-amber-400 text-amber-400" : "opacity-0 group-hover/card:opacity-100")} />
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-11 rounded-[8px]" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
-                    {backend.hub && <DropdownMenuItem onClick={() => go(`/sites/${encodeURIComponent(site.id)}/access`)}><UsersIcon /> People and roles</DropdownMenuItem>}
-                    {onBackups && <DropdownMenuItem onClick={() => onBackups(site)}><ArchiveIcon /> Backups</DropdownMenuItem>}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem variant="destructive" onClick={async () => {
-                      try {
-                        await backend.removeSite(site.id);
-                        void queryClient.invalidateQueries({ queryKey: ["sites"] });
-                      } catch (error) {
-                        toast.error((error as Error).message);
-                      }
-                    }}><Trash2Icon /> Remove from list</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+              <div className="relative z-10 mt-auto -mr-2 -mb-1.5 flex min-h-8 items-center justify-between gap-2 text-xs font-medium">
+                <SiteStatus site={site} />
+                <div className="flex items-center">
+                  <Button variant="ghost" size="icon-sm" className="size-8 rounded-none" aria-label={site.favorite ? "Unstar" : "Star"} onClick={async () => {
+                    await backend.setFavorite(site.id, !site.favorite);
+                    void queryClient.invalidateQueries({ queryKey: ["sites"] });
+                  }}>
+                    <StarIcon className={cn(site.favorite ? "fill-amber-400 text-amber-400" : "opacity-0 group-hover/card:opacity-100")} />
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="size-8 rounded-none" aria-label="Site actions"><MoreHorizontalIcon /></Button>} />
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => window.open(site.url, "_blank", "noopener")}><GlobeIcon /> Visit site</DropdownMenuItem>
+                      {backend.hub && <DropdownMenuItem onClick={() => go(`/sites/${encodeURIComponent(site.id)}/access`)}><UsersIcon /> People and roles</DropdownMenuItem>}
+                      {onBackups && <DropdownMenuItem onClick={() => onBackups(site)}><ArchiveIcon /> Backups</DropdownMenuItem>}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem variant="destructive" onClick={async () => {
+                        try {
+                          await backend.removeSite(site.id);
+                          void queryClient.invalidateQueries({ queryKey: ["sites"] });
+                        } catch (error) {
+                          toast.error((error as Error).message);
+                        }
+                      }}><Trash2Icon /> Remove from list</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
             </motion.div>
           ))}
