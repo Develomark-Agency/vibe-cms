@@ -411,8 +411,8 @@ function TargetInput({ id, value, variables, from, onChange }: { id: string, val
           {/* One labelled grid, so many or long names wrap among themselves and the labels stay put. */}
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1.5 rounded-lg bg-muted/50 px-3 py-2">
             <dt>Variables</dt>
-            <dd className="flex flex-wrap gap-1">
-              {variables.map(name => <code key={name} className="rounded-md bg-muted px-1.5 py-0.5 font-mono break-words text-foreground">{`{${name}}`}</code>)}
+            <dd className="flex min-w-0 flex-wrap gap-1">
+              {variables.map(name => <code key={name} title={name} className="max-w-full min-w-0 rounded-md bg-muted px-1.5 py-0.5 font-mono break-all text-foreground">{name}</code>)}
             </dd>
             {value.trim() && unknown.length === 0 && (
               <>
