@@ -2012,9 +2012,18 @@ export class Engine {
     return warnings;
   }
 
-  async createRedirect(input: RuleInput & { locale?: string | null }, options: { source?: RedirectSource, documentId?: string | null, warn?: boolean } = {}) {
+  async createRedirect(input: RuleInput & { locale?: string | null, deletedDocument?: { id: string, type: string } }, options: { source?: RedirectSource, documentId?: string | null, warn?: boolean } = {}) {
     const session = this.requireRedirects("write");
-    const { row, repointed } = await this.state.redirects.save(input, { source: options.source ?? "manual", documentId: options.documentId, locale: input.locale, by: session?.sub ?? null });
+    // A redirect for a page that was just deleted is tied to it: restoring the page takes the redirect away.
+    const deleted = input.deletedDocument;
+    if(deleted) getSchema(this.config, deleted.type);
+    const { row, repointed } = await this.state.redirects.save(input, {
+      source: deleted ? "trash" : options.source ?? "manual",
+      documentId: deleted?.id ?? options.documentId,
+      documentType: deleted?.type,
+      locale: input.locale,
+      by: session?.sub ?? null
+    });
     this.note({ label: `${row.from} → ${row.to}`, ...(repointed.length ? { repointed: repointed.length } : {}) });
     const warnings = options.warn === false ? [] : await this.shadowedPages(row.from);
     return { redirect: toRedirect(row), repointed: repointed.length, warnings };
@@ -2071,6 +2080,16 @@ export class Engine {
    * The redirect publishing would offer: where this document lived when last published and where its
    * working copy puts it now. Null when it has no URL or the URL isn't changing.
    */
+  /** Where the live copy of a document lives on the site, or null when it isn't published or has no address. */
+  async currentUrl(type: string, id: string, localeInput?: string): Promise<string | null> {
+    const locale = this.locale(localeInput);
+    require(this.state, this.scope.session, { action: "read", type });
+    if(!this.hasUrl(type)) return null;
+    const row = (await this.workingRows(id)).find(r => r.type === type && r.locale === locale);
+    if(!row?.published) return null;
+    return this.documentUrl(type, parseCopy(getSchema(this.config, type), row.published), id, locale);
+  }
+
   async suggestRedirect(type: string, id: string, localeInput?: string): Promise<{ from: string, to: string, exists: boolean } | null> {
     const locale = this.locale(localeInput);
     require(this.state, this.scope.session, { action: "read", type });

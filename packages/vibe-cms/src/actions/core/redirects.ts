@@ -28,7 +28,10 @@ const redirectsCreate = base({
   summary: "Add a redirect",
   description: "Sends visitors from one path to another before the site's own pages are looked up. Matching is exact, or one trailing `*` that carries over to `to`; exact rules win, then the longest wildcard. Fails with CONFLICT for a path that already has a redirect or one that would loop. Rules that already led to `from` are re-pointed to `to`, so visitors never take more than one hop. `warnings` says when `from` is a live page the redirect hides."
 })
-  .input(z.object(rule).extend({ from: from.describe(from.description!) }))
+  .input(z.object(rule).extend({
+    from: from.describe(from.description!),
+    deletedDocument: z.object({ id: z.string(), type }).optional().describe("The page this redirect replaces, just moved to the trash. Restoring it from the trash then removes the redirect")
+  }))
   .handler(({ context: { engine }, input }) => engine.createRedirect(input));
 
 const redirectsUpdate = base({
@@ -55,11 +58,11 @@ const redirectsImport = base({
 
 const redirectsSuggest = base({
   summary: "Suggest a redirect for a document",
-  description: "When publishing would change the address of a page (its slug or path changed), the old and new address and whether the old one already has a redirect; null when the address isn't changing or the content type has no pages the CMS can find the address of (`hasUrl` says which). Pass `redirect: true` to `documents.publish` to add it.",
+  description: "When publishing would change the address of a page (its slug or path changed), the old and new address and whether the old one already has a redirect; null when the address isn't changing or the content type has no pages the CMS can find the address of (`hasUrl` says which); `url` is where the live page is now. Pass `redirect: true` to `documents.publish` to add it.",
   readOnly: true
 })
   .input(z.object({ type, id: z.string(), locale: z.string().optional() }))
-  .handler(async ({ context: { engine }, input }) => ({ suggestion: await engine.suggestRedirect(input.type, input.id, input.locale), hasUrl: engine.hasUrl(input.type) }));
+  .handler(async ({ context: { engine }, input }) => ({ suggestion: await engine.suggestRedirect(input.type, input.id, input.locale), hasUrl: engine.hasUrl(input.type), url: await engine.currentUrl(input.type, input.id, input.locale) }));
 
 export const redirects = router({
   list: redirectsList,

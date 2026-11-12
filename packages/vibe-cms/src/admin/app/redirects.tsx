@@ -17,7 +17,7 @@ import { useAdmin } from "./context.tsx";
 import { parseCsv, stringifyCsv } from "./csv.ts";
 import { variablesOf } from "../../redirects.ts";
 import { Page, PageHeader } from "./page.tsx";
-import { Link } from "./router.tsx";
+import { Link, navigate, useLocation } from "./router.tsx";
 
 const PAGE = 50;
 const STATUSES = [
@@ -30,6 +30,9 @@ const SOURCES = { manual: "Added by hand", "slug-change": "Address changed", tra
 
 interface Draft {
   id: string | null,
+  /** A page that was just deleted: the rule is tied to it, so restoring the page removes the rule. */
+  deleted?: { id: string, type: string },
+  locale?: string,
   from: string,
   to: string,
   status: number,
@@ -49,6 +52,16 @@ export function RedirectsPage() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [skipped, setSkipped] = useState<Array<{ row: number, from: string, reason: string }> | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
+  const location = useLocation();
+
+  // Arriving from deleting a page: its address filled in, to say where visitors go instead.
+  useEffect(() => {
+    const from = location.search.get("from");
+    if(!from) return;
+    const [id, type] = [location.search.get("id"), location.search.get("type")];
+    setDraft({ ...EMPTY, from, ...(id && type ? { deleted: { id, type } } : {}), locale: location.search.get("locale") ?? undefined });
+    navigate("/redirects", { replace: true });
+  }, [location.search]);
 
   useEffect(() => {
     document.title = `Redirects · ${site.name}`;
@@ -74,7 +87,9 @@ export function RedirectsPage() {
   const save = useMutation({
     mutationFn: async (value: Draft) => {
       const rule = { from: value.from.trim(), to: value.to.trim(), status: value.status as 301, keepQuery: value.keepQuery };
-      return value.id ? cms.actions.redirects.update({ id: value.id, ...rule }) : cms.actions.redirects.create(rule);
+      return value.id
+        ? cms.actions.redirects.update({ id: value.id, ...rule })
+        : cms.actions.redirects.create({ ...rule, ...(value.deleted ? { deletedDocument: value.deleted, locale: value.locale } : {}) });
     },
     onSuccess(result) {
       setDraft(null);
@@ -274,18 +289,18 @@ export function RedirectsPage() {
                     </TooltipContent>
                   </Tooltip>
                 </DialogTitle>
-                <DialogDescription>Send visitors from an old path to a new one.</DialogDescription>
+                <DialogDescription>{draft.deleted ? "The page is in the trash. Choose where its visitors go; restoring the page removes this redirect." : "Send visitors from an old path to a new one."}</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-from">From</Label>
-                <Input id="redirect-from" autoFocus placeholder="/old-page or /place?town={name}" value={draft.from} onChange={event => setDraft({ ...draft, from: event.target.value })} />
+                <Input id="redirect-from" autoFocus={!draft.from} placeholder="/old-page or /place?town={name}" value={draft.from} onChange={event => setDraft({ ...draft, from: event.target.value })} />
               </div>
               <div className="flex flex-col gap-2">
                 <div className="flex items-baseline justify-between gap-3">
                   <Label htmlFor="redirect-to">To</Label>
                   {variablesOf(draft.from).length > 0 && <span className="text-xs text-muted-foreground">Type <kbd className="font-mono">{"{"}</kbd> for variables</span>}
                 </div>
-                <TargetInput id="redirect-to" value={draft.to} variables={variablesOf(draft.from)} from={draft.from} onChange={to => setDraft({ ...draft, to })} />
+                <TargetInput id="redirect-to" autoFocus={Boolean(draft.from) && !draft.id} value={draft.to} variables={variablesOf(draft.from)} from={draft.from} onChange={to => setDraft({ ...draft, to })} />
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-status">Status</Label>
@@ -313,7 +328,7 @@ export function RedirectsPage() {
  * The “to” field. With variables in “from” (`/hello/{a}/bye/{b}`), typing `{` lists them to pick from, they
  * can be inserted with a click, and an example shows what a visit becomes. Without any it's a plain input.
  */
-function TargetInput({ id, value, variables, from, onChange }: { id: string, value: string, variables: string[], from: string, onChange(value: string): void }) {
+function TargetInput({ id, value, variables, from, autoFocus, onChange }: { id: string, autoFocus?: boolean, value: string, variables: string[], from: string, onChange(value: string): void }) {
   const input = useRef<HTMLInputElement>(null);
   const [caret, setCaret] = useState(0);
   const [focused, setFocused] = useState(false);
@@ -359,6 +374,7 @@ function TargetInput({ id, value, variables, from, onChange }: { id: string, val
         <Input
           id={id}
           ref={input}
+          autoFocus={autoFocus}
           autoComplete="off"
           placeholder="/new-page or https://example.com/page"
           value={value}

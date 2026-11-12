@@ -39,7 +39,7 @@ import { Button } from "../components/ui/button.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
 import { Input } from "../components/ui/input.tsx";
-import { Label } from "../components/ui/label.tsx";
+import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Kbd } from "../components/ui/kbd.tsx";
 import { Crossfade } from "../components/crossfade.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
@@ -110,7 +110,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const [busy, setBusy] = useState<null | "save" | "publish" | "unpublish" | "discard" | "delete">(null);
   const [conflict, setConflict] = useState<DocumentState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [redirectTo, setRedirectTo] = useState("");
+  const [redirectAfter, setRedirectAfter] = useState(true);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const loadedKey = useRef<string | null>(null);
@@ -278,8 +278,9 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     setBusy("delete");
     try {
       const translation = isTranslationOnly();
-      const target = redirectTo.trim();
-      const { trash } = await cms.actions.documents.delete({ type, id: id!, locale: translation ? locale : undefined, ...(!translation && target ? { redirectTo: target } : {}) });
+      // Worked out before the page goes: afterwards the server can no longer say where it lived.
+      const redirectFrom = !translation && offerRedirect && redirectAfter ? urlInfo.data?.url ?? null : null;
+      const { trash } = await cms.actions.documents.delete({ type, id: id!, locale: translation ? locale : undefined });
       setNavigationBlocker(undefined);
       void queryClient.invalidateQueries({ queryKey: ["documents", type] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -303,13 +304,14 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
         }
       });
       if(translation) void doc.refetch();
+      // The Redirects page opens with this page's address filled in, to say where visitors go instead.
+      else if(redirectFrom) navigate(`/redirects?${new URLSearchParams({ from: redirectFrom, id: id!, type, locale })}`);
       else navigate(`/content/${type}`);
     } catch (error) {
       handleError(error);
     } finally {
       setBusy(null);
       setConfirmDelete(false);
-      setRedirectTo("");
     }
   }
 
@@ -321,7 +323,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     queryFn: () => cms.actions.redirects.suggest({ type, id: id!, locale }),
     staleTime: 0
   });
-  const offerRedirect = urlInfo.data?.hasUrl === true && !isTranslationOnly();
+  const offerRedirect = urlInfo.data?.hasUrl === true && Boolean(urlInfo.data.url) && !isTranslationOnly();
 
   function isTranslationOnly() {
     return locale !== config.defaultLocale && (doc.data?.locales.length ?? 0) > 1;
@@ -571,11 +573,13 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           {offerRedirect && (
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="delete-redirect">Send visitors to (optional)</Label>
-              <Input id="delete-redirect" placeholder="/another-page, or leave empty" value={redirectTo} onChange={event => setRedirectTo(event.target.value)} />
-              <p className="text-xs text-muted-foreground">Adds a redirect from this page's address. Restoring the page takes it away.</p>
-            </div>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox className="mt-0.5" checked={redirectAfter} onCheckedChange={checked => setRedirectAfter(Boolean(checked))} />
+              <span className="min-w-0">
+                Then set up a redirect from <code className="font-mono break-words">{urlInfo.data?.url}</code>
+                <span className="block text-xs text-muted-foreground">You choose where visitors go next. Restoring the page takes the redirect away.</span>
+              </span>
+            </label>
           )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

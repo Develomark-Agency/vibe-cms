@@ -253,6 +253,18 @@ describe("automatic redirects", () => {
     expect((await t.visit("/blog/one")).status).toBe(200);
   });
 
+  test("a redirect made for a deleted page is tied to it, and restoring removes it", async () => {
+    const id = await publishPost("one");
+    expect((await t.api(`/api/documents/post/${id}/redirect`)).body).toEqual({ suggestion: null, hasUrl: true, url: "/blog/one" });
+    const gone = await t.api(`/api/documents/post/${id}`, { method: "DELETE" });
+    expect((await t.api("/api/redirects")).body.total).toBe(0);
+    const made = await add("/blog/one", "/blog", { deletedDocument: { id, type: "post" } });
+    expect(made.body.redirect).toMatchObject({ source: "trash", documentId: id, documentType: "post", from: "/blog/one" });
+    await t.api(`/api/trash/${gone.body.trash}/restore`, { method: "POST" });
+    expect((await t.api("/api/redirects")).body.total).toBe(0);
+    expect((await add("/x", "/y", { deletedDocument: { id, type: "nope" } })).status).toBeGreaterThanOrEqual(400);
+  });
+
   test("pageSchema-style path fields are pages too", async () => {
     const page = (await t.api("/api/documents/page", { method: "POST", json: { data: { title: "About", path: "/about" }, publish: true } })).body;
     const current = (await t.api(`/api/documents/page/${page.id}`)).body;
