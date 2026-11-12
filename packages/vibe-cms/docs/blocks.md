@@ -32,7 +32,7 @@ Use blocks in two ways:
 ```
 
 - `blocks([...], { label, description, min, max })` is a field: an array of a union told apart by each block's `type`. The editor gives it drag-to-reorder, insertion points and a searchable add menu.
-- `pageSchema({ blocks })` is a whole content type: `title`, `path` (`format: "path"`, indexed, unique per locale), an optional search `description`, and `blocks` with the built-in blocks plus yours. Give its collection `preview: "{path}"`, so the editor's draft preview opens the page (`vibe-cms docs preview`).
+- `pageSchema({ blocks })` is a whole content type: `title`, `path` (`format: "path"`, indexed, unique per locale), an optional search `description`, an optional `visibility` (see below), and `blocks` with the built-in blocks plus yours. Give its collection `preview: "{path}"`, so the editor's draft preview opens the page (`vibe-cms docs preview`).
 
 Built-in blocks: Hero, Text (rich text), Image, Gallery, Call to action, Quote, Video, FAQ and Divider. They render as plain HTML in every adapter unless you pass your own component for their type; `vibe-cms/blocks/styles.css` styles them neutrally.
 
@@ -139,5 +139,13 @@ const events = await cms.query(event).findMany({
   <ul>{events.map(e => <li data-vibe-field={field(e, "title")}><a href={`/events/${e.slug}`}>{e.title}</a></li>)}</ul>
 </section>
 ```
+
+### Hiding a page from search engines
+
+Pages from `pageSchema()` have a **Search engines** field: *Show in search results* (the default) or *Hide from search results*. Once a hidden page is published, every response for its address carries `X-Robots-Tag: noindex, nofollow`. A change takes effect within a few seconds of publishing, and a page that is only a draft isn't hidden yet.
+
+Hiding asks search engines not to list the page. It doesn't make it private: anyone with the link can open it, and a crawler that ignores the request can still read it. Keep hidden pages out of your sitemap, and don't also disallow them in `robots.txt`, or crawlers never see the header.
+
+Any content type with a `visibility: v.optional(v.enum(["public", "noindex"]))` field works the same way, at the address `url` or `path` gives its documents (`vibe-cms docs redirects`). As with staging's header (`vibe-cms docs staging`), only pages your Worker renders get it: a page prerendered into the assets directory needs `"run_worker_first": true`.
 
 Good blocks give editors choices that matter and leave the rest to the design: an enum of three approved backgrounds rather than a colour picker, a `max` on items where the layout stops working, a `description` on the block and its fields so editors know what each does. Blocks can also be used outside pages, as a `blocks([...])` field on any content type (a post body, a product's detail sections, a footer).

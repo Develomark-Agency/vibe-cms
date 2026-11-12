@@ -135,7 +135,7 @@ export function isBuiltInType(type: string): type is BuiltInType {
 }
 
 /**
- * A page: a title, the path it lives at, a search description and its blocks:
+ * A page: a title, the path it lives at, a search description, whether search engines may list it, and its blocks:
  * the built-ins plus your own. Use it as a collection's schema:
  *
  *     schemas: { page: pageSchema({ blocks: [Testimonial, Pricing] }) }
@@ -145,6 +145,11 @@ export function pageSchema<const B extends ReadonlyArray<BlockDefinition<any, an
     title: v.text({ min: 1, max: 120 }),
     path: v.text({ format: "path", indexed: true, unique: true, label: "Path", description: "Where the page lives, like /about or /services/design" }),
     description: v.optional(v.text({ max: 160, multiline: true, label: "Search description", description: "Shown by search engines and link previews" })),
+    visibility: v.optional(v.enum(["public", "noindex"], {
+      label: "Search engines",
+      labels: { public: "Show in search results", noindex: "Hide from search results" },
+      description: "Hiding a page asks search engines not to list it. Anyone with the link can still open it."
+    })),
     blocks: blocks([...builtInBlocks, ...(options.blocks ?? ([] as unknown as B))])
   });
 }

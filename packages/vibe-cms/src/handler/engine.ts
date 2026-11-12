@@ -34,6 +34,7 @@ import type { HookArgs, PluginHost } from "./plugins.ts";
 import { ftsQuery, jsonPath, searchWords, SqlBuilder } from "./sql.ts";
 import { covers, documentUrl, type RedirectSource, type RuleInput } from "../redirects.ts";
 import { toRedirect, type RedirectFilter, type RedirectStore } from "./redirects.ts";
+import type { NoindexPages } from "./noindex.ts";
 
 /** Where a search hit the body, words between \u0001 and \u0002. */
 const SNIPPET = "snippet(vibe_search, 4, char(1), char(2), '…', 12)";
@@ -69,7 +70,9 @@ export interface EngineState {
   /** The site's own pages, for finding its favicon. */
   siteFetch?: SiteFetch,
   /** The site's redirect rules, and the copy requests are matched against. */
-  redirects: RedirectStore
+  redirects: RedirectStore,
+  /** The pages editors hid from search engines, for the header that keeps them out. */
+  noindex: NoindexPages
 }
 
 export interface RequestScope {

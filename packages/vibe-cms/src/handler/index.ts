@@ -12,6 +12,7 @@ import { SiteOrg, type OrgEnv } from "./org.ts";
 import { wellKnownPaths } from "./oauth.ts";
 import { RoleStore } from "./roles.ts";
 import { RedirectStore } from "./redirects.ts";
+import { NoindexPages } from "./noindex.ts";
 import { announceClaim, announceSetup, signInConfig, type SignInEnv } from "./signin.ts";
 import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
@@ -190,7 +191,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       org: await SiteOrg.load(bindings.db, (env ?? {}) as OrgEnv),
       signIn: signInConfig((env ?? {}) as SignInEnv, bindings.email),
       siteFetch: (request: Request) => fetchSite(request, env),
-      redirects: new RedirectStore(bindings.db, prefix)
+      redirects: new RedirectStore(bindings.db, prefix),
+      noindex: new NoindexPages(bindings.db, config)
     };
     const plugins = await PluginHost.load((config.plugins ?? []) as PluginDescriptor[], plugin => ({
       bindings: bindings[plugin.name],
@@ -344,9 +346,23 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     }
   }
 
-  /** Your site's pages, or the CMS's routes, with search engines kept away from anything but production. */
+  /** Whether editors marked the page at this request's address "hide from search results". A failed lookup never takes the site down. */
+  async function hidden(request: Request, env: E): Promise<boolean> {
+    if(request.method !== "GET" && request.method !== "HEAD") return false;
+    try {
+      return await (await state(env)).noindex.has(new URL(request.url).pathname);
+    } catch (error) {
+      console.error("vibe-cms: couldn't look up hidden pages", error);
+      return false;
+    }
+  }
+
+  /** Your site's pages, or the CMS's routes, with search engines kept away from anything but production and from pages editors hid. */
   async function respond(request: Request, env: E, ctx: ExecutionContext, handlers: WorkerHandlers<E>): Promise<Response> {
-    if(environment(env) === PRODUCTION) return route(request, env, ctx, handlers);
+    if(environment(env) === PRODUCTION) {
+      const response = await route(request, env, ctx, handlers);
+      return !match(request) && await hidden(request, env) ? withNoindex(response) : response;
+    }
     if(new URL(request.url).pathname === "/robots.txt") return robotsResponse();
     return withNoindex(await route(request, env, ctx, handlers));
   }
