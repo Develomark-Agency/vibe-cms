@@ -315,10 +315,11 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
 
   // A live page that can be redirected somewhere when it goes.
   const urlInfo = useQuery({
-    queryKey: ["redirect-suggestion", type, id, locale],
+    // Its own key: the review screen caches a different shape under `redirect-suggestion`.
+    queryKey: ["redirect-info", type, id, locale],
     enabled: permissions.delete && session.permissions.redirects === true && Boolean(id && doc.data?.published),
     queryFn: () => cms.actions.redirects.suggest({ type, id: id!, locale }),
-    staleTime: 60_000
+    staleTime: 0
   });
   const offerRedirect = urlInfo.data?.hasUrl === true && !isTranslationOnly();
 

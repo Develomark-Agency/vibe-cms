@@ -207,6 +207,7 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
       void queryClient.invalidateQueries({ queryKey: ["changes", type, id, locale] });
       void queryClient.invalidateQueries({ queryKey: ["redirects"] });
       void queryClient.invalidateQueries({ queryKey: ["redirect-suggestion", type, id, locale] });
+      void queryClient.invalidateQueries({ queryKey: ["redirect-info", type, id, locale] });
       cms.toast(runAt ? `Scheduled ${counted} for ${formatDate(runAt)}` : `Published ${counted}`, { type: "success" });
       const made = (result as { redirect?: { from: string, to: string, created: boolean, reason?: string } }).redirect;
       if(made?.created) cms.toast(`Redirecting ${made.from} to ${made.to}`, { type: "success" });
