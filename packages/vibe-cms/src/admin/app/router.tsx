@@ -242,6 +242,12 @@ function changesPage(to: string) {
   return (to.split(/[?#]/)[0] || "/") !== current;
 }
 
+/** Resolves once the page transition that's running, if any, has finished: for things that should wait for the new page to be on screen. */
+export function pageSettled(): Promise<void> {
+  const active = (document as ViewTransitionDocument).activeViewTransition;
+  return active ? active.finished.then(() => {}, () => {}) : Promise.resolve();
+}
+
 /** Opens an editor path, without the `/_vibe/admin` base: `/content/post/doc_123?locale=fr`. For code outside React. */
 export function navigate(to: string, options: { replace?: boolean } = {}) {
   const target = to.startsWith("/") ? to : `/${to}`;

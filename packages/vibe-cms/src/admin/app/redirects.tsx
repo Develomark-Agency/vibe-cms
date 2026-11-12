@@ -17,7 +17,7 @@ import { useAdmin } from "./context.tsx";
 import { parseCsv, stringifyCsv } from "./csv.ts";
 import { variablesOf } from "../../redirects.ts";
 import { Page, PageHeader } from "./page.tsx";
-import { Link, navigate, useLocation } from "./router.tsx";
+import { Link, navigate, pageSettled, useLocation } from "./router.tsx";
 
 const PAGE = 50;
 const STATUSES = [
@@ -50,6 +50,8 @@ export function RedirectsPage() {
   const [source, setSource] = useState<"" | keyof typeof SOURCES>("");
   const [limit, setLimit] = useState(PAGE);
   const [draft, setDraft] = useState<Draft | null>(null);
+  // A dialog to open as soon as the page is ready: not while the page is still arriving, or over an empty list.
+  const [arriving, setArriving] = useState<Draft | null>(null);
   const [skipped, setSkipped] = useState<Array<{ row: number, from: string, reason: string }> | null>(null);
   const importInput = useRef<HTMLInputElement>(null);
   const location = useLocation();
@@ -59,7 +61,7 @@ export function RedirectsPage() {
     const from = location.search.get("from");
     if(!from) return;
     const [id, type] = [location.search.get("id"), location.search.get("type")];
-    setDraft({ ...EMPTY, from, ...(id && type ? { deleted: { id, type } } : {}), locale: location.search.get("locale") ?? undefined });
+    setArriving({ ...EMPTY, from, ...(id && type ? { deleted: { id, type } } : {}), locale: location.search.get("locale") ?? undefined });
     navigate("/redirects", { replace: true });
   }, [location.search]);
 
@@ -80,6 +82,19 @@ export function RedirectsPage() {
     queryFn: () => cms.actions.redirects.list({ search: query || undefined, source: source || undefined, limit }),
     placeholderData: previous => previous
   });
+  useEffect(() => {
+    if(!arriving || !list.data) return;
+    let cancelled = false;
+    void pageSettled().then(() => {
+      if(cancelled) return;
+      setDraft(arriving);
+      setArriving(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [arriving, list.data]);
+
   function refresh() {
     return queryClient.invalidateQueries({ queryKey: ["redirects"] });
   }

@@ -111,6 +111,8 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const [conflict, setConflict] = useState<DocumentState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [redirectAfter, setRedirectAfter] = useState(true);
+  // Resolves when the delete dialog has finished closing, so the page doesn't change under it.
+  const deleteClosed = useRef<(() => void) | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const loadedKey = useRef<string | null>(null);
@@ -303,10 +305,16 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
           }
         }
       });
-      if(translation) void doc.refetch();
-      // The Redirects page opens with this page's address filled in, to say where visitors go instead.
-      else if(redirectFrom) navigate(`/redirects?${new URLSearchParams({ from: redirectFrom, id: id!, type, locale })}`);
-      else navigate(`/content/${type}`);
+      if(translation) {
+        void doc.refetch();
+      } else {
+        // The dialog fades out first; changing page under it looks like a glitch.
+        const closed = new Promise<void>(resolve => (deleteClosed.current = resolve));
+        setConfirmDelete(false);
+        await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 400))]);
+        // The Redirects page opens with this page's address filled in, to say where visitors go instead.
+        navigate(redirectFrom ? `/redirects?${new URLSearchParams({ from: redirectFrom, id: id!, type, locale })}` : `/content/${type}`);
+      }
     } catch (error) {
       handleError(error);
     } finally {
@@ -564,7 +572,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
         </div>
       </div>
 
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete} onOpenChangeComplete={open => !open && deleteClosed.current?.()}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{isTranslationOnly() ? `Delete the ${localeName(locale)} translation?` : `Delete “${title}”?`}</AlertDialogTitle>
