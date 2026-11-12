@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightIcon, DownloadIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon, UploadIcon } from "lucide-react";
+import { ArrowRightIcon, DownloadIcon, InfoIcon, PencilIcon, PlusIcon, SearchIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "../components/ui/badge.tsx";
@@ -10,6 +10,7 @@ import { Input } from "../components/ui/input.tsx";
 import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { Switch } from "../components/ui/switch.tsx";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip.tsx";
 import type { Redirect } from "../../handler/redirects.ts";
 import { askConfirm } from "./confirm.tsx";
 import { useAdmin } from "./context.tsx";
@@ -256,8 +257,24 @@ export function RedirectsPage() {
               }}
             >
               <DialogHeader>
-                <DialogTitle>{draft.id ? "Edit redirect" : "Add redirect"}</DialogTitle>
-                <DialogDescription>End “from” with /* to match everything under a path, and use * in “to” for what it matched: /blog/* → /news/*. Or name parts with {"{name}"}, in the path or a query parameter, and use them in “to”: {"/items/{id} → /products?id={id}"}, {"/place?town={name} → /towns/{name}"}.</DialogDescription>
+                <DialogTitle className="flex items-center gap-1.5">
+                  {draft.id ? "Edit redirect" : "Add redirect"}
+                  <Tooltip>
+                    <TooltipTrigger render={<button type="button" aria-label="How to write a redirect" className="text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"><InfoIcon className="size-4" /></button>} />
+                    <TooltipContent side="bottom" className="max-w-xs flex-col items-start gap-2 p-3 text-left">
+                      <p className="font-medium">Patterns</p>
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-xs">
+                        <dt><code className="font-mono">/blog/*</code></dt>
+                        <dd className="opacity-80">Everything under /blog/. Use <code className="font-mono">*</code> in “To” for the rest of the path.</dd>
+                        <dt><code className="font-mono">{"/items/{id}"}</code></dt>
+                        <dd className="opacity-80">One named segment. Use <code className="font-mono">{"{id}"}</code> in “To”.</dd>
+                        <dt><code className="font-mono">{"/place?town={name}"}</code></dt>
+                        <dd className="opacity-80">A query parameter, which is used up in “To”.</dd>
+                      </dl>
+                    </TooltipContent>
+                  </Tooltip>
+                </DialogTitle>
+                <DialogDescription>Send visitors from an old path to a new one.</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-from">From</Label>
@@ -386,17 +403,21 @@ function TargetInput({ id, value, variables, from, onChange }: { id: string, val
         )}
       </div>
       {variables.length > 0 && (
-        <div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+        <div className="flex flex-col gap-2 text-xs text-muted-foreground">
           <p className="flex flex-wrap items-center gap-1.5">
             Variables:
-            {variables.map(name => (
-              <button key={name} type="button" onMouseDown={event => event.preventDefault()} onClick={() => place(input.current?.selectionStart ?? value.length, input.current?.selectionEnd ?? value.length, `{${name}}`)} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-foreground hover:bg-accent">{`{${name}}`}</button>
-            ))}
+            {variables.map(name => <code key={name} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-foreground">{`{${name}}`}</code>)}
             <span>Type <kbd className="font-mono">{"{"}</kbd> to pick one.</span>
           </p>
           {unknown.length > 0 && <p className="text-destructive">{unknown.map(name => `{${name}}`).join(", ")} {unknown.length === 1 ? "isn't" : "aren't"} in “from”.</p>}
           {value.trim() && unknown.length === 0 && (
-            <p>Example: <code className="font-mono break-all text-foreground">{example(from)}</code> → <code className="font-mono break-all text-foreground">{example(value)}</code></p>
+            // Each side on its own line, so a long path wraps by itself instead of splitting the pair.
+            <dl aria-label="Example" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg bg-muted/50 px-3 py-2">
+              <dt>Visit</dt>
+              <dd><code className="font-mono break-all text-foreground">{example(from)}</code></dd>
+              <dt>Goes to</dt>
+              <dd><code className="font-mono break-all text-foreground">{example(value)}</code></dd>
+            </dl>
           )}
         </div>
       )}
