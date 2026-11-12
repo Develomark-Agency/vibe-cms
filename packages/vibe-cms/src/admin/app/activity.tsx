@@ -11,60 +11,11 @@ import { cn } from "../lib/utils.ts";
 import type { SessionState } from "./client.ts";
 import { collectionLabel, displayUser, formatDate, formatRelative, localeName, useAdmin } from "./context.tsx";
 import { Delayed, useArrival } from "./delayed.tsx";
+import { ATTEMPTS, LABELS } from "./activity-labels.ts";
 import { Collapse } from "./fields.tsx";
 import { Page, PageHeader } from "./page.tsx";
 import { Link } from "./router.tsx";
 import { VIA_LABELS } from "./via.ts";
-
-/** What people see for an action's name. Anything not here (plugin actions) shows its name. */
-const LABELS: Record<string, string> = {
-  "documents.create": "Created",
-  "documents.update": "Edited",
-  "documents.delete": "Deleted",
-  "documents.publish": "Published",
-  "documents.unpublish": "Unpublished",
-  "documents.restoreVersion": "Restored a version of",
-  "documents.schedule": "Scheduled",
-  "documents.unschedule": "Unscheduled",
-  "assets.upload": "Uploaded",
-  "assets.update": "Edited",
-  "assets.delete": "Deleted",
-  "assets.replaceContent": "Replaced",
-  "assets.stripMetadata": "Removed photo details from",
-  "folders.create": "Created folder",
-  "folders.move": "Moved folder",
-  "folders.delete": "Deleted folder",
-  "trash.restore": "Restored",
-  "trash.purge": "Deleted for good",
-  "trash.empty": "Emptied the trash",
-  "trash.purgeExpired": "Purged expired trash",
-  "site.update": "Changed site settings",
-  "backups.manifest": "Started a backup",
-  "backups.export": "Read backup data",
-  "backups.files": "Listed backup files",
-  "activity.list": "Looked at others' activity",
-  "users.list": "Listed people",
-  "users.invite": "Invited someone",
-  "users.update": "Changed roles of",
-  "users.remove": "Removed",
-  "roles.save": "Saved role",
-  "roles.delete": "Deleted role",
-  "roles.apply": "Applied a role template",
-  "auth.signIn": "Signed in",
-  "auth.signOut": "Signed out"
-};
-
-/** Failed actions read as attempts: "Delete Pricing", refused. */
-const ATTEMPTS: Record<string, string> = {
-  "documents.create": "Create",
-  "documents.update": "Edit",
-  "documents.delete": "Delete",
-  "documents.publish": "Publish",
-  "documents.unpublish": "Unpublish",
-  "assets.delete": "Delete",
-  "trash.purge": "Delete for good",
-  "activity.list": "See others' activity"
-};
 
 /** Known MCP clients by the start of their user agent; anything else is just "an agent". */
 const AGENTS: Array<[RegExp, string]> = [
@@ -216,7 +167,7 @@ export function ActivityList({ filter, text = "", compact = false, onEntries }: 
                   </span>
                 )}
                 <span role="cell" className="truncate">
-                  <span className="font-medium">{actionWord(entry)}</span> {targetText(entry)}
+                  <span className="text-muted-foreground">{actionWord(entry)}</span>{targetText(entry) && <> <span className="font-medium">{targetText(entry)}</span></>}
                   {typeof entry.summary?.ver === "number" && <span className="text-muted-foreground"> · v{entry.summary.ver as number}</span>}
                   {compact && <span className="text-muted-foreground"> · {userText(entry, session)}</span>}
                 </span>

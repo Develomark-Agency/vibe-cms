@@ -135,3 +135,15 @@ describe("channels", () => {
     expect(userAgentFamily(null)).toBeUndefined();
   });
 });
+
+describe("activity labels", () => {
+  test("every action that gets logged has a name people can read", async () => {
+    const { LABELS, ATTEMPTS } = await import("../src/admin/app/activity-labels.ts");
+    const { coreActions } = await import("../src/actions/core.ts");
+    const { listActions } = await import("../src/actions/define.ts");
+    const logged = listActions(coreActions).filter(a => !a.annotations.readOnly || a.annotations.audit === "read").map(a => a.name);
+    expect(logged.filter(name => !LABELS[name])).toEqual([]);
+    // A refused attempt at anything that changes something reads as an attempt, not as a thing that happened.
+    expect(logged.filter(name => !ATTEMPTS[name])).toEqual([]);
+  });
+});
