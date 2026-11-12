@@ -1,4 +1,4 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActivityIcon, ArrowUpRightIcon, ChevronRightIcon, DownloadIcon, SearchIcon, XIcon } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import type { ActivityEntry, ActivityFilter, Via } from "../../handler/activity.ts";
@@ -14,6 +14,7 @@ import { Delayed, useArrival } from "./delayed.tsx";
 import { ATTEMPTS, LABELS } from "./activity-labels.ts";
 import { Collapse } from "./fields.tsx";
 import { Page, PageHeader } from "./page.tsx";
+import { RetentionButton } from "./retention.tsx";
 import { Link } from "./router.tsx";
 import { VIA_LABELS } from "./via.ts";
 
@@ -271,8 +272,11 @@ function csv(entries: ActivityEntry[], session: SessionState): string {
 
 /** The site's activity log: everyone's for people who may see it, otherwise the signed-in person's own. */
 export function ActivityPage() {
-  const { session, site } = useAdmin();
+  const { cms, session, site } = useAdmin();
+  const queryClient = useQueryClient();
   const everyone = session.permissions.activity === true;
+  const canSetRetention = session.permissions.activityRetention === true;
+  const retention = useQuery({ queryKey: ["activity-retention"], queryFn: () => cms.actions.activity.retention(), enabled: canSetRetention });
   const [tokens, setTokens] = useState<Token[]>([]);
   const [draft, setDraft] = useState("");
   const [focused, setFocused] = useState(false);
@@ -328,7 +332,20 @@ export function ActivityPage() {
           {" "}{since === "all" ? "All time" : `Last ${since === "24h" ? "24 hours" : since === "7d" ? "7 days" : "30 days"}`}
           {refused > 0 && <> · <span className="text-destructive">{refused} refused</span></>}
         </>}
-        actions={<Button variant="outline" disabled={shown.length === 0} onClick={exportCsv}><DownloadIcon /> Export CSV</Button>}
+        actions={<>
+          {canSetRetention && (
+            <RetentionButton
+              title="How long activity is kept"
+              description="Activity older than this many days is removed automatically. Nothing else ever deletes it, so a shorter period permanently removes older history."
+              days={retention.data?.days}
+              onSave={async days => {
+                await cms.actions.activity.setRetention({ days });
+                await queryClient.invalidateQueries({ queryKey: ["activity-retention"] });
+              }}
+            />
+          )}
+          <Button variant="outline" disabled={shown.length === 0} onClick={exportCsv}><DownloadIcon /> Export CSV</Button>
+        </>}
       />
 
       <div className="relative">

@@ -8,7 +8,7 @@ Where the build differs from this proposal:
 - The MCP client is named by its user agent: the stateless MCP route doesn't keep what `initialize` said. The panel's MCP calls send `X-Vibe-Via: mcp` and `X-Vibe-Client: vibe-panel`.
 - Sign-ins: passkey and identity-provider sign-ins and sign-outs are recorded (`auth.signIn`, `auth.signOut`); hub code exchanges aren't, since the hub renews them every 10 minutes and records its own sign-ins.
 - `via: "plugin"` is what trusted in-process engines record; plugins can't yet call actions from server code.
-- Open questions, as built: failed validation (`BAD_REQUEST`) isn't recorded; retention defaults to 90 days (`activity: { days }`), with no hard size cap.
+- Open questions, as built: failed validation (`BAD_REQUEST`) isn't recorded; retention defaults to 90 days (set on the Activity page), with no hard size cap.
 
 ## Problem
 
@@ -75,7 +75,7 @@ Actions can mark themselves `audit: "read"` to opt a sensitive read in.
 ## Integrity and retention
 
 - Append-only: no action edits or deletes entries, owners included.
-- Pruned by a cron job after a retention period (default 90 days, setting in the config).
+- Pruned by a cron job after a retention period (default 90 days, set on the Activity page).
 - **Hub:** sites attached to a hub send entries to it (batched, through the cron catch-up the hub already uses), so the hub keeps a longer cross-site history and can search it. Standalone sites keep only their own.
 
 ## Interface

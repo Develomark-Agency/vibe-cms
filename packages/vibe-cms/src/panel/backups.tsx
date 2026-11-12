@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveIcon, CheckIcon, CopyIcon, DownloadIcon, HistoryIcon, ShieldAlertIcon, TriangleAlertIcon } from "lucide-react";
+import { ArchiveIcon, CheckIcon, DownloadIcon, HistoryIcon, ShieldAlertIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -90,26 +90,18 @@ function progressText(run: BackupRun): string {
 }
 
 function TrustNotice({ trusted, panel, trustedPanel }: { trusted: boolean | null, panel: string | null, trustedPanel: string | null }) {
-  const [copied, setCopied] = useState(false);
   if(trusted === true) return null;
   if(trusted === null) {
     return <p className="flex gap-2 rounded-[10px] well px-3 py-2 text-sm text-muted-foreground"><TriangleAlertIcon className="mt-0.5 size-4 shrink-0" /> The site can't be reached, so whether it allows backups is unknown.</p>;
   }
-  // A site in another org needs its VIBE_ORG changed too, which is a deploy setting, not config.
-  const snippet = "backups: true";
+  // A site in another org needs its VIBE_ORG changed too, which is a deploy setting.
   return (
-    <div className="grid gap-2 rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
+    <div className="rounded-[10px] border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
       <p className="flex gap-2"><ShieldAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
-        <span>{trustedPanel ? `This site trusts another org (${trustedPanel}), not ${panel ?? "this one"}: set its VIBE_ORG to ${panel ?? "this hub's org"}, then add this to its` : "This site doesn't let this panel back it up yet. Add this to its"} <code className="font-mono text-xs whitespace-nowrap">vibe-cms.config.ts</code> and deploy:</span>
+        <span>{trustedPanel
+          ? `This site trusts another org (${trustedPanel}), not ${panel ?? "this one"}: set its VIBE_ORG to ${panel ?? "this hub's org"}, then turn on automatic backups on the site's Site page.`
+          : "This site doesn't let this panel back it up yet. An owner can turn on automatic backups on the site's Site page."}</span>
       </p>
-      <div className="flex gap-2">
-        <Input readOnly value={snippet} className="font-mono text-xs" onFocus={e => e.currentTarget.select()} aria-label="Config to add" />
-        <Button variant="outline" size="sm" onClick={async () => {
-          await navigator.clipboard.writeText(snippet);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}>{copied ? <CheckIcon /> : <CopyIcon />}</Button>
-      </div>
     </div>
   );
 }
@@ -295,7 +287,7 @@ export function BackupDefaultsDialog({ backups, open, onOpenChange }: { backups:
           <DialogTitle>Backup schedule</DialogTitle>
           <DialogDescription>
             The default for every site in this panel. A site can have its own from its Backups.
-            {" "}Sites allow backups with <code className="font-mono text-xs">backups: true</code> in their config.
+            {" "}Each site turns backups on from its own Site page.
           </DialogDescription>
         </DialogHeader>
         {!status.data || !policy ? <Delayed><div className="flex justify-center p-6"><Spinner /></div></Delayed>

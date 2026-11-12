@@ -98,7 +98,10 @@ A role is an object of rules; a user may do anything any of their roles allows.
 | `backups: true` | Taking and restoring them. A restore replaces everything. |
 | `manageRoles: true` | Creating, changing and giving out roles up to the person's own access (above). |
 | `viewActivity: true` | Seeing everyone's activity (`vibe-cms docs activity`). Everyone always sees their own. Not implied by anything but `all`. |
-| `manageRedirects: true` | Managing the site's redirects (`vibe-cms docs redirects`). Roles with `siteSettings` have it unless this is `false`. |
+| `manageRedirects: true` | Managing the site's redirects (`vibe-cms docs redirects`). Not implied by anything but `all`. |
+| `manageTrash: true` | Changing how long deleted documents and files stay restorable (the Trash page's Retention). Not implied by anything but `all`. |
+| `manageActivity: true` | Changing how long the activity log is kept (the Activity page's Retention, `vibe-cms docs activity`). Not implied by anything but `all`. |
+| `manageScheduledBackups: true` | Turning scheduled backups on or off on the Site page: whether the site's hub may take and restore snapshots on its own (`vibe-cms docs backups`). It gives standing access to every draft and file. Not implied by anything but `all`. |
 
 Details that matter:
 

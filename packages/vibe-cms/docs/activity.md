@@ -42,11 +42,4 @@ Owners and roles with `viewActivity: true` see everyone's activity; everyone els
 
 ## Retention
 
-Nothing edits or deletes entries, owners included. The cron trigger prunes entries older than 90 days; change it in the config:
-
-```ts
-export default defineConfig({
-  activity: { days: 180 },
-  // …
-});
-```
+Nothing edits or deletes entries, owners included. Entries older than 90 days are removed automatically. To change that, use **Retention** on the Activity page (or the `activity.setRetention` action), 1 to 3650 days. It's stored with the site's settings, so it needs no redeploy. A shorter period removes older entries soon after. It needs `manageActivity` in the person's role (`vibe-cms docs permissions`).

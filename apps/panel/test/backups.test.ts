@@ -58,9 +58,8 @@ function bucket() {
 
 const archive = bucket();
 
-function backupSite(origin: string, allowBackups: boolean) {
+function backupSite(origin: string) {
   const config = defineConfig({
-    backups: allowBackups,
     schemas: { post: v.object({ title: v.text() }) }
   });
   const siteEnv = { DB: createD1({ roles: { editor: { post: ["read", "write", "publish"] }, ops: { post: ["read"], backups: true } } }), MEDIA: createR2(), VIBE_ORG: ORG };
@@ -76,6 +75,10 @@ function backupSite(origin: string, allowBackups: boolean) {
   }
   return {
     env: siteEnv,
+    /** Turns on automatic backups from the site's side, as an owner would on its Site page. */
+    async allowBackups() {
+      await (await dev()).site.setBackupAccess({ enabled: true });
+    },
     async seed(titles: string[]) {
       const actions = await dev();
       for(const title of titles) await actions.documents.create({ type: "post", data: { title }, publish: true });
@@ -106,8 +109,9 @@ beforeAll(async () => {
   installMock();
   env.BACKUPS = archive as unknown as R2Bucket;
   sites["https://panel.test"] = request => handle(request, env);
-  siteC = backupSite("https://site-c.test", true);
-  siteD = backupSite("https://site-d.test", false);
+  siteC = backupSite("https://site-c.test");
+  await siteC.allowBackups();
+  siteD = backupSite("https://site-d.test");
   await siteC.seed(["First", "Second"]);
   idp.email = "jane@agency.test";
   idp.sub = "u-jane";
@@ -174,7 +178,7 @@ describe("panel backups", () => {
     await processBackups(env, { schedule: false });
     const [run] = (await backups(d)).runs;
     expect(run!.status).toBe("failed");
-    expect(run!.error).toContain("backups: true");
+    expect(run!.error).toContain("Site page");
   });
 
   test("a backup token can't do anything but backups", async () => {
@@ -225,7 +229,8 @@ describe("panel backups", () => {
 
   test("scheduled snapshots come due at the policy's hour, once a day", async () => {
     const hour = new Date().getUTCHours();
-    const fresh = backupSite("https://site-e.test", true);
+    const fresh = backupSite("https://site-e.test");
+    await fresh.allowBackups();
     await fresh.seed(["Hello"]);
     const e = await addSite("https://site-e.test");
     await panel(`/api/sites/${c}/backups/policy`, { method: "PUT", body: JSON.stringify({ policy: { ...DEFAULT_POLICY, enabled: false } }) });

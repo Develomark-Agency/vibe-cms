@@ -37,7 +37,7 @@ const BACKUP_LEVELS: Array<{ value: "none" | "take" | "restore", label: string }
   { value: "restore", label: "Take and restore" }
 ];
 
-const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "viewActivity", "manageRedirects", "*"]);
+const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "viewActivity", "manageRedirects", "manageTrash", "manageActivity", "manageScheduledBackups", "*"]);
 
 function levelOf(actions: Action[] | undefined): Level {
   if(!actions?.length) return "none";
@@ -212,19 +212,16 @@ export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
             <Switch checked={rules.siteSettings === true} disabled={readOnly} aria-label="Site settings" onCheckedChange={on => set("siteSettings", on || undefined)} />
           </Row>
 
-          <Row title="Manage redirects" description="Where old paths go. Included with site settings; turn it off to keep site settings without it.">
-            <Switch
-              checked={rules.manageRedirects ?? rules.siteSettings === true}
-              disabled={readOnly}
-              aria-label="Manage redirects"
-              onCheckedChange={on => {
-                // Stored only when it differs from what site settings give.
-                const next = { ...rules };
-                if(on === (rules.siteSettings === true)) delete next.manageRedirects;
-                else next.manageRedirects = on;
-                onChange(next);
-              }}
-            />
+          <Row title="Manage redirects" description="Where old paths go.">
+            <Switch checked={rules.manageRedirects === true} disabled={readOnly} aria-label="Manage redirects" onCheckedChange={on => set("manageRedirects", on || undefined)} />
+          </Row>
+
+          <Row title="Trash retention" description="How long deleted items can be restored before they are removed for good.">
+            <Switch checked={rules.manageTrash === true} disabled={readOnly} aria-label="Trash retention" onCheckedChange={on => set("manageTrash", on || undefined)} />
+          </Row>
+
+          <Row title="Activity retention" description="How long the activity log is kept.">
+            <Switch checked={rules.manageActivity === true} disabled={readOnly} aria-label="Activity retention" onCheckedChange={on => set("manageActivity", on || undefined)} />
           </Row>
 
           <Row title="Manage roles" description={types ? "Create, change and give out roles, but only up to what this role can do itself." : "Create, change and give out roles up to this role's own access."}>
@@ -233,6 +230,10 @@ export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
 
           <Row title="See activity" description="Everyone's activity: who changed what, and through which channel. People always see their own.">
             <Switch checked={rules.viewActivity === true} disabled={readOnly} aria-label="See activity" onCheckedChange={on => set("viewActivity", on || undefined)} />
+          </Row>
+
+          <Row title="Scheduled backups" description="Turn automatic backups by this site's panel on or off. They give the panel standing access to every draft and file.">
+            <Switch checked={rules.manageScheduledBackups === true} disabled={readOnly} aria-label="Scheduled backups" onCheckedChange={on => set("manageScheduledBackups", on || undefined)} />
           </Row>
 
           <ul className="border-t">

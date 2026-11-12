@@ -40,7 +40,24 @@ const trashEmpty = base({
 })
   .handler(({ context: { engine } }) => engine.emptyTrash());
 
+const trashRetention = base({
+  summary: "Get how long the trash is kept",
+  description: "How many days deleted documents and files stay restorable before they are removed for good.",
+  readOnly: true
+})
+  .handler(({ context: { engine } }) => engine.trashRetention());
+
+const trashSetRetention = base({
+  summary: "Set how long the trash is kept",
+  description: "Changes how many days deleted documents and files stay restorable (30 by default). Needs `manageTrash` in the user's role. Items already in the trash follow the new period too, so a shorter one can remove some soon.",
+  idempotent: true
+})
+  .input(z.object({ days: z.number().int().min(1).max(3650).describe("Days to keep it, 1 to 3650") }))
+  .handler(({ context: { engine }, input }) => engine.setTrashRetention(input.days));
+
 export const trash = router({
+  retention: trashRetention,
+  setRetention: trashSetRetention,
   list: trashList,
   get: trashGet,
   restore: trashRestore,

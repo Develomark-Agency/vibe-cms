@@ -669,14 +669,14 @@ describe("text files", () => {
 describe("site settings", () => {
   test("name, accent and icon show up everywhere", async () => {
     const { id } = (await t.api("/api/site")).body;
-    expect((await t.api("/api/site")).body).toEqual({ id, name: "site.test", accent: null, icon: null, favicon: null, stripMetadata: true });
+    expect((await t.api("/api/site")).body).toEqual({ id, name: "site.test", accent: null, icon: null, favicon: null, stripMetadata: true, backups: false });
 
     const form = new FormData();
     form.set("file", new File([png(64, 64)], "logo.png", { type: "image/png" }));
     const logo = (await t.api("/api/assets", { method: "POST", body: form })).body;
 
     const saved = await t.api("/api/site", { method: "PATCH", json: { name: "  Acme  ", accent: "#2563EB", icon: logo.id } });
-    expect(saved.body).toEqual({ id, name: "Acme", accent: "#2563eb", icon: { id: logo.id, url: logo.url }, favicon: null, stripMetadata: true });
+    expect(saved.body).toEqual({ id, name: "Acme", accent: "#2563eb", icon: { id: logo.id, url: logo.url }, favicon: null, stripMetadata: true, backups: false });
 
     const descriptor = await (await t.vibe.handle(new Request("https://site.test/.well-known/vibe-cms"), t.env, ctx)).json() as any;
     expect(descriptor).toMatchObject({ id, name: "Acme", accent: "#2563eb", icon: logo.url });
@@ -688,7 +688,7 @@ describe("site settings", () => {
     expect((await t.api(`/api/assets/${logo.id}`, { method: "DELETE" })).status).toBe(409);
 
     const reset = await t.api("/api/site", { method: "PATCH", json: { accent: null, icon: null } });
-    expect(reset.body).toEqual({ id, name: "Acme", accent: null, icon: null, favicon: null, stripMetadata: true });
+    expect(reset.body).toEqual({ id, name: "Acme", accent: null, icon: null, favicon: null, stripMetadata: true, backups: false });
   });
 
   test("each database is its own site, with an ID made once and kept", async () => {

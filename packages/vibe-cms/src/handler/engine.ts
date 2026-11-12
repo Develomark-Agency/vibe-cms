@@ -19,7 +19,7 @@ import type {
 import { findReferences, isAssetValue, isRecord, pickUnionOption, schemaAt, shapeMismatches, validate, type Issue } from "../schema/validate.ts";
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
-import { can, require, type Permit } from "./auth.ts";
+import { BACKUP_ACCESS_KEY, backupAccess, can, require, type Permit } from "./auth.ts";
 import { detectFavicon, type SiteFetch } from "./favicon.ts";
 import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
@@ -105,7 +105,9 @@ export interface SiteSettings {
    * Whether uploads lose their location and camera details, keeping orientation. The editor asks
    * when a photo has them, suggesting this; uploads from the CLI and agents follow it. Default true.
    */
-  stripMetadata: boolean
+  stripMetadata: boolean,
+  /** Whether the site's hub may back it up on a schedule. Off until turned on from the Site page. */
+  backups: boolean
 }
 
 export interface SiteSettingsPatch {
@@ -120,8 +122,12 @@ interface StoredSite {
   name?: string,
   accent?: string,
   icon?: string,
-  /** Only stored when turned off. */
-  stripMetadata?: false
+  /** Only stored when it differs from the default. */
+  stripMetadata?: false,
+  /** How long deleted items stay in the trash. Only stored when it differs from the default. */
+  trashDays?: number,
+  /** How long activity is kept. Only stored when it differs from the default. */
+  activityDays?: number
 }
 
 /** What the CMS has seen of the site from its requests, refreshed daily. */
@@ -142,7 +148,7 @@ const DETECT_EVERY = 24 * 60 * 60 * 1000;
 const DETECT_NONE_EVERY = 5 * 60 * 1000;
 const detecting = new WeakMap<D1, Promise<DetectedSite | null>>();
 
-/** How long deleted items stay in the trash unless the config says otherwise. */
+/** How long deleted items stay in the trash unless the Trash page says otherwise. */
 export const DEFAULT_TRASH_DAYS = 30;
 
 export interface TrashItem {
@@ -1654,8 +1660,24 @@ export class Engine {
 
   // --- Trash -------------------------------------------------------------------
 
-  private get trashDays(): number {
-    return this.config.trash?.days ?? DEFAULT_TRASH_DAYS;
+  private async trashDays(): Promise<number> {
+    return (await this.storedSite()).trashDays ?? DEFAULT_TRASH_DAYS;
+  }
+
+  /** How long deleted items are kept, as set on the Trash page. */
+  async trashRetention(): Promise<{ days: number }> {
+    if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
+    return { days: await this.trashDays() };
+  }
+
+  async setTrashRetention(days: number): Promise<{ days: number }> {
+    if(!this.scope.trusted || this.scope.session) require(this.state, this.scope.session, { action: "write", scope: "trash" });
+    const next = await this.storedSite();
+    if(days === DEFAULT_TRASH_DAYS) delete next.trashDays;
+    else next.trashDays = days;
+    await this.putMeta(SITE_KEY, JSON.stringify(next));
+    this.note({ days });
+    return { days };
   }
 
   private trashStatement(input: {
@@ -1688,7 +1710,7 @@ export class Engine {
     return can(this.state, this.scope.session, row.kind === "asset" ? { action: "delete", scope: "media" } : { action: "delete", type: row.type ?? undefined });
   }
 
-  private toTrashItem(row: TrashRow): TrashItem {
+  private toTrashItem(row: TrashRow, days: number): TrashItem {
     return {
       id: row.id,
       kind: row.kind,
@@ -1698,7 +1720,7 @@ export class Engine {
       label: row.label,
       deletedAt: iso(row.deleted_at)!,
       deletedBy: row.deleted_by,
-      expiresAt: iso(row.deleted_at + this.trashDays * 86_400_000)!
+      expiresAt: iso(row.deleted_at + days * 86_400_000)!
     };
   }
 
@@ -1707,7 +1729,8 @@ export class Engine {
     if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
     const rows = await this.orm.select().from(trash).orderBy(desc(trash.deleted_at)).limit(500);
     const known = (row: TrashRow) => row.kind === "asset" || (row.type !== null && row.type in this.config.schemas);
-    return { items: rows.filter(row => known(row) && this.canTrash(row)).map(row => this.toTrashItem(row)), days: this.trashDays };
+    const days = await this.trashDays();
+    return { items: rows.filter(row => known(row) && this.canTrash(row)).map(row => this.toTrashItem(row, days)), days };
   }
 
   private async trashRow(id: string): Promise<TrashRow> {
@@ -1720,7 +1743,7 @@ export class Engine {
   /** What the Trash page previews: each deleted language's draft, or the file's details. */
   async trashDetail(id: string): Promise<TrashDetail> {
     const row = await this.trashRow(id);
-    const item = this.toTrashItem(row);
+    const item = this.toTrashItem(row, await this.trashDays());
     if(row.kind === "asset") {
       const asset = this.toAsset(JSON.parse(row.payload) as AssetRow);
       // Its public URL 404s while trashed; the editor fetches the bytes from here instead.
@@ -1765,7 +1788,7 @@ export class Engine {
         this.orm.delete(trash).where(eq(trash.id, id))
       ]);
       await this.touchFolder(asset.folder);
-      return { ...this.toTrashItem(row), restored: true };
+      return { ...this.toTrashItem(row, await this.trashDays()), restored: true };
     }
     const type = row.type!;
     getSchema(this.config, type);
@@ -1800,7 +1823,7 @@ export class Engine {
       if(this.canTrash(file)) await this.restoreTrash(file.id).catch(() => {});
     }
     for(const d of docs) this.afterWrite({ type, id: row.item_id, locale: d.locale, action: "restore", valid: false, doc: null });
-    return { ...this.toTrashItem(row), restored: true };
+    return { ...this.toTrashItem(row, await this.trashDays()), restored: true };
   }
 
   /** Deletes for good: the row, the document's history or the file's bytes. */
@@ -1827,8 +1850,9 @@ export class Engine {
 
   /** Called from the `scheduled` handler. */
   async purgeExpiredTrash(now = Date.now()): Promise<number> {
-    const { purged } = await this.emptyTrash({ olderThan: now - this.trashDays * 86_400_000 });
-    if(purged) await this.recordActivity({ action: "trash.purgeExpired", ok: true, targetType: "trash", summary: { purged, days: this.trashDays } }, { via: "cron", system: "cron" });
+    const days = await this.trashDays();
+    const { purged } = await this.emptyTrash({ olderThan: now - days * 86_400_000 });
+    if(purged) await this.recordActivity({ action: "trash.purgeExpired", ok: true, targetType: "trash", summary: { purged, days } }, { via: "cron", system: "cron" });
     return purged;
   }
 
@@ -1846,9 +1870,25 @@ export class Engine {
     return listActivity(this.db, filter);
   }
 
-  /** Deletes activity entries older than the config's `activity.days` (90 by default). Called from the `scheduled` handler. */
+  /** How long activity is kept, as set on the Activity page. */
+  async activityRetention(): Promise<{ days: number }> {
+    if(!this.scope.trusted && !this.scope.session) throw new HttpError(401, "Sign in required");
+    return { days: (await this.storedSite()).activityDays ?? DEFAULT_ACTIVITY_DAYS };
+  }
+
+  async setActivityRetention(days: number): Promise<{ days: number }> {
+    if(!this.scope.trusted || this.scope.session) require(this.state, this.scope.session, { action: "write", scope: "activityRetention" });
+    const next = await this.storedSite();
+    if(days === DEFAULT_ACTIVITY_DAYS) delete next.activityDays;
+    else next.activityDays = days;
+    await this.putMeta(SITE_KEY, JSON.stringify(next));
+    this.note({ days });
+    return { days };
+  }
+
+  /** Deletes activity entries older than the retention (90 days by default). Called from the `scheduled` handler. */
   async pruneActivity(now = Date.now()): Promise<void> {
-    await pruneActivity(this.db, this.config.activity?.days ?? DEFAULT_ACTIVITY_DAYS, now);
+    await pruneActivity(this.db, (await this.storedSite()).activityDays ?? DEFAULT_ACTIVITY_DAYS, now);
   }
 
   private async purge(row: TrashRow) {
@@ -1922,7 +1962,7 @@ export class Engine {
 
   /** Public: the panel shows sites by these before anyone signs in. */
   async site(): Promise<SiteSettings> {
-    const [stored, detected] = await Promise.all([this.storedSite(), this.detect()]);
+    const [stored, detected, backups] = await Promise.all([this.storedSite(), this.detect(), backupAccess(this.db)]);
     const row = stored.icon ? await this.assetRow(stored.icon) : null;
     const favicon = detected?.favicon ?? null;
     return {
@@ -1931,8 +1971,21 @@ export class Engine {
       accent: stored.accent ?? null,
       icon: row ? { id: row.id, url: this.assetUrl(row) } : null,
       favicon: favicon?.startsWith("/") ? `${this.scope.origin}${favicon}` : favicon,
-      stripMetadata: stored.stripMetadata ?? true
+      stripMetadata: stored.stripMetadata ?? true,
+      backups
     };
+  }
+
+  /**
+   * Lets the site's hub take snapshots and restore them as itself, or stops it. Kept apart from the `site`
+   * settings so restoring a snapshot can't turn it on or off.
+   */
+  async setBackupAccess(enabled: boolean): Promise<{ enabled: boolean }> {
+    if(!this.scope.trusted || this.scope.session) require(this.state, this.scope.session, { action: "write", scope: "scheduledBackups" });
+    if(enabled) await this.putMeta(BACKUP_ACCESS_KEY, "1");
+    else await this.orm.delete(meta).where(eq(meta.key, BACKUP_ACCESS_KEY));
+    this.note({ enabled });
+    return { enabled };
   }
 
   async updateSite(patch: SiteSettingsPatch): Promise<SiteSettings> {

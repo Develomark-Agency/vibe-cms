@@ -58,7 +58,7 @@ The handler checks redirects before passing the request to the site's own `fetch
 - **Site settings → Redirects:** list with search, add, edit, delete, hit counts, and the source of automatic rules (linking to the page).
 - Import and export as CSV, for moving a site onto Vibe CMS.
 - **Actions** `redirects.list`, `redirects.create`, `redirects.update`, `redirects.delete`: available through MCP, the CLI and REST, and recorded by the [audit log](./audit-log.md).
-- **Permission:** a role setting `manageRedirects`; part of site settings by default.
+- **Permission:** a role setting `manageRedirects`; not part of site settings.
 
 ## Later
 

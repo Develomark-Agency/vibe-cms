@@ -24,7 +24,6 @@ const config = defineConfig({
 const roles = {
   editor: { "*": ["read", "write", "publish", "delete"] },
   webmaster: { siteSettings: true },
-  webmasterNoRedirects: { siteSettings: true, manageRedirects: false },
   redirector: { manageRedirects: true }
 } as const;
 
@@ -349,7 +348,7 @@ describe("automatic redirects", () => {
 });
 
 describe("permission", () => {
-  test("siteSettings has it unless manageRedirects is false; manageRedirects stands alone", () => {
+  test("manageRedirects stands alone: siteSettings doesn't give it", () => {
     const access = { config, roles: { map: roles as never } };
     function as(name: string) {
       return { sub: name, roles: [name] };
@@ -357,12 +356,12 @@ describe("permission", () => {
     function can_(name: string) {
       return can(access, as(name), { action: "write", scope: "redirects" });
     }
-    expect(can_("webmaster")).toBe(true);
-    expect(can_("webmasterNoRedirects")).toBe(false);
+    expect(can_("webmaster")).toBe(false);
     expect(can_("redirector")).toBe(true);
     expect(can_("editor")).toBe(false);
     expect(permissionSummary(access, as("redirector")).redirects).toBe(true);
     expect(beyondReach({ manageRedirects: true }, [roles.editor as never], { types: [], locales: [] })).toEqual(["managing redirects"]);
-    expect(beyondReach({ manageRedirects: true }, [roles.webmaster as never], { types: [], locales: [] })).toEqual([]);
+    expect(beyondReach({ manageRedirects: true }, [roles.webmaster as never], { types: [], locales: [] })).toEqual(["managing redirects"]);
+    expect(beyondReach({ manageRedirects: true }, [roles.redirector as never], { types: [], locales: [] })).toEqual([]);
   });
 });

@@ -20,6 +20,23 @@ const activityList = base({
   }))
   .handler(({ context: { engine }, input }) => engine.listActivity(input as Parameters<typeof engine.listActivity>[0]));
 
+const activityRetention = base({
+  summary: "Get how long activity is kept",
+  description: "How many days the activity log keeps entries before removing them automatically.",
+  readOnly: true
+})
+  .handler(({ context: { engine } }) => engine.activityRetention());
+
+const activitySetRetention = base({
+  summary: "Set how long activity is kept",
+  description: "Changes how many days the activity log keeps entries (90 by default). Needs `manageActivity` in the user's role. A shorter period removes older entries soon after.",
+  idempotent: true
+})
+  .input(z.object({ days: z.number().int().min(1).max(3650).describe("Days to keep it, 1 to 3650") }))
+  .handler(({ context: { engine }, input }) => engine.setActivityRetention(input.days));
+
 export const activity = router({
+  retention: activityRetention,
+  setRetention: activitySetRetention,
   list: activityList
 });

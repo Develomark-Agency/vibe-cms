@@ -64,7 +64,7 @@ Existing panels have no owner after upgrading: the setup link is printed until s
 
 ## Backups
 
-Sites that add `backups: true` to their config are backed up every day into the `BACKUPS` bucket. Set the schedule and how many snapshots to keep under the account menu's **Backup schedule**, and override them for one site in its **Backups** (in the site's menu). Restores run from there too, for the site's owners on the panel (whose role on the site is `owner`). See `vibe-cms docs backups`.
+Sites that turn on automatic backups on their Site page are backed up every day into the `BACKUPS` bucket. Set the schedule and how many snapshots to keep under the account menu's **Backup schedule**, and override them for one site in its **Backups** (in the site's menu). Restores run from there too, for the site's owners on the panel (whose role on the site is `owner`). See `vibe-cms docs backups`.
 
 ## AI agents
 

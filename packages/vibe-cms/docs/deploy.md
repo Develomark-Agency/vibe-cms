@@ -62,7 +62,7 @@ A site is your own Worker with the CMS in it (`vibe-cms docs getting-started`). 
 |---|---|
 | A D1 database, bound however you like (`DB` in the examples) | Content. The CMS creates its tables (prefixed `vibe_`) on the first request. |
 | An R2 bucket (`MEDIA`) | Media files. Optional if the site has no media. |
-| The cron trigger `"* * * * *"` | Scheduled publishing, and emptying the trash after 30 days. |
+| The cron trigger `"* * * * *"` | Scheduled publishing, emptying the trash after its retention (30 days unless changed on the Trash page), and pruning old activity. |
 | The assets binding with the editor built into it | The editor is static files under `/_vibe/admin/`. |
 | The `nodejs_compat` compatibility flag | Required by the CMS. |
 | The `global_fetch_strictly_public` compatibility flag | Needed when the panel and the site are both on `workers.dev` in one Cloudflare account, so they can call each other. Harmless otherwise. |

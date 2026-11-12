@@ -5,7 +5,7 @@ import type { EngineState } from "./engine.ts";
 import { eq, lt } from "drizzle-orm";
 import { createDb } from "../db/client.ts";
 import { codes } from "../db/schema.ts";
-import { getOrCreateMeta, randomToken } from "./db.ts";
+import { getMeta, getOrCreateMeta, randomToken } from "./db.ts";
 import type { D1 } from "./platform.ts";
 import type { RoleStore } from "./roles.ts";
 
@@ -73,19 +73,27 @@ export async function verifySession(db: D1, token: string, siteId: string): Prom
 
 // --- Hub tokens -----------------------------------------------------------
 
+/** Where the site keeps whether its hub may back it up. Not in the `site` settings, so a restore never changes it. */
+export const BACKUP_ACCESS_KEY = "backup_access";
+
+/** Whether the site's hub may take and restore snapshots as itself. Off until an owner (or a role with `manageScheduledBackups`) turns it on. */
+export async function backupAccess(db: D1): Promise<boolean> {
+  return (await getMeta(db, BACKUP_ACCESS_KEY)) === "1";
+}
+
 /** The claims a hub token carries besides identity; everything else is the provider's, passed through. */
 const RESERVED = new Set(["iss", "aud", "exp", "iat", "nbf", "jti", "scope"]);
 
 /**
  * A token the hub of the site's org (`VIBE_ORG`) signed for this site: a user, whose roles the site
  * works out here, or with `scope: "backups"` the hub itself, which may only run backup actions and
- * only when the config sets `backups: true`. Null when it isn't one.
+ * only when someone turned scheduled backups on for the site (`site.setBackupAccess`). Null when it isn't one.
  */
-export async function sessionFromHubToken(state: Pick<EngineState, "config" | "org" | "siteId" | "roles">, token: string): Promise<Session | null> {
+export async function sessionFromHubToken(state: Pick<EngineState, "config" | "db" | "org" | "siteId" | "roles">, token: string): Promise<Session | null> {
   const payload = await state.org.verify(token, state.siteId);
   if(!payload) return null;
   if(payload.scope === "backups") {
-    if(state.config.backups !== true) return null;
+    if(!await backupAccess(state.db)) return null;
     return { sub: `hub|${payload.iss}`, name: "Backups", roles: [], grants: ["backups"] };
   }
   if(payload.scope !== undefined) return null;
@@ -152,9 +160,11 @@ export interface Permit {
    * `"media"` for the asset library, `"site"` for the site's name, accent and icon, `"backups"` for taking
    * and restoring backups, `"users"` for who may sign in to a site without an org (owners and `all` roles),
    * `"activity"` for seeing everyone's activity (`viewActivity`), `"redirects"` for the site's redirects
-   * (`manageRedirects`, which `siteSettings` implies unless it's `false`).
+   * (`manageRedirects`), `"trash"` for how long deleted
+   * items are kept (`manageTrash`) and `"activityRetention"` for how long activity is kept (`manageActivity`),
+   * `"scheduledBackups"` for letting the hub back the site up (`manageScheduledBackups`).
    */
-  scope?: "content" | "media" | "site" | "backups" | "users" | "activity" | "redirects"
+  scope?: "content" | "media" | "site" | "backups" | "users" | "activity" | "redirects" | "trash" | "activityRetention" | "scheduledBackups"
 }
 
 export function can(access: Access, session: Session | null, permit: Permit): boolean {
@@ -176,7 +186,10 @@ function allows(rules: RoleRules, { action, type, locale, scope }: Permit): bool
   if(scope === "users") return rules.manageRoles === true;
   if(scope === "site") return rules.siteSettings === true;
   if(scope === "activity") return rules.viewActivity === true;
-  if(scope === "redirects") return rules.manageRedirects ?? rules.siteSettings === true;
+  if(scope === "redirects") return rules.manageRedirects === true;
+  if(scope === "trash") return rules.manageTrash === true;
+  if(scope === "activityRetention") return rules.manageActivity === true;
+  if(scope === "scheduledBackups") return rules.manageScheduledBackups === true;
   // Restoring (`write`) needs `true`; taking a snapshot (`read`) also `"take"`.
   if(scope === "backups") return rules.backups === true || (rules.backups === "take" && action === "read");
   if(scope === "media") {
@@ -237,6 +250,9 @@ export function permissionSummary(access: Access, session: Session) {
     users: can(access, session, { action: "write", scope: "users" }),
     activity: can(access, session, { action: "read", scope: "activity" }),
     redirects: can(access, session, { action: "write", scope: "redirects" }),
+    trash: can(access, session, { action: "write", scope: "trash" }),
+    activityRetention: can(access, session, { action: "write", scope: "activityRetention" }),
+    scheduledBackups: can(access, session, { action: "write", scope: "scheduledBackups" }),
     roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true || access.roles.map[role]?.manageRoles === true)
   };
 }

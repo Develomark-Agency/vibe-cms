@@ -11,8 +11,8 @@ import { db, siteById, type Env, type SessionRow } from "./shared.ts";
 
 /**
  * Scheduled backups. The panel holds the policy (when, how many to keep) and the archive
- * (the `BACKUPS` bucket); each site holds the data and decides, with `backups: true` in its
- * config, that its hub may snapshot and restore it.
+ * (the `BACKUPS` bucket); each site holds the data and decides, with automatic backups turned on in its
+ * settings, that its hub may snapshot and restore it.
  *
  * Work is a queue of runs in D1. A run holds a lease it renews while it works; the cron trigger
  * picks up queued runs and runs whose lease lapsed (the Worker was stopped), and the backup runner
@@ -269,7 +269,7 @@ function explain(error: unknown, origin: string | null): string {
   const message = (error as Error).message;
   const code = (error as BackupError).details && ((error as BackupError).details as { code?: string }).code;
   if(code === "UNAUTHORIZED" || code === "FORBIDDEN") {
-    return `${message}. The site has to let this panel back it up: it needs VIBE_ORG=${origin} and \`backups: true\` in its config.`;
+    return `${message}. The site has to let this panel back it up: it needs VIBE_ORG=${origin}, and automatic backups turned on from its Site page.`;
   }
   return message;
 }

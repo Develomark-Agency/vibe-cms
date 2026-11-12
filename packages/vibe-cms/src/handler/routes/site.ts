@@ -22,7 +22,7 @@ export function descriptor(config: AnyConfig, url: URL, prefix: string, site: Si
     hub: org.hub,
     /** A pending move to another org, which takes effect at `effectiveAt` unless cancelled. */
     orgMove: org.move,
-    backups: config.backups === true,
+    backups: site.backups,
     admin: `${url.origin}${prefix}/admin`,
     /** Setup problems a developer should fix, e.g. image optimization failing. */
     warnings

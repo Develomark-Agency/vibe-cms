@@ -49,7 +49,7 @@ A problem looking redirects up never takes the site down: the request carries on
 
 ## Permission
 
-The role setting `manageRedirects` gives access to the Redirects page and actions. Roles with `siteSettings` have it too, unless `manageRedirects: false`. People who can publish see the automatic offer only with it.
+The role setting `manageRedirects` gives access to the Redirects page and actions. Nothing but `all` implies it, so a role with `siteSettings` doesn't have it. People who can publish see the automatic offer only with it.
 
 ## CSV
 

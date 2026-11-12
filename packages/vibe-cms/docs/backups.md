@@ -8,17 +8,13 @@ A snapshot, in the panel or in a `.vibe` file, holds everything editors can chan
 
 An agency panel (`apps/panel` in the vibe-cms repository) can back up every site in it on a schedule, keep the snapshots in its own R2 bucket, and restore them from the site's Backups dialog.
 
-1. Let the panel in. The site already trusts it through `VIBE_ORG`; in the site's config, also add:
-
-   ```ts
-   backups: true
-   ```
+1. Let the panel in. The site already trusts it through `VIBE_ORG`. On the site's **Site** page, turn on **Let this site's panel back it up automatically**. It's off until someone does, and it needs the `manageScheduledBackups` role rule (owners have it). It takes effect straight away, with no deploy, and isn't part of a snapshot, so restoring one never changes it.
 
    The site then accepts short-lived backup tokens its hub signs for this site, and only for backup actions. They can't read or edit content through any other action, change settings, or sign anyone in.
 2. Give the panel an archive: an R2 bucket bound as `BACKUPS`, `VIBE_ORG` set to its org, and the cron trigger. The panel's `wrangler.jsonc` has all three.
 3. Set the schedule under the account menu's **Backup schedule**: the hour (UTC), and how many daily, weekly and monthly snapshots to keep. The defaults are 14 daily, 8 weekly and 12 monthly. Any site can have its own schedule in its Backups dialog.
 
-Runs are a queue in the panel's D1. While a run works, it renews a two-minute lease. If the Worker stops mid-run, the cron trigger (every five minutes) takes the run over once the lease lapses, and the runner picks up where it was. Failures are retried with growing delays, five attempts in all. A site that refuses the panel fails at once, and the dialog says what to add to its config. Each site has at most one run at a time.
+Runs are a queue in the panel's D1. While a run works, it renews a two-minute lease. If the Worker stops mid-run, the cron trigger (every five minutes) takes the run over once the lease lapses, and the runner picks up where it was. Failures are retried with growing delays, five attempts in all. A site that refuses the panel fails at once, and the dialog says to turn it on from the site's Site page. Each site has at most one run at a time.
 
 Each snapshot in a site's Backups dialog downloads as a `.vibe` file, the same format `vibe-cms import` reads.
 
@@ -77,4 +73,4 @@ The runner the CLI and the panel share is exported from `vibe-cms/backups`: `tak
 
 ## Who may
 
-`backups: true` on a role (`vibe-cms docs permissions`) allows every backup action. So does the site's hub when the config sets `backups: true`, with its own tokens and for nothing else. A snapshot reads every document and file, drafts included, and a restore replaces them all, so no other rule implies it except `all`. Development sessions have it.
+`backups: true` on a role (`vibe-cms docs permissions`) allows every backup action. So does the site's hub once automatic backups are turned on from the Site page (`manageScheduledBackups`), with its own tokens and for nothing else. A snapshot reads every document and file, drafts included, and a restore replaces them all, so no other rule implies it except `all`. Development sessions have it.

@@ -51,6 +51,17 @@ export function SiteSettingsPage() {
     }
   });
 
+  const backupAccess = useMutation({
+    mutationFn: (enabled: boolean) => cms.actions.site.setBackupAccess({ enabled }),
+    onSuccess({ enabled }) {
+      queryClient.setQueryData<SiteSettings>(["site"], current => current && { ...current, backups: enabled });
+      toast.success(enabled ? "Scheduled backups are on" : "Scheduled backups are off");
+    },
+    onError(error) {
+      toast.error((error as Error).message);
+    }
+  });
+
   function submit(event: React.FormEvent) {
     event.preventDefault();
     if(!dirty || !name.trim()) return;
@@ -133,6 +144,21 @@ export function SiteSettingsPage() {
           <Switch checked={stripMetadata} onCheckedChange={setStripMetadata} />
         </label>
       </section>
+
+      {session.permissions.scheduledBackups === true && (
+        <section className="flex flex-col gap-4 rounded-[16px] elevated p-5">
+          <h2 className="text-sm font-medium">Backups</h2>
+          <label className="flex items-start justify-between gap-4">
+            <span className="flex flex-col gap-1">
+              <span className="text-sm">Let this site's panel back it up automatically</span>
+              <span className="text-xs text-muted-foreground">
+                The panel takes a snapshot of everything, drafts and files included, on its schedule, and can restore one. This takes effect straight away; it isn't part of Save.
+              </span>
+            </span>
+            <Switch checked={site.backups === true} disabled={backupAccess.isPending} onCheckedChange={enabled => backupAccess.mutate(enabled)} />
+          </label>
+        </section>
+      )}
 
       <div className="flex justify-end gap-2">
         {dirty && (

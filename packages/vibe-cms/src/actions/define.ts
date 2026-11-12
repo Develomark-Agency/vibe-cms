@@ -118,7 +118,7 @@ function target(path: string[], input: unknown, notes: Record<string, unknown>) 
   const group = path[0] ?? "";
   const { id: notedId, locale: notedLocale, label: notedLabel, ...rest } = notes;
   const summary: Record<string, unknown> = { ...rest };
-  for(const key of ["ver", "at", "publish", "folder"] as const) if(fields[key] !== undefined && summary[key] === undefined) summary[key] = fields[key];
+  for(const key of ["ver", "at", "publish", "folder", "days", "enabled"] as const) if(fields[key] !== undefined && summary[key] === undefined) summary[key] = fields[key];
   if(group === "site") summary.fields = Object.keys(fields);
   return {
     targetType: NOT_CONTENT.has(group) ? group : text(fields.type) ?? group,

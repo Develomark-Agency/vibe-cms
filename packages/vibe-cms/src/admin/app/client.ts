@@ -47,7 +47,13 @@ export interface Permissions {
   /** May see everyone's activity (`viewActivity`); everyone sees their own. Missing from older sites. */
   activity?: boolean,
   /** May manage the site's redirects. Missing from older sites. */
-  redirects?: boolean
+  redirects?: boolean,
+  /** May change how long deleted items are kept. Missing from older sites. */
+  trash?: boolean,
+  /** May change how long activity is kept. Missing from older sites. */
+  activityRetention?: boolean,
+  /** May turn scheduled backups on or off. Missing from older sites. */
+  scheduledBackups?: boolean
 }
 
 export interface SessionState {

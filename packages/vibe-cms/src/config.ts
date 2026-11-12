@@ -49,11 +49,17 @@ export interface RoleRules {
   backups?: boolean | "take",
   /** Seeing everyone's activity (the Activity page, `activity.list`). Everyone sees their own. */
   viewActivity?: boolean,
-  /**
-   * Managing the site's redirects (the Redirects page, `redirects.*`). Roles with `siteSettings` have it
-   * unless this is `false`.
-   */
+  /** Managing the site's redirects (the Redirects page, `redirects.*`). */
   manageRedirects?: boolean,
+  /** Changing how long deleted documents and files stay restorable (the Trash page). */
+  manageTrash?: boolean,
+  /** Changing how long the activity log is kept (the Activity page). */
+  manageActivity?: boolean,
+  /**
+   * Turning scheduled backups on or off for the site (the Site page): whether its hub may take snapshots
+   * and restore them as itself, with no one signed in. Gives standing access to every draft and file.
+   */
+  manageScheduledBackups?: boolean,
   /** Per content type, or `"*"` for every type without its own rule (a type's rule replaces `"*"`). `delete` is never implied. */
   [type: string]: Action[] | boolean | "take" | { locales: string[] } | undefined
 }
@@ -101,15 +107,6 @@ export interface ConfigInput {
   defaultLocale?: string,
   /** URL prefix for everything the CMS serves. Defaults to `/_vibe`. */
   prefix?: string,
-  /** Deleted documents and files stay restorable this long, then the cron trigger purges them. Defaults to 30 days. */
-  trash?: { days?: number },
-  /** Activity log entries are kept this long, then the cron trigger prunes them. Defaults to 90 days. See `vibe-cms docs activity`. */
-  activity?: { days?: number },
-  /**
-   * Scheduled backups: `true` lets the site's hub (`VIBE_ORG`) take snapshots and restore them as
-   * itself, and nothing else. See `vibe-cms docs backups`.
-   */
-  backups?: boolean,
   /** Media settings. See `vibe-cms docs media`. */
   media?: {
     /**

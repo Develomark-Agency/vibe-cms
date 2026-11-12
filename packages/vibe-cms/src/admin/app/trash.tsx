@@ -29,6 +29,7 @@ import { staggerIndex } from "./pages.tsx";
 import { AssetPreview, describeAsset } from "./pickers.tsx";
 import { Page, PageHeader } from "./page.tsx";
 import { navigate } from "./router.tsx";
+import { RetentionButton } from "./retention.tsx";
 import { Segmented } from "./segmented.tsx";
 import { StatusDot } from "./status.tsx";
 import { assetTextKind, TextPreview } from "./text-file.tsx";
@@ -113,11 +114,24 @@ export function TrashPage() {
         eyebrow="Site"
         title="Trash"
         summary={trash.data ? `Deleted items are kept for ${trash.data.days} ${trash.data.days === 1 ? "day" : "days"}, then removed for good.` : undefined}
-        actions={items.length > 0 && (
-          <Button variant="outline" className="text-destructive" disabled={busy !== null} onClick={() => setPending({ kind: "empty" })}>
-            {busy === "empty" ? <Spinner /> : <Trash2Icon />} Empty trash
-          </Button>
-        )}
+        actions={<>
+          {session.permissions.trash === true && (
+            <RetentionButton
+              title="How long the trash is kept"
+              description="Deleted items can be restored for this many days, then they are removed for good. The new period also applies to items already in the trash, so a shorter one may remove some soon."
+              days={trash.data?.days}
+              onSave={async days => {
+                await cms.actions.trash.setRetention({ days });
+                await queryClient.invalidateQueries({ queryKey: ["trash"] });
+              }}
+            />
+          )}
+          {items.length > 0 && (
+            <Button variant="outline" className="text-destructive" disabled={busy !== null} onClick={() => setPending({ kind: "empty" })}>
+              {busy === "empty" ? <Spinner /> : <Trash2Icon />} Empty trash
+            </Button>
+          )}
+        </>}
       />
 
       {trash.isLoading ? (

@@ -157,7 +157,7 @@ CREATE TABLE trash (
 - Restoring a document also restores trashed files it references.
 - Restore is refused (409) if the ID and language exist again, or if it's a translation whose document is gone.
 - Purging removes the trash row, then the document's versions or the file's R2 object, unless something live or another trash row still needs them.
-- The `scheduled` handler purges items older than `trash.days` (default 30) in the config. Without a cron trigger, items stay until purged by hand.
+- The `scheduled` handler purges items older than the trash retention (default 30 days), which editors set on the Trash page and which is stored with the site settings. Without a cron trigger, items stay until purged by hand.
 - API: `GET /trash`, `GET /trash/:id` (each deleted language's draft, or the file's details), `GET /trash/:id/file` (a trashed file's bytes, for previews), `POST /trash/:id/restore`, `DELETE /trash/:id`, `DELETE /trash` (empty). Each item needs the same delete permission that put it there.
 
 ## Open questions

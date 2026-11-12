@@ -173,7 +173,7 @@ export function adminToken(env: Env, sub: string, siteId: string): Promise<strin
   return sign(env, { siteAdmin: true }, sub, siteId, TOKEN_TTL);
 }
 
-/** Lets the hub itself run backup actions on one site, and nothing else. Sites opt in with `backups: true`. */
+/** Lets the hub itself run backup actions on one site, and nothing else. Sites opt in from their Site page. */
 export function backupToken(env: Env, siteId: string): Promise<string> {
   return sign(env, { scope: "backups" }, "hub", siteId, "15m");
 }

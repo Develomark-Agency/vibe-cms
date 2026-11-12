@@ -21,7 +21,16 @@ const siteUpdate = base({
   }))
   .handler(({ context: { engine }, input }) => engine.updateSite(input));
 
+const siteSetBackupAccess = base({
+  summary: "Allow scheduled backups",
+  description: "Lets the site's hub (the panel of its org) back the site up on a schedule and restore snapshots, with no one signed in, or stops it. It's off by default. A snapshot reads every document and file, drafts included, and a restore replaces them all. Needs `manageScheduledBackups` in the user's role.",
+  idempotent: true
+})
+  .input(z.object({ enabled: z.boolean().describe("true to let the hub back the site up, false to stop it") }))
+  .handler(({ context: { engine }, input }) => engine.setBackupAccess(input.enabled));
+
 export const site = router({
   get: siteGet,
-  update: siteUpdate
+  update: siteUpdate,
+  setBackupAccess: siteSetBackupAccess
 });

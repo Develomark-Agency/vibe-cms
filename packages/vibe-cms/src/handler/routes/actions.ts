@@ -75,6 +75,12 @@ actions
     async c => c.json(await c.var.actions.site.update(c.req.valid("json")))
   )
 
+  .put(
+    "/site/backup-access",
+    body(a.site.setBackupAccess),
+    async c => c.json(await c.var.actions.site.setBackupAccess(c.req.valid("json")))
+  )
+
   .get(
     "/documents/:type",
     coerceQuery(a.documents.list),
@@ -220,6 +226,12 @@ actions
     async c => c.json(await c.var.actions.folders.delete(c.req.valid("query") as ActionInputOf<typeof a.folders.delete>))
   )
 
+  .get("/activity/retention", async c => c.json(await c.var.actions.activity.retention()))
+  .put(
+    "/activity/retention",
+    body(a.activity.setRetention),
+    async c => c.json(await c.var.actions.activity.setRetention(c.req.valid("json")))
+  )
   .get(
     "/activity",
     coerceQuery(a.activity.list),
@@ -253,6 +265,12 @@ actions
     async c => c.json(await c.var.actions.redirects.suggest({ ...c.req.valid("query"), ...c.req.param() }))
   )
 
+  .get("/trash/retention", async c => c.json(await c.var.actions.trash.retention()))
+  .put(
+    "/trash/retention",
+    body(a.trash.setRetention),
+    async c => c.json(await c.var.actions.trash.setRetention(c.req.valid("json")))
+  )
   .get("/trash", async c => c.json(await c.var.actions.trash.list()))
   .delete("/trash", async c => c.json(await c.var.actions.trash.empty()))
   .get("/trash/:id", async c => c.json(await c.var.actions.trash.get(c.req.param())))
