@@ -21,7 +21,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { emptyValue, validate, type Issue } from "../../schema/validate.ts";
-import { changedBlocks } from "../../changes/index.ts";
+import { changedBlocks, deepEqual } from "../../changes/index.ts";
 import type { DocumentData } from "../../schema/types.ts";
 import type { DocumentState } from "../../handler/engine.ts";
 import type { DocumentSlotProps } from "../index.ts";
@@ -128,7 +128,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   }, [type, id, locale, baseline]);
 
   const isNewTranslation = Boolean(doc.data && !doc.data.exists);
-  const dirty = value !== null && baseline !== null && (isNewTranslation || JSON.stringify(value) !== JSON.stringify(baseline));
+  const dirty = value !== null && baseline !== null && (isNewTranslation || !deepEqual(value, baseline));
   const clientIssues = useMemo(() => (value ? validate(schema, value).issues : []), [schema, value]);
   // Server issues (missing references, unsuitable files) are cleared on the next edit.
   const issues = showIssues ? dedupe([...clientIssues, ...serverIssues]) : [];
@@ -169,6 +169,9 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   }, [dirty]);
 
   function applyResult(result: DocumentState) {
+    // A refetch already in flight would land after this and put the pre-save copy back as the baseline,
+    // making a saved document look unsaved.
+    void queryClient.cancelQueries({ queryKey: ["document", type, result.id, locale] });
     queryClient.setQueryData(["document", type, result.id, locale], result);
     void queryClient.invalidateQueries({ queryKey: ["documents", type] });
     void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
