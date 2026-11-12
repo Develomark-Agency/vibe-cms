@@ -222,7 +222,7 @@ export function RedirectsPage() {
                 <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                   <Badge variant="secondary">{row.status}</Badge>
                   <span>{row.hits} {row.hits === 1 ? "hit" : "hits"}{row.lastHitAt && ` · last ${new Date(row.lastHitAt).toLocaleDateString()}`}</span>
-                  {row.source === "manual" ? null : row.documentType && row.documentId ? (
+                  {row.source === "manual" ? null : row.source === "slug-change" && row.documentType && row.documentId ? (
                     <Link to={`/content/${row.documentType}/${row.documentId}${row.locale && row.locale !== config.defaultLocale ? `?locale=${row.locale}` : ""}`} className="underline underline-offset-2">{SOURCES[row.source]}: open the page</Link>
                   ) : (
                     <span>{SOURCES[row.source]}</span>
