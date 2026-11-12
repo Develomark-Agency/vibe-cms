@@ -38,7 +38,7 @@ function variants(block: AnyBlock) {
   return (
     <>
       {/* The block's key too: unique across every list on the page, so the editor can point at this block even when a page renders several lists. */}
-      {marked && <Fragment set:html={`<!--vibe-block:${i}${typeof (block as { _key?: unknown })._key === "string" && /^[\w-]+$/.test((block as { _key: string })._key) ? `:${(block as { _key: string })._key}` : ""}-->`} />}
+      {marked && <Fragment set:html={`<!--vibe-block:${i}${typeof (block as { _key?: unknown })._key === "string" && /^[\w-]+$/.test((block as unknown as { _key: string })._key) ? `:${(block as unknown as { _key: string })._key}` : ""}-->`} />}
       {Component ? <Component {...block} /> : <Fragment set:html={renderBlock(block, { linkTo })} />}
       {picking && (
         <template data-vibe-variants={i} data-vibe-type={block.type} data-vibe-source={source ? JSON.stringify(source) : undefined}>
