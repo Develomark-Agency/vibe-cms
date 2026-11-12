@@ -281,7 +281,10 @@ export function RedirectsPage() {
                 <Input id="redirect-from" autoFocus placeholder="/old-page or /place?town={name}" value={draft.from} onChange={event => setDraft({ ...draft, from: event.target.value })} />
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="redirect-to">To</Label>
+                <div className="flex items-baseline justify-between gap-3">
+                  <Label htmlFor="redirect-to">To</Label>
+                  {variablesOf(draft.from).length > 0 && <span className="text-xs text-muted-foreground">Type <kbd className="font-mono">{"{"}</kbd> for variables</span>}
+                </div>
                 <TargetInput id="redirect-to" value={draft.to} variables={variablesOf(draft.from)} from={draft.from} onChange={to => setDraft({ ...draft, to })} />
               </div>
               <div className="flex flex-col gap-2">
@@ -404,21 +407,22 @@ function TargetInput({ id, value, variables, from, onChange }: { id: string, val
       </div>
       {variables.length > 0 && (
         <div className="flex flex-col gap-2 text-xs text-muted-foreground">
-          <p className="flex flex-wrap items-center gap-1.5">
-            Variables:
-            {variables.map(name => <code key={name} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-foreground">{`{${name}}`}</code>)}
-            <span>Type <kbd className="font-mono">{"{"}</kbd> to pick one.</span>
-          </p>
           {unknown.length > 0 && <p className="text-destructive">{unknown.map(name => `{${name}}`).join(", ")} {unknown.length === 1 ? "isn't" : "aren't"} in “from”.</p>}
-          {value.trim() && unknown.length === 0 && (
-            // Each side on its own line, so a long path wraps by itself instead of splitting the pair.
-            <dl aria-label="Example" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg bg-muted/50 px-3 py-2">
-              <dt>Visit</dt>
-              <dd><code className="font-mono break-all text-foreground">{example(from)}</code></dd>
-              <dt>Goes to</dt>
-              <dd><code className="font-mono break-all text-foreground">{example(value)}</code></dd>
-            </dl>
-          )}
+          {/* One labelled grid, so many or long names wrap among themselves and the labels stay put. */}
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-3 gap-y-1.5 rounded-lg bg-muted/50 px-3 py-2">
+            <dt>Variables</dt>
+            <dd className="flex flex-wrap gap-1">
+              {variables.map(name => <code key={name} className="rounded-md bg-muted px-1.5 py-0.5 font-mono break-words text-foreground">{`{${name}}`}</code>)}
+            </dd>
+            {value.trim() && unknown.length === 0 && (
+              <>
+                <dt>Visit</dt>
+                <dd><code className="font-mono break-words text-foreground">{example(from)}</code></dd>
+                <dt>Goes to</dt>
+                <dd><code className="font-mono break-words text-foreground">{example(value)}</code></dd>
+              </>
+            )}
+          </dl>
         </div>
       )}
     </div>
