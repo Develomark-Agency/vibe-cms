@@ -21,7 +21,7 @@ Locale prefixes are part of the path: a French page at `/fr/ancien` is a rule fr
 
 ## Automatic redirects
 
-When publishing changes a page's address, the review screen offers “Redirect `/old` → `/new`”, ticked by default. Deleting a published page offers “Then set up a redirect from `/old-page`”, ticked by default: after the delete, the Redirects page opens with that address filled in, to say where visitors go. Untick it to just delete. Restoring the page from the trash takes that redirect away, and so does renaming a page back to the address it had.
+When publishing changes a page's address, the review screen offers “Redirect `/old` → `/new`”, ticked by default. Deleting a published page offers “Then set up a redirect from `/old-page`”, ticked by default: after the delete, the Redirects page opens with that address filled in, to say where visitors go. Untick it to just delete. Scheduling a publish offers the same checkbox: the choice is stored with the schedule, and the old and new addresses are worked out when it runs, so the redirect matches what actually went live. Restoring the page from the trash takes that redirect away, and so does renaming a page back to the address it had.
 
 For that, the CMS needs to know where a document lives. In order, a collection's address is:
 
@@ -39,7 +39,7 @@ collections: {
 
 Without one of these, nothing is suggested for that content type.
 
-From code, `documents.publish` takes `redirect: true`, `documents.delete` takes `redirectTo` to add the redirect in the same call, and `redirects.create` takes `deletedDocument` to tie a redirect to a page that was just deleted. `redirects.suggest` says what publishing would offer and where a page lives now. `redirects.suggest` says what publishing would offer.
+From code, `documents.publish` and `documents.schedule` take `redirect: true`, `documents.delete` takes `redirectTo` to add the redirect in the same call, and `redirects.create` takes `deletedDocument` to tie a redirect to a page that was just deleted. `redirects.suggest` says what publishing would offer and where a page lives now. `redirects.suggest` says what publishing would offer.
 
 ## How they're served
 

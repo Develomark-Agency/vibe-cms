@@ -65,5 +65,11 @@ export const migrations: Migration[] = [
       "CREATE UNIQUE INDEX IF NOT EXISTS `vibe_redirects_from` ON `vibe_redirects` (`from`);",
       "CREATE INDEX IF NOT EXISTS `vibe_redirects_document` ON `vibe_redirects` (`document_id`);"
     ]
+  },
+  {
+    tag: "0005_tough_wild_child",
+    statements: [
+      "ALTER TABLE `vibe_schedules` ADD `redirect` integer DEFAULT 0 NOT NULL;"
+    ]
   }
 ];

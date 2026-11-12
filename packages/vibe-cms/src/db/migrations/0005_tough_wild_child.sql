@@ -1,0 +1,1 @@
+ALTER TABLE `vibe_schedules` ADD `redirect` integer DEFAULT 0 NOT NULL;

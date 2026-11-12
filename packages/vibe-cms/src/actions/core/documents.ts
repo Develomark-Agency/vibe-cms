@@ -224,9 +224,10 @@ const documentsSchedule = base({
     locale,
     action: scheduleAction,
     runAt: z.string().describe("ISO 8601 date and time"),
+    redirect: z.boolean().optional().describe("For a scheduled publish: when it runs and changes the page's address, also redirect the old address to the new one. Needs permission to manage redirects. The addresses are worked out when it runs"),
     ...selection
   }))
-  .handler(({ context: { engine }, input }) => engine.schedule(input.type, input.id, input.locale, input.action, input.runAt, { branches: input.branches, skip: input.skip, resolve: input.resolve }));
+  .handler(({ context: { engine }, input }) => engine.schedule(input.type, input.id, input.locale, input.action, input.runAt, { redirect: input.redirect, branches: input.branches, skip: input.skip, resolve: input.resolve }));
 
 const documentsUnschedule = base({
   summary: "Cancel a schedule",

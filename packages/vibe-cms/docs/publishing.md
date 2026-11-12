@@ -46,7 +46,7 @@ In the editor, **Review** (⌘⇧S) saves what's unsaved and opens the review pa
 
 `documents.schedule` takes the same `branches`, `skip` and `resolve`. It merges the selection when you schedule it, so later saves aren't included, and fails while a selected change conflicts, saying which field and who changed it ("Title was changed differently by Sam and you."). Publishing refuses the same way.
 
-A scheduled publish shows as a banner above the editor's form: when, which fields it carries (it was captured when you scheduled it), and a warning when anyone has saved edits since that aren't in it. *Change…* opens the review page on the schedule, and *Cancel schedule* removes it. Unpublishing, now or at a time, is **Unpublish…** in the editor's ⋯ menu.
+A scheduled publish shows as a banner above the editor's form: when, which fields it carries (it was captured when you scheduled it), a note when it will also redirect the page's old address, and a warning when anyone has saved edits since that aren't in it. *Change…* opens the review page on the schedule, and *Cancel schedule* removes it. Unpublishing, now or at a time, is **Unpublish…** in the editor's ⋯ menu.
 
 ## Seeing what's pending
 

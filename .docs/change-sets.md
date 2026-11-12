@@ -161,4 +161,4 @@ The editor also says when other people have unpublished changes, and has "Discar
 - The review page's side panel always shows **When** (*Publish now* / *Schedule* with an inline date), a status of what will go and what waits on a choice, and the redirect offer in publish-now mode. The header holds the one primary button, which follows the mode.
 - A schedule shows as a banner in the editor: time, the fields it carries (versions differ from live, read from the captured version), and a warning when someone saved after it was captured.
 - Conflict errors from `documents.publish` and `documents.schedule` name the field and the people.
-- Still open: scheduling doesn't yet carry the "also redirect" choice.
+- Scheduling carries the "also redirect" choice (`vibe_schedules.redirect`): the addresses are worked out when the schedule runs, from what was live then and the captured version, so the rule matches what went live. Asking for it needs permission to manage redirects.

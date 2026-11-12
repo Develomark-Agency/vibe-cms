@@ -741,6 +741,7 @@ function ScheduleBanner({ type, id, doc, onChange }: { type: string, id: string,
         </div>
       ))}
       {publish && fields && fields.length > 0 && <p className="text-sm text-muted-foreground">Publishes changes to {fields.join(", ")}.</p>}
+      {publish?.redirect && <p className="text-sm text-muted-foreground">Also redirects the page's old address to its new one when it publishes.</p>}
       {publish && newer && <p className="text-sm text-amber-700 dark:text-amber-400">There are newer edits that aren't included. Change the schedule to capture them.</p>}
     </section>
   );

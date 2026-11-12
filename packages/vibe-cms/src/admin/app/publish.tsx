@@ -209,17 +209,20 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
     setBusy(true);
     setError(null);
     try {
+      const withRedirect = suggestion.data && !suggestion.data.exists && redirect ? { redirect: true } : {};
       const result = runAt
-        ? await cms.actions.documents.schedule({ type, id, locale, action: "publish", runAt, ...selection() })
-        : await cms.actions.documents.publish({ type, id, locale, ...(suggestion.data && !suggestion.data.exists && redirect ? { redirect: true } : {}), ...selection() });
+        ? await cms.actions.documents.schedule({ type, id, locale, action: "publish", runAt, ...withRedirect, ...selection() })
+        : await cms.actions.documents.publish({ type, id, locale, ...withRedirect, ...selection() });
       onDone(result);
       void queryClient.invalidateQueries({ queryKey: ["changes", type, id, locale] });
       void queryClient.invalidateQueries({ queryKey: ["redirects"] });
       void queryClient.invalidateQueries({ queryKey: ["redirect-suggestion", type, id, locale] });
       void queryClient.invalidateQueries({ queryKey: ["redirect-info", type, id, locale] });
       cms.toast(runAt ? `Scheduled ${counted} for ${formatDate(runAt)}` : `Published ${counted}`, { type: "success" });
-      const made = (result as { redirect?: { from: string, to: string, created: boolean, reason?: string } }).redirect;
-      if(made?.created) cms.toast(`Redirecting ${made.from} to ${made.to}`, { type: "success" });
+      const made = (result as { redirect?: { from: string, to: string, created?: boolean, reason?: string } }).redirect;
+      // A schedule only plans it: the redirect is made when the publish runs.
+      if(made && runAt) cms.toast(`${made.from} will redirect to ${made.to} when it publishes`, { type: "success" });
+      else if(made?.created) cms.toast(`Redirecting ${made.from} to ${made.to}`, { type: "success" });
       else if(made?.reason) cms.toast(`No redirect added: ${made.reason}`, { type: "info" });
       onOpenChange(false);
     } catch (failure) {
@@ -362,17 +365,17 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
               </div>
             </section>
           )}
-          {canRedirect && suggestion.data && !scheduled && (
+          {canRedirect && suggestion.data && (
             <section className="flex flex-col gap-2 rounded-[16px] p-4 elevated" aria-label="Redirect">
               <h3 className="text-sm font-medium">The page's address changes</h3>
               {suggestion.data.exists ? (
-                <p className="text-sm text-muted-foreground">There's already a redirect from <code className="font-mono break-all">{suggestion.data.from}</code>.</p>
+                <p className="text-sm text-muted-foreground">There's already a redirect from <code className="font-mono break-words">{suggestion.data.from}</code>.</p>
               ) : (
                 <label className="flex items-start gap-2 text-sm">
                   <Checkbox className="mt-0.5" checked={redirect} onCheckedChange={checked => setRedirect(Boolean(checked))} aria-label={`Redirect ${suggestion.data.from} to ${suggestion.data.to}`} />
                   <span className="min-w-0">
-                    Redirect <code className="font-mono break-all">{suggestion.data.from}</code> → <code className="font-mono break-all">{suggestion.data.to}</code>
-                    <span className="block text-xs text-muted-foreground">So links and search results to the old address keep working.</span>
+                    Redirect <code className="font-mono break-words">{suggestion.data.from}</code> → <code className="font-mono break-words">{suggestion.data.to}</code>
+                    <span className="block text-xs text-muted-foreground">So links and search results to the old address keep working{scheduled ? ". It's added when the schedule runs." : "."}</span>
                   </span>
                 </label>
               )}

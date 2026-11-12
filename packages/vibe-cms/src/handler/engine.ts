@@ -183,7 +183,7 @@ export interface DocumentState {
   editedAt: string | null,
   updatedBy: string | null,
   publishedAt: string | null,
-  schedules: Array<{ action: "publish" | "unpublish", runAt: string, ver: number | null, createdBy: string }>,
+  schedules: Array<{ action: "publish" | "unpublish", runAt: string, ver: number | null, createdBy: string, redirect: boolean }>,
   fallback: DocumentData | null,
   issues?: Issue[]
 }
@@ -726,7 +726,7 @@ export class Engine {
       editedAt: iso(row?.updated_at ?? null),
       updatedBy: row?.updated_by ?? null,
       publishedAt: iso(row?.published_at ?? null),
-      schedules: scheduled.map(s => ({ action: s.action, runAt: iso(s.run_at)!, ver: s.ver, createdBy: s.created_by })),
+      schedules: scheduled.map(s => ({ action: s.action, runAt: iso(s.run_at)!, ver: s.ver, createdBy: s.created_by, redirect: s.redirect === 1 })),
       // Lets a translator start from the default locale's copy.
       fallback: row ? null : JSON.parse(fallback.draft ?? "{}")
     };
@@ -1308,6 +1308,9 @@ export class Engine {
     const row = await this.getRow(id, locale);
     if(!row || row.type !== type) throw new HttpError(404, "Document not found");
     let ver: number | null = null;
+    let redirect: { from: string, to: string } | undefined;
+    const wantRedirect = action === "publish" && selection.redirect === true;
+    if(wantRedirect) this.requireRedirects("write");
     if(action === "publish") {
       // Snapshot the merge of everyone's changes now, so later edits aren't published by surprise.
       const schema = getSchema(this.config, type);
@@ -1324,12 +1327,20 @@ export class Engine {
       const { doc, issues } = await this.prepare(schema, type, id, locale, "publish", result.data, session);
       if(issues.length) throw new HttpError(422, "Fix the highlighted fields before scheduling", { issues });
       ver = await this.appendVersion(id, locale, JSON.stringify(doc), session);
+      // The addresses are worked out again when it runs; this is what it will do now, for the answer.
+      if(wantRedirect && this.hasUrl(type)) {
+        const from = this.documentUrl(type, live, id, locale);
+        const to = this.documentUrl(type, doc, id, locale);
+        if(from && to && from !== to) redirect = { from, to };
+      }
     }
     const createdBy = session?.sub ?? "system";
+    const flag = wantRedirect ? 1 : 0;
     await this.orm.insert(schedules)
-      .values({ id, locale, ver, action, run_at: at, created_by: createdBy })
-      .onConflictDoUpdate({ target: [schedules.id, schedules.locale, schedules.action], set: { ver, run_at: at, created_by: createdBy } });
-    return this.getDocument(type, id, locale);
+      .values({ id, locale, ver, action, run_at: at, created_by: createdBy, redirect: flag })
+      .onConflictDoUpdate({ target: [schedules.id, schedules.locale, schedules.action], set: { ver, run_at: at, created_by: createdBy, redirect: flag } });
+    if(redirect) this.note({ redirect: `${redirect.from} → ${redirect.to}` });
+    return { ...(await this.getDocument(type, id, locale)), ...(redirect ? { redirect } : {}) };
   }
 
   async cancelSchedule(type: string, id: string, localeInput: string | undefined, action: "publish" | "unpublish") {
@@ -1349,6 +1360,7 @@ export class Engine {
         action: schedules.action,
         run_at: schedules.run_at,
         created_by: schedules.created_by,
+        redirect: schedules.redirect,
         type: documents.type
       })
       .from(schedules)
@@ -1358,6 +1370,8 @@ export class Engine {
       .limit(50);
     for(const item of due) {
       if(item.action === "publish" && item.ver !== null) {
+        // What was live, for working out whether the page's address changes.
+        const wasLive = (await this.getRow(item.id, item.locale))?.published ?? null;
         await this.batch([
           this.orm.update(documents).set({
             published: sql`(SELECT ${versions.data} FROM ${versions} WHERE ${versions.id} = ${item.id} AND ${versions.locale} = ${item.locale} AND ${versions.ver} = ${item.ver})`,
@@ -1368,8 +1382,9 @@ export class Engine {
         ]);
         await this.pruneBranches(item.type, item.id, item.locale);
         const row = await this.getRow(item.id, item.locale);
+        const redirected = await this.redirectAfterSchedule(item, wasLive, row?.published ?? null);
         this.afterWrite({ type: item.type, id: item.id, locale: item.locale, action: "publish", valid: Boolean(row?.published), doc: row?.published ? JSON.parse(row.published) as DocumentData : null });
-        await this.recordActivity({ action: "documents.publish", ok: true, targetType: item.type, targetId: item.id, locale: item.locale, targetLabel: this.titleOf(item.type, row?.published ? JSON.parse(row.published) as DocumentData : null), summary: { ver: item.ver, scheduled: item.run_at } }, { via: "cron", system: "cron", onBehalfOf: item.created_by });
+        await this.recordActivity({ action: "documents.publish", ok: true, targetType: item.type, targetId: item.id, locale: item.locale, targetLabel: this.titleOf(item.type, row?.published ? JSON.parse(row.published) as DocumentData : null), summary: { ver: item.ver, scheduled: item.run_at, ...(redirected ? { redirect: redirected } : {}) } }, { via: "cron", system: "cron", onBehalfOf: item.created_by });
       } else if(item.action === "unpublish") {
         const row = await this.getRow(item.id, item.locale);
         const keep = row && this.keepCopyStatement(item.id, item.locale, row, await this.branchRows(item.id, item.locale), item.created_by, null);
@@ -2122,7 +2137,21 @@ export class Engine {
   }
 
   /** After a publish: drops the redirect from where the page now lives, and adds one from where it was if asked. */
-  private async redirectAfterPublish(type: string, id: string, locale: string, before: DocumentData | null, after: DocumentData, want: boolean) {
+  /** When a scheduled publish has run: the redirect it was asked for, as `from → to`, if one was made. */
+  private async redirectAfterSchedule(item: { type: string, id: string, locale: string, created_by: string, redirect: number }, wasLive: string | null, nowLive: string | null): Promise<string | undefined> {
+    if(!nowLive) return undefined;
+    try {
+      const schema = getSchema(this.config, item.type);
+      const result = await this.redirectAfterPublish(item.type, item.id, item.locale, parseCopy(schema, wasLive), parseCopy(schema, nowLive), item.redirect === 1, item.created_by);
+      return result?.created ? `${result.from} → ${result.to}` : undefined;
+    } catch (error) {
+      // The publish happened; a redirect that couldn't be made shouldn't stop the rest of the queue.
+      console.error(`vibe-cms: the redirect for a scheduled publish of ${item.id} couldn't be made`, error);
+      return undefined;
+    }
+  }
+
+  private async redirectAfterPublish(type: string, id: string, locale: string, before: DocumentData | null, after: DocumentData, want: boolean, by: string | null = this.scope.session?.sub ?? null) {
     if(!this.hasUrl(type)) return undefined;
     const from = this.documentUrl(type, before, id, locale);
     const to = this.documentUrl(type, after, id, locale);
@@ -2137,7 +2166,7 @@ export class Engine {
       }
       const taken = await this.state.redirects.byFrom(from);
       if(taken && taken.source === "manual") return { from, to, created: false, reason: `There's already a redirect from ${from}` };
-      await this.state.redirects.save({ from, to }, { source: "slug-change", documentId: id, documentType: type, locale, by: session?.sub ?? null, replace: true });
+      await this.state.redirects.save({ from, to }, { source: "slug-change", documentId: id, documentType: type, locale, by, replace: true });
       this.note({ redirect: `${from} → ${to}` });
       return { from, to, created: true };
     } catch (error) {

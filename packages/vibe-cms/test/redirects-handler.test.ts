@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { defineConfig } from "../src/index.ts";
 import { createHandler } from "../src/handler/index.ts";
-import { can, permissionSummary } from "../src/handler/auth.ts";
+import { can, issueSession, permissionSummary } from "../src/handler/auth.ts";
 import { beyondReach } from "../src/roles.ts";
 import v from "../src/schema/index.ts";
 import { createD1, ctx } from "./helpers.ts";
@@ -240,6 +240,81 @@ describe("automatic redirects", () => {
     const { published } = await rename(id, "two", true);
     expect(published.body.redirect).toMatchObject({ created: false });
     expect((await t.visit("/blog/one")).headers.get("location")).toBe("/elsewhere");
+  });
+
+  describe("scheduled", () => {
+    function runAt() {
+      return new Date(Date.now() + 60 * 60 * 1000);
+    }
+
+    async function renameDraft(id: string, slug: string) {
+      const current = (await t.api(`/api/documents/post/${id}`)).body;
+      await t.api(`/api/documents/post/${id}`, { method: "PUT", json: { data: { ...current.draft, slug }, baseUpdatedAt: current.updatedAt } });
+    }
+
+    async function runDue(at: Date) {
+      await t.vibe.scheduled({ scheduledTime: at.getTime() + 1000, cron: "* * * * *" } as never, t.env, ctx);
+    }
+
+    test("a scheduled publish carries the choice, and makes the redirect when it runs", async () => {
+      const id = await publishPost("one");
+      await renameDraft(id, "two");
+      const at = runAt();
+      const scheduled = await t.api(`/api/documents/post/${id}/schedule`, { method: "POST", json: { action: "publish", runAt: at.toISOString(), redirect: true } });
+      expect(scheduled.body.redirect).toEqual({ from: "/blog/one", to: "/blog/two" });
+      expect(scheduled.body.schedules).toMatchObject([{ action: "publish", redirect: true }]);
+      // Not yet: the old address still works until it runs.
+      expect((await t.api("/api/redirects")).body.total).toBe(0);
+      await runDue(at);
+      expect((await t.api("/api/redirects")).body.redirects[0]).toMatchObject({ from: "/blog/one", to: "/blog/two", source: "slug-change", documentId: id });
+      expect((await t.visit("/blog/one")).headers.get("location")).toBe("/blog/two");
+    });
+
+    test("without the choice no redirect is made, and a schedule that doesn't change the address makes none", async () => {
+      const id = await publishPost("one");
+      await renameDraft(id, "two");
+      const at = runAt();
+      const plain = await t.api(`/api/documents/post/${id}/schedule`, { method: "POST", json: { action: "publish", runAt: at.toISOString() } });
+      expect(plain.body.redirect).toBeUndefined();
+      await runDue(at);
+      expect((await t.api("/api/redirects")).body.total).toBe(0);
+      // Asked for, but the address stays: nothing to redirect.
+      await t.api(`/api/documents/post/${id}`, { method: "PUT", json: { data: { ...(await t.api(`/api/documents/post/${id}`)).body.draft, title: "Retitled" }, baseUpdatedAt: (await t.api(`/api/documents/post/${id}`)).body.updatedAt } });
+      const same = await t.api(`/api/documents/post/${id}/schedule`, { method: "POST", json: { action: "publish", runAt: at.toISOString(), redirect: true } });
+      expect(same.body.redirect).toBeUndefined();
+      await runDue(at);
+      expect((await t.api("/api/redirects")).body.total).toBe(0);
+    });
+
+    test("a page scheduled back to an address it left loses the redirect that left", async () => {
+      const id = await publishPost("one");
+      await renameDraft(id, "two");
+      await t.api(`/api/documents/post/${id}/publish`, { method: "POST", json: { redirect: true } });
+      expect((await t.api("/api/redirects")).body.total).toBe(1);
+      await renameDraft(id, "one");
+      const at = runAt();
+      await t.api(`/api/documents/post/${id}/schedule`, { method: "POST", json: { action: "publish", runAt: at.toISOString() } });
+      await runDue(at);
+      expect((await t.api("/api/redirects")).body.total).toBe(0);
+    });
+
+    test("asking for the redirect needs permission to manage redirects", async () => {
+      const id = await publishPost("one");
+      await renameDraft(id, "two");
+      const siteId = (t.env.DB.sqlite.query("SELECT value FROM vibe_meta WHERE key = 'site_id'").get() as { value: string }).value;
+      const { token } = await issueSession(t.env.DB, { sub: "ed", roles: ["editor"], name: "Ed" }, siteId, "https://site.test");
+      async function schedule(redirect: boolean) {
+        const response = await t.vibe.handle(new Request(`https://site.test/_vibe/api/documents/post/${id}/schedule`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify({ action: "publish", runAt: runAt().toISOString(), redirect })
+        }), t.env, ctx);
+        return response.status;
+      }
+      expect(await schedule(true)).toBe(403);
+      // Scheduling without it is fine for an editor who can publish.
+      expect(await schedule(false)).toBe(200);
+    });
   });
 
   test("trashing a page redirects it; restoring takes the redirect away", async () => {

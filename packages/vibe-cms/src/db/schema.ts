@@ -102,7 +102,9 @@ export const schedules = sqliteTable("vibe_schedules", {
   ver: integer(),
   action: text().$type<"publish" | "unpublish">().notNull(),
   run_at: integer().notNull(),
-  created_by: text().notNull()
+  created_by: text().notNull(),
+  /** 1 when the page's old address should redirect to its new one as this runs. The addresses are worked out then. */
+  redirect: integer().notNull().default(0)
 }, t => [
   primaryKey({ columns: [t.id, t.locale, t.action] }),
   index("vibe_schedules_run_at").on(t.run_at)

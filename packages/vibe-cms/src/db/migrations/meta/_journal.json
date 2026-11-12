@@ -36,6 +36,13 @@
       "when": 1794498405119,
       "tag": "0004_third_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794505837329,
+      "tag": "0005_tough_wild_child",
+      "breakpoints": true
     }
   ]
 }
