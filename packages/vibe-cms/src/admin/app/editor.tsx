@@ -708,7 +708,12 @@ function Schedules({ type, id, doc, onChange }: { type: string, id: string, doc:
       <ul className="grid gap-2 text-sm">
         {doc.schedules.map(s => (
           <li key={s.action} className="flex items-center justify-between gap-2">
-            <span>{s.action === "publish" ? "Publish" : "Unpublish"} {formatDate(s.runAt)}</span>
+            <Tooltip>
+              <TooltipTrigger render={<span className="cursor-default underline decoration-violet-500/50 decoration-dotted underline-offset-4 hover:decoration-violet-500" />}>
+                {s.action === "publish" ? "Publish" : "Unpublish"} {formatDate(s.runAt)}
+              </TooltipTrigger>
+              <TooltipContent>{formatRelative(s.runAt)}</TooltipContent>
+            </Tooltip>
             <Button variant="ghost" size="icon-xs" aria-label="Cancel schedule" onClick={async () => {
               onChange(await cms.actions.documents.unschedule({ type, id, locale, action: s.action }));
             }}><XIcon /></Button>
