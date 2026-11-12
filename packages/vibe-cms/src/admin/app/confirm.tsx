@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog.tsx";
 
 /**
@@ -45,16 +45,20 @@ export function ConfirmHost() {
     listeners.add(listener);
     return () => listeners.delete(listener);
   }, () => current);
+  // The last question stays on screen while the dialog fades out, instead of an empty box.
+  const last = useRef(request);
+  if(request) last.current = request;
+  const shown = last.current;
   return (
     <AlertDialog open={request !== null} onOpenChange={open => !open && settle(false)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{request?.title}</AlertDialogTitle>
-          <AlertDialogDescription>{request?.description}</AlertDialogDescription>
+          <AlertDialogTitle>{shown?.title}</AlertDialogTitle>
+          <AlertDialogDescription>{shown?.description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{request?.cancel ?? "Cancel"}</AlertDialogCancel>
-          <AlertDialogAction variant={request?.destructive ? "destructive" : "default"} onClick={() => settle(true)}>{request?.action}</AlertDialogAction>
+          <AlertDialogCancel>{shown?.cancel ?? "Cancel"}</AlertDialogCancel>
+          <AlertDialogAction variant={shown?.destructive ? "destructive" : "default"} onClick={() => settle(true)}>{shown?.action}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
