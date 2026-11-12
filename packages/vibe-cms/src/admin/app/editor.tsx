@@ -64,7 +64,7 @@ import {
 import { Field, FormValueContext } from "./fields.tsx";
 import { setEditorPage, setPreviewChanges, showPreview } from "./preview.ts";
 import { Link, navigate, setNavigationBlocker } from "./router.tsx";
-import { confirmLeave } from "./confirm.tsx";
+import { askConfirm, confirmLeave } from "./confirm.tsx";
 import { Segmented } from "./segmented.tsx";
 import { StatusBadge, StatusDot } from "./status.tsx";
 import { FieldChangesProvider, useFieldChanges } from "./field-changes.tsx";
@@ -735,7 +735,23 @@ function ScheduleBanner({ type, id, doc, onChange }: { type: string, id: string,
               <Button variant="ghost" size="xs" nativeButton={false} render={<Link to={`/content/${type}/${id}/review${location.search}`} />}>Change…</Button>
             )}
             <Button variant="ghost" size="xs" onClick={async () => {
-              onChange(await cms.actions.documents.unschedule({ type, id, locale, action: item.action }));
+              const publishing = item.action === "publish";
+              const ok = await askConfirm({
+                title: `Cancel the scheduled ${publishing ? "publish" : "unpublish"}?`,
+                description: publishing
+                  ? `${fields?.length ? `${fields.join(", ")} won't` : "These changes won't"} go live on ${formatDate(item.runAt)}${item.redirect ? ", and the redirect won't be added" : ""}. Everyone's changes stay saved as unpublished changes, and you can schedule again from the review page.`
+                  : `The page stays published on ${formatDate(item.runAt)}. You can schedule again from the ⋯ menu.`,
+                action: "Cancel schedule",
+                cancel: "Keep schedule",
+                destructive: true
+              });
+              if(!ok) return;
+              try {
+                onChange(await cms.actions.documents.unschedule({ type, id, locale, action: item.action }));
+                cms.toast("Schedule cancelled", { type: "success" });
+              } catch (error) {
+                cms.toast((error as Error).message, { type: "error" });
+              }
             }}><XIcon /> Cancel schedule</Button>
           </div>
         </div>
