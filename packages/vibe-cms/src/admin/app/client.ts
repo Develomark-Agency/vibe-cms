@@ -45,7 +45,9 @@ export interface Permissions {
   /** May edit the site's roles: owners and roles with `all`. */
   roles: boolean,
   /** May see everyone's activity (`viewActivity`); everyone sees their own. Missing from older sites. */
-  activity?: boolean
+  activity?: boolean,
+  /** May manage the site's redirects. Missing from older sites. */
+  redirects?: boolean
 }
 
 export interface SessionState {

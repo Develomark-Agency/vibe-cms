@@ -55,6 +55,7 @@ The config object is also how site code reaches content types: `config.schemas.p
 | `icon` | An icon from the editor's set (`newspaper`, `user`, `home`, `layout`, `settings`, …; the type lists them all). |
 | `title` | Text field used as the document title in lists. Defaults to the first text field. |
 | `preview` | The document's URL on the site, where the editor's draft preview opens it (`vibe-cms docs preview`). `{field}` placeholders come from the document; `{id}` and `{locale}` also work. Slashes in values are kept, so `"{path}"` works for path fields. |
+| `url` | Where the document lives on the site, for redirects (`vibe-cms docs redirects`): a function of the document, or a template like `preview`. Defaults to `preview` when that is a path, and to `path` for `pageSchema()` collections. |
 | `singleton` | Exactly one document of this type, e.g. a homepage or footer content. Read it with `findFirst()`. |
 
 ## Site identity: ID, name, accent and icon

@@ -88,9 +88,10 @@ const documentsDelete = base({
     type,
     id,
     locale,
-    force: z.boolean().optional()
+    force: z.boolean().optional(),
+    redirectTo: z.string().optional().describe("Where visitors to the page go instead: a path like /news or a full URL. Adds a redirect from the page's address, which restoring the document removes. Ignored for a translation")
   }))
-  .handler(({ context: { engine }, input }) => engine.delete(input.type, input.id, { force: input.force, locale: input.locale }));
+  .handler(({ context: { engine }, input }) => engine.delete(input.type, input.id, { force: input.force, locale: input.locale, redirectTo: input.redirectTo }));
 
 /** Which unpublished changes to publish, for `documents.publish` and `documents.schedule`. */
 const selection = {
@@ -112,9 +113,10 @@ const documentsPublish = base({
     type,
     id,
     locale,
+    redirect: z.boolean().optional().describe("When publishing changes the page's address, also redirect the old address to the new one (`redirects.suggest` shows it)"),
     ...selection
   }))
-  .handler(({ context: { engine }, input }) => engine.publish(input.type, input.id, input.locale, { branches: input.branches, skip: input.skip, resolve: input.resolve }));
+  .handler(({ context: { engine }, input }) => engine.publish(input.type, input.id, input.locale, { redirect: input.redirect, branches: input.branches, skip: input.skip, resolve: input.resolve }));
 
 const documentsChanges = base({
   summary: "List unpublished changes",

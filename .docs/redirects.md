@@ -1,6 +1,6 @@
 # Redirects
 
-Status: proposed. Not built.
+Status: built. User guide: `packages/vibe-cms/docs/redirects.md`. Differences from the proposal below are listed at the end.
 
 ## Problem
 
@@ -64,7 +64,17 @@ The handler checks redirects before passing the request to the site's own `fetch
 
 - **Recent 404s:** record not-found paths the site's `fetch` returns (count and last seen, capped) and offer "Add redirect" from that list.
 
-## Open questions
+## Decisions on the open questions
 
-- Whether redirects are per locale or global, and how they work with locale prefixes in paths.
-- Whether to let plugins add rules (for example, from a migration import).
+- **Locale:** rules match the request path alone. A locale prefix is part of the path (`/fr/ancien`), and `locale` is only a label. If core ever resolves the locale before the handler (domain or cookie based sites), matching on `(locale, from)` can be added without migrating rules: existing rows have no locale and keep matching everywhere.
+- **Plugins:** no write path of their own. A plugin calls the same `redirects.*` actions as anyone, so it gets the save checks, permissions and the audit log. A migration import is `redirects.import`.
+
+## What differs from the proposal
+
+- Rules also store `document_type`, so the list can link an automatic rule to its page.
+- Automatic rules are made by `documents.publish` (`redirect: true`) and `documents.delete` (`redirectTo`), so the rule and the change that caused it share one request. `redirects.suggest` tells the editor what to offer.
+- `url` on a collection falls back to a `preview` template that is a site path, then to `pageSchema()`'s `path` field.
+- Besides what the proposal lists, an automatic rule disappears when its page returns: restored from the trash, or renamed back to the address it left.
+- `redirects.import` and the REST routes `GET/POST /redirects`, `POST /redirects/import`, `PATCH/DELETE /redirects/:id` and `GET /documents/:type/:id/redirect` exist.
+- Not built: choosing the trash target from a list of pages (the editor takes a path), "Recent 404s", and offering the redirect when a slug change is scheduled rather than published.
+

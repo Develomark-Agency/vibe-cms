@@ -226,6 +226,33 @@ actions
     async c => c.json(await c.var.actions.activity.list(c.req.valid("query")))
   )
 
+  .get(
+    "/redirects",
+    coerceQuery(a.redirects.list),
+    async c => c.json(await c.var.actions.redirects.list(c.req.valid("query")))
+  )
+  .post(
+    "/redirects",
+    body(a.redirects.create),
+    async c => c.json(await c.var.actions.redirects.create(c.req.valid("json")), 201)
+  )
+  .post(
+    "/redirects/import",
+    body(a.redirects.import),
+    async c => c.json(await c.var.actions.redirects.import(c.req.valid("json")))
+  )
+  .patch(
+    "/redirects/:id",
+    body(a.redirects.update, "id"),
+    async c => c.json(await c.var.actions.redirects.update({ ...c.req.valid("json"), id: c.req.param("id") }))
+  )
+  .delete("/redirects/:id", async c => c.json(await c.var.actions.redirects.delete(c.req.param())))
+  .get(
+    "/documents/:type/:id/redirect",
+    coerceQuery(a.redirects.suggest),
+    async c => c.json(await c.var.actions.redirects.suggest({ ...c.req.valid("query"), ...c.req.param() }))
+  )
+
   .get("/trash", async c => c.json(await c.var.actions.trash.list()))
   .delete("/trash", async c => c.json(await c.var.actions.trash.empty()))
   .get("/trash/:id", async c => c.json(await c.var.actions.trash.get(c.req.param())))

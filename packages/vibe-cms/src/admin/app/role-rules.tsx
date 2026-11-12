@@ -37,7 +37,7 @@ const BACKUP_LEVELS: Array<{ value: "none" | "take" | "restore", label: string }
   { value: "restore", label: "Take and restore" }
 ];
 
-const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "viewActivity", "*"]);
+const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "viewActivity", "manageRedirects", "*"]);
 
 function levelOf(actions: Action[] | undefined): Level {
   if(!actions?.length) return "none";
@@ -210,6 +210,21 @@ export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
 
           <Row title="Site settings" description="Name, accent color and icon.">
             <Switch checked={rules.siteSettings === true} disabled={readOnly} aria-label="Site settings" onCheckedChange={on => set("siteSettings", on || undefined)} />
+          </Row>
+
+          <Row title="Manage redirects" description="Where old paths go. Included with site settings; turn it off to keep site settings without it.">
+            <Switch
+              checked={rules.manageRedirects ?? rules.siteSettings === true}
+              disabled={readOnly}
+              aria-label="Manage redirects"
+              onCheckedChange={on => {
+                // Stored only when it differs from what site settings give.
+                const next = { ...rules };
+                if(on === (rules.siteSettings === true)) delete next.manageRedirects;
+                else next.manageRedirects = on;
+                onChange(next);
+              }}
+            />
           </Row>
 
           <Row title="Manage roles" description={types ? "Create, change and give out roles, but only up to what this role can do itself." : "Create, change and give out roles up to this role's own access."}>

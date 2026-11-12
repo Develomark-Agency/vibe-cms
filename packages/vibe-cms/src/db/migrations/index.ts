@@ -57,5 +57,13 @@ export const migrations: Migration[] = [
       "DROP TRIGGER IF EXISTS `vibe_search_delete`;",
       "ALTER TABLE `vibe_documents` DROP COLUMN `draft`;"
     ]
+  },
+  {
+    tag: "0004_third_killmonger",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS `vibe_redirects` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`from` text NOT NULL,\n\t`to` text NOT NULL,\n\t`status` integer NOT NULL,\n\t`keep_query` integer NOT NULL,\n\t`locale` text,\n\t`source` text NOT NULL,\n\t`document_id` text,\n\t`document_type` text,\n\t`created_by` text,\n\t`created_at` integer NOT NULL,\n\t`hits` integer DEFAULT 0 NOT NULL,\n\t`last_hit_at` integer\n);",
+      "CREATE UNIQUE INDEX IF NOT EXISTS `vibe_redirects_from` ON `vibe_redirects` (`from`);",
+      "CREATE INDEX IF NOT EXISTS `vibe_redirects_document` ON `vibe_redirects` (`document_id`);"
+    ]
   }
 ];

@@ -32,6 +32,8 @@ import { serveTransformed, type ImageHealth } from "./images.ts";
 import { hasMetadataSupport, stripMetadata } from "../media/metadata.ts";
 import type { HookArgs, PluginHost } from "./plugins.ts";
 import { ftsQuery, jsonPath, searchWords, SqlBuilder } from "./sql.ts";
+import { covers, documentUrl, type RedirectSource, type RuleInput } from "../redirects.ts";
+import { toRedirect, type RedirectFilter, type RedirectStore } from "./redirects.ts";
 
 /** Where a search hit the body, words between \u0001 and \u0002. */
 const SNIPPET = "snippet(vibe_search, 4, char(1), char(2), '…', 12)";
@@ -65,7 +67,9 @@ export interface EngineState {
   /** How the site signs people in when it has no org: its identity provider, or passkeys; and its email sender. */
   signIn: SignInConfig,
   /** The site's own pages, for finding its favicon. */
-  siteFetch?: SiteFetch
+  siteFetch?: SiteFetch,
+  /** The site's redirect rules, and the copy requests are matched against. */
+  redirects: RedirectStore
 }
 
 export interface RequestScope {
@@ -223,6 +227,8 @@ export interface PendingDocument {
 
 /** What to publish: whose branches (all when omitted), which of their changes to leave pending, and how to settle conflicts. */
 export interface PublishSelection {
+  /** Also redirect the document's old URL to its new one, when publishing changes it. */
+  redirect?: boolean,
   branches?: string[],
   skip?: Array<{ owner: string, path: string }>,
   resolve?: Array<{ group: string, use?: string, value?: unknown }>
@@ -1034,7 +1040,8 @@ export class Engine {
       this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, "publish")))
     ]);
     this.afterWrite({ type, id, locale, action: "publish", valid: true, doc });
-    return { ...(await this.getDocument(type, id, locale)), issues: [] };
+    const redirect = await this.redirectAfterPublish(type, id, locale, live, doc, selection.redirect === true);
+    return { ...(await this.getDocument(type, id, locale)), issues: [], ...(redirect ? { redirect } : {}) };
   }
 
   /** Documents with unpublished changes, of the types the reader can read, most recently changed first. */
@@ -1181,8 +1188,9 @@ export class Engine {
   }
 
   /** Moves the document (or one translation) to the trash. Its history stays until the trash is purged. */
-  async delete(type: string, id: string, options: { force?: boolean, locale?: string } = {}) {
+  async delete(type: string, id: string, options: { force?: boolean, locale?: string, redirectTo?: string } = {}) {
     const session = this.writer({ action: "delete", type });
+    if(options.redirectTo && !(options.locale && options.locale !== this.defaultLocale)) this.requireRedirects("write");
     const exists = (await this.orm.select({ id: documents.id }).from(documents).where(and(eq(documents.id, id), eq(documents.type, type))).limit(1))[0];
     if(!exists) throw new HttpError(404, "Document not found");
     if(options.locale && options.locale !== this.defaultLocale) {
@@ -1217,7 +1225,8 @@ export class Engine {
       this.orm.delete(schedules).where(eq(schedules.id, id))
     ]);
     this.afterWrite({ type, id, locale: "*", action: "delete", valid: false, doc: null });
-    return { deleted: true, trash: trash.id };
+    const redirected = options.redirectTo ? await this.redirectAfterTrash(type, id, rows, options.redirectTo) : undefined;
+    return { deleted: true, trash: trash.id, ...(redirected ? { redirects: redirected } : {}) };
   }
 
   /** Document rows with their branches, as the trash keeps them. */
@@ -1749,6 +1758,8 @@ export class Engine {
       ...docs.flatMap(d => trashedBranches(d).map(b => this.orm.insert(branches).values(b).onConflictDoNothing())),
       this.orm.delete(trash).where(eq(trash.id, id))
     ]);
+    // The page is back: a redirect made when it was trashed would hide it.
+    if(!row.locale) await this.state.redirects.removeAutomatic(row.item_id, { source: "trash" }).catch(() => {});
     for(const file of used) {
       if(this.canTrash(file)) await this.restoreTrash(file.id).catch(() => {});
     }
@@ -1948,6 +1959,175 @@ export class Engine {
     if(headers.get("content-type") === "image/svg+xml") headers.set("content-security-policy", "script-src 'none'");
     if(request.headers.get("if-none-match") === object.httpEtag) return new Response(null, { status: 304, headers });
     return new Response(object.body, { headers });
+  }
+
+  // --- Redirects ---------------------------------------------------------------------
+
+  private requireRedirects(action: "read" | "write"): Session | null {
+    if(this.scope.trusted && !this.scope.session) return null;
+    return require(this.state, this.scope.session, { action, scope: "redirects" });
+  }
+
+  /** Whether documents of a type have a page whose address the CMS can work out. */
+  hasUrl(type: string): boolean {
+    const settings = this.config.collections?.[type];
+    return Boolean(settings?.url || settings?.preview?.startsWith("/") || this.pathField(type));
+  }
+
+  /** `pageSchema()`'s convention: a text field `path` holding where the page lives. */
+  private pathField(type: string): boolean {
+    const field = getSchema(this.config, type).shape.path;
+    return Boolean(field) && unwrap(field!).type === "text" && (unwrap(field!) as TextSchema).format === "path";
+  }
+
+  /** Where a document of this type lives on the site, or null when it has no page. */
+  documentUrl(type: string, doc: DocumentData | null, id: string, locale: string): string | null {
+    try {
+      return documentUrl(this.config.collections?.[type], this.pathField(type), doc, id, locale);
+    } catch (error) {
+      console.error(`vibe-cms: the url of a ${type} couldn't be worked out`, error);
+      return null;
+    }
+  }
+
+  async listRedirects(filter: RedirectFilter = {}) {
+    this.requireRedirects("read");
+    return { ...(await this.state.redirects.list(filter)), hasUrls: Object.keys(this.config.schemas).some(type => this.hasUrl(type)) };
+  }
+
+  /** Live pages a rule from `from` would hide, as readable warnings. */
+  private async shadowedPages(from: string): Promise<string[]> {
+    const warnings: string[] = [];
+    for(const type of Object.keys(this.config.schemas)) {
+      if(!this.hasUrl(type)) continue;
+      const rows = await this.orm.select({ id: documents.id, locale: documents.locale, published: documents.published })
+        .from(documents).where(and(eq(documents.type, type), isNotNull(documents.published))).limit(5000);
+      for(const row of rows) {
+        const doc = parseCopy(getSchema(this.config, type), row.published);
+        const url = this.documentUrl(type, doc, row.id, row.locale);
+        if(url && covers(from, url)) warnings.push(`${url} is a live page (${this.titleOf(type, doc)}); the redirect would hide it`);
+        if(warnings.length >= 3) return warnings;
+      }
+    }
+    return warnings;
+  }
+
+  async createRedirect(input: RuleInput & { locale?: string | null }, options: { source?: RedirectSource, documentId?: string | null, warn?: boolean } = {}) {
+    const session = this.requireRedirects("write");
+    const { row, repointed } = await this.state.redirects.save(input, { source: options.source ?? "manual", documentId: options.documentId, locale: input.locale, by: session?.sub ?? null });
+    this.note({ label: `${row.from} → ${row.to}`, ...(repointed.length ? { repointed: repointed.length } : {}) });
+    const warnings = options.warn === false ? [] : await this.shadowedPages(row.from);
+    return { redirect: toRedirect(row), repointed: repointed.length, warnings };
+  }
+
+  async updateRedirect(id: string, patch: Partial<RuleInput> & { locale?: string | null }) {
+    const session = this.requireRedirects("write");
+    const current = await this.state.redirects.get(id);
+    if(!current) throw new HttpError(404, "Redirect not found");
+    const input: RuleInput = {
+      from: patch.from ?? current.from,
+      to: patch.to ?? current.to,
+      status: patch.status ?? current.status,
+      keepQuery: patch.keepQuery ?? current.keep_query === 1
+    };
+    const { row, repointed } = await this.state.redirects.save(input, {
+      source: current.source,
+      documentId: current.document_id,
+      documentType: current.document_type,
+      locale: patch.locale === undefined ? current.locale : patch.locale,
+      by: session?.sub ?? null
+    }, id);
+    this.note({ id, label: `${row.from} → ${row.to}`, ...(repointed.length ? { repointed: repointed.length } : {}) });
+    return { redirect: toRedirect(row), repointed: repointed.length, warnings: row.from === current.from ? [] : await this.shadowedPages(row.from) };
+  }
+
+  async deleteRedirect(id: string) {
+    this.requireRedirects("write");
+    const row = await this.state.redirects.remove(id);
+    this.note({ id, label: `${row.from} → ${row.to}` });
+    return { deleted: true as const };
+  }
+
+  /** Adds many rules, e.g. from a CSV: each that can't be added is skipped with the reason. */
+  async importRedirects(rows: Array<RuleInput & { locale?: string | null }>) {
+    const session = this.requireRedirects("write");
+    if(rows.length > 5000) throw new HttpError(400, "Import up to 5000 redirects at a time");
+    const skipped: Array<{ row: number, from: string, reason: string }> = [];
+    let created = 0;
+    for(const [index, input] of rows.entries()) {
+      try {
+        await this.state.redirects.save(input, { source: "manual", locale: input.locale, by: session?.sub ?? null });
+        created++;
+      } catch (error) {
+        if(!(error instanceof HttpError)) throw error;
+        skipped.push({ row: index + 1, from: input.from, reason: error.message });
+      }
+    }
+    this.note({ created, skipped: skipped.length });
+    return { created, skipped };
+  }
+
+  /**
+   * The redirect publishing would offer: where this document lived when last published and where its
+   * working copy puts it now. Null when it has no URL or the URL isn't changing.
+   */
+  async suggestRedirect(type: string, id: string, localeInput?: string): Promise<{ from: string, to: string, exists: boolean } | null> {
+    const locale = this.locale(localeInput);
+    require(this.state, this.scope.session, { action: "read", type });
+    if(!this.hasUrl(type)) return null;
+    const row = (await this.workingRows(id)).find(r => r.type === type && r.locale === locale);
+    if(!row?.published || !row.draft) return null;
+    const schema = getSchema(this.config, type);
+    const from = this.documentUrl(type, parseCopy(schema, row.published), id, locale);
+    const to = this.documentUrl(type, parseCopy(schema, row.draft), id, locale);
+    if(!from || !to || from === to) return null;
+    return { from, to, exists: Boolean(await this.state.redirects.byFrom(from)) };
+  }
+
+  /** After a publish: drops the redirect from where the page now lives, and adds one from where it was if asked. */
+  private async redirectAfterPublish(type: string, id: string, locale: string, before: DocumentData | null, after: DocumentData, want: boolean) {
+    if(!this.hasUrl(type)) return undefined;
+    const from = this.documentUrl(type, before, id, locale);
+    const to = this.documentUrl(type, after, id, locale);
+    if(!from || !to || from === to) return undefined;
+    try {
+      // A page that moved back to an address it had no longer needs the redirect that left it.
+      await this.state.redirects.removeAutomatic(id, { from: to });
+      if(!want) return undefined;
+      const session = this.scope.session;
+      if(session && !can(this.state, session, { action: "write", scope: "redirects" })) {
+        return { from, to, created: false, reason: "You can't manage redirects" };
+      }
+      const taken = await this.state.redirects.byFrom(from);
+      if(taken && taken.source === "manual") return { from, to, created: false, reason: `There's already a redirect from ${from}` };
+      await this.state.redirects.save({ from, to }, { source: "slug-change", documentId: id, documentType: type, locale, by: session?.sub ?? null, replace: true });
+      this.note({ redirect: `${from} → ${to}` });
+      return { from, to, created: true };
+    } catch (error) {
+      if(!(error instanceof HttpError)) throw error;
+      return { from, to, created: false, reason: error.message };
+    }
+  }
+
+  /** After trashing a page: sends each language's live URL to `target`. */
+  private async redirectAfterTrash(type: string, id: string, rows: TrashedDocument[], target: string) {
+    const results: Array<{ from: string, to: string, created: boolean, reason?: string }> = [];
+    const schema = getSchema(this.config, type);
+    for(const row of rows) {
+      const from = row.published ? this.documentUrl(type, parseCopy(schema, row.published), id, row.locale) : null;
+      if(!from) continue;
+      try {
+        const taken = await this.state.redirects.byFrom(from);
+        if(taken && taken.source === "manual") throw new HttpError(409, `There's already a redirect from ${from}`);
+        await this.state.redirects.save({ from, to: target }, { source: "trash", documentId: id, documentType: type, locale: row.locale, by: this.scope.session?.sub ?? null, replace: true });
+        results.push({ from, to: target, created: true });
+      } catch (error) {
+        if(!(error instanceof HttpError)) throw error;
+        results.push({ from, to: target, created: false, reason: error.message });
+      }
+    }
+    if(results.some(r => r.created)) this.note({ redirect: results.filter(r => r.created).map(r => `${r.from} → ${r.to}`).join(", ") });
+    return results;
   }
 
   /** Whether the current session may do something; exposed for plugin routes. */

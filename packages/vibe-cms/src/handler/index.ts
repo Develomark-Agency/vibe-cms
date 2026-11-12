@@ -11,6 +11,7 @@ import { ImageHealth } from "./images.ts";
 import { SiteOrg, type OrgEnv } from "./org.ts";
 import { wellKnownPaths } from "./oauth.ts";
 import { RoleStore } from "./roles.ts";
+import { RedirectStore } from "./redirects.ts";
 import { announceClaim, announceSetup, signInConfig, type SignInEnv } from "./signin.ts";
 import type { EmailSender } from "./email.ts";
 import { PluginHost } from "./plugins.ts";
@@ -188,7 +189,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       siteId: await getOrCreateMeta(bindings.db, "site_id", () => newId("site")),
       org: await SiteOrg.load(bindings.db, (env ?? {}) as OrgEnv),
       signIn: signInConfig((env ?? {}) as SignInEnv, bindings.email),
-      siteFetch: (request: Request) => fetchSite(request, env)
+      siteFetch: (request: Request) => fetchSite(request, env),
+      redirects: new RedirectStore(bindings.db, prefix)
     };
     const plugins = await PluginHost.load((config.plugins ?? []) as PluginDescriptor[], plugin => ({
       bindings: bindings[plugin.name],
@@ -324,6 +326,24 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
     return environmentOf(env as EnvironmentEnv | undefined, dev);
   }
 
+  /**
+   * The site's redirect for this request, answered before the site's own `fetch` sees it. Only `GET` and `HEAD`.
+   * A failure here never takes the site down: the request carries on to your handler.
+   */
+  async function redirectFor(request: Request, env: E, ctx: ExecutionContext): Promise<Response | null> {
+    if(request.method !== "GET" && request.method !== "HEAD") return null;
+    try {
+      const url = new URL(request.url);
+      const resolved = await (await state(env)).redirects.resolve(url, ctx);
+      if(!resolved) return null;
+      // Relative targets stay relative: the visitor's own origin is right behind a proxy too.
+      return new Response(null, { status: resolved.status, headers: { location: resolved.location, "cache-control": resolved.status === 301 || resolved.status === 308 ? "public, max-age=300" : "no-store" } });
+    } catch (error) {
+      console.error("vibe-cms: couldn't look up redirects", error);
+      return null;
+    }
+  }
+
   /** Your site's pages, or the CMS's routes, with search engines kept away from anything but production. */
   async function respond(request: Request, env: E, ctx: ExecutionContext, handlers: WorkerHandlers<E>): Promise<Response> {
     if(environment(env) === PRODUCTION) return route(request, env, ctx, handlers);
@@ -334,6 +354,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
   async function route(request: Request, env: E, ctx: ExecutionContext, handlers: WorkerHandlers<E>): Promise<Response> {
     if(match(request)) return handle(request, env, ctx);
     ctx?.waitUntil?.(announceNewSite(request, env));
+    const redirect = await redirectFor(request, env, ctx);
+    if(redirect) return redirect;
     if(!handlers.fetch) return new Response("Not found", { status: 404 });
     const preview = await previewSession(request, env);
     if(!preview) return handlers.fetch(request, env, ctx);

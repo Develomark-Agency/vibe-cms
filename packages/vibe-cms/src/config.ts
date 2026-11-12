@@ -49,6 +49,11 @@ export interface RoleRules {
   backups?: boolean | "take",
   /** Seeing everyone's activity (the Activity page, `activity.list`). Everyone sees their own. */
   viewActivity?: boolean,
+  /**
+   * Managing the site's redirects (the Redirects page, `redirects.*`). Roles with `siteSettings` have it
+   * unless this is `false`.
+   */
+  manageRedirects?: boolean,
   /** Per content type, or `"*"` for every type without its own rule (a type's rule replaces `"*"`). `delete` is never implied. */
   [type: string]: Action[] | boolean | "take" | { locales: string[] } | undefined
 }
@@ -72,7 +77,14 @@ export interface CollectionSettings<S = ObjectSchema<any>> {
    * The document's URL on the site, where the editor's draft preview opens it.
    * `{field}` placeholders are filled from the document; `{id}` and `{locale}` also work.
    */
-  preview?: string
+  preview?: string,
+  /**
+   * Where the document lives on the site, for redirects: a function of the document, or a template like
+   * `preview`'s. Defaults to `preview` when that is a path on the site, and for `pageSchema()` collections
+   * to their `path` field. Without a URL, renaming a document's slug offers no redirect.
+   * Return null for a document with no page. See `vibe-cms docs redirects`.
+   */
+  url?: string | ((doc: Record<string, any>, context: { id: string, locale: string }) => string | null | undefined)
 }
 
 /** What `defineConfig` takes. See `vibe-cms docs config`. */

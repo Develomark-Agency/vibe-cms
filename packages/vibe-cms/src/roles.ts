@@ -8,7 +8,7 @@ import type { Action, RoleRules } from "./config.ts";
 export const ACTIONS: readonly Action[] = ["read", "write", "publish", "delete"];
 
 /** Rule keys that aren't content types. */
-const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "manageRoles", "viewActivity", "*"]);
+const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "manageRoles", "viewActivity", "manageRedirects", "*"]);
 
 /** Built in, never stored: every permission, plus managing roles and who may sign in. */
 export const OWNER_ROLE = "owner";
@@ -95,7 +95,7 @@ export function ruleIssues(rules: unknown, schema: RoleSchema): string[] {
       if(typeof value !== "boolean" && value !== "take") issues.push("backups must be true, false or \"take\"");
     } else if(key === "publish") {
       if(value !== false) issues.push("publish can only be false");
-    } else if(["all", "siteSettings", "manageRoles", "viewActivity"].includes(key)) {
+    } else if(["all", "siteSettings", "manageRoles", "viewActivity", "manageRedirects"].includes(key)) {
       if(typeof value !== "boolean") issues.push(`${key} must be true or false`);
     } else if(key === "write") {
       const locales = (value as { locales?: unknown })?.locales;
@@ -151,6 +151,7 @@ export function describeRules(rules: RoleRules): string {
   if(rules.write?.locales?.length) parts.push(`writes in ${rules.write.locales.join(", ")}`);
   if(rules.media?.length) parts.push("media");
   if(rules.siteSettings) parts.push("settings");
+  if(rules.manageRedirects ?? rules.siteSettings) parts.push("redirects");
   if(rules.backups) parts.push(rules.backups === "take" ? "takes backups" : "backups");
   if(rules.manageRoles) parts.push("manages roles");
   if(rules.viewActivity) parts.push("sees activity");
@@ -171,7 +172,8 @@ interface Reach {
   /** 0 none, 1 take, 2 take and restore. */
   backups: number,
   manageRoles: boolean,
-  viewActivity: boolean
+  viewActivity: boolean,
+  manageRedirects: boolean
 }
 
 function typeActions(rules: RoleRules, key: string): Action[] {
@@ -188,7 +190,7 @@ function anyWrite(rules: RoleRules): boolean {
 }
 
 function reach(roles: RoleRules[], types: string[]): Reach {
-  const out: Reach = { all: false, types: new Map(), media: new Set(), locales: new Set(), siteSettings: false, backups: 0, manageRoles: false, viewActivity: false };
+  const out: Reach = { all: false, types: new Map(), media: new Set(), locales: new Set(), siteSettings: false, backups: 0, manageRoles: false, viewActivity: false, manageRedirects: false };
   for(const key of [...types, "*"]) out.types.set(key, new Set());
   for(const rules of roles) {
     if(rules.all) out.all = true;
@@ -202,6 +204,7 @@ function reach(roles: RoleRules[], types: string[]): Reach {
     out.backups = Math.max(out.backups, rules.backups === true ? 2 : rules.backups === "take" ? 1 : 0);
     if(rules.manageRoles) out.manageRoles = true;
     if(rules.viewActivity) out.viewActivity = true;
+    if(rules.manageRedirects ?? rules.siteSettings) out.manageRedirects = true;
   }
   return out;
 }
@@ -232,5 +235,7 @@ export function beyondReach(candidate: RoleRules, holder: RoleRules[], schema: R
   if(theirs.backups > mine.backups) problems.push(theirs.backups === 2 ? "restoring backups" : "taking backups");
   if(theirs.manageRoles && !mine.manageRoles) problems.push("managing roles");
   if(theirs.viewActivity && !mine.viewActivity) problems.push("seeing activity");
+  // Site settings imply it, and are already named.
+  if(theirs.manageRedirects && !mine.manageRedirects && !(theirs.siteSettings && !mine.siteSettings)) problems.push("managing redirects");
   return problems;
 }

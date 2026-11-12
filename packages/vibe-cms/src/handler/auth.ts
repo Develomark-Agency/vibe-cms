@@ -151,9 +151,10 @@ export interface Permit {
   /**
    * `"media"` for the asset library, `"site"` for the site's name, accent and icon, `"backups"` for taking
    * and restoring backups, `"users"` for who may sign in to a site without an org (owners and `all` roles),
-   * `"activity"` for seeing everyone's activity (`viewActivity`).
+   * `"activity"` for seeing everyone's activity (`viewActivity`), `"redirects"` for the site's redirects
+   * (`manageRedirects`, which `siteSettings` implies unless it's `false`).
    */
-  scope?: "content" | "media" | "site" | "backups" | "users" | "activity"
+  scope?: "content" | "media" | "site" | "backups" | "users" | "activity" | "redirects"
 }
 
 export function can(access: Access, session: Session | null, permit: Permit): boolean {
@@ -175,6 +176,7 @@ function allows(rules: RoleRules, { action, type, locale, scope }: Permit): bool
   if(scope === "users") return rules.manageRoles === true;
   if(scope === "site") return rules.siteSettings === true;
   if(scope === "activity") return rules.viewActivity === true;
+  if(scope === "redirects") return rules.manageRedirects ?? rules.siteSettings === true;
   // Restoring (`write`) needs `true`; taking a snapshot (`read`) also `"take"`.
   if(scope === "backups") return rules.backups === true || (rules.backups === "take" && action === "read");
   if(scope === "media") {
@@ -234,6 +236,7 @@ export function permissionSummary(access: Access, session: Session) {
     site: can(access, session, { action: "write", scope: "site" }),
     users: can(access, session, { action: "write", scope: "users" }),
     activity: can(access, session, { action: "read", scope: "activity" }),
+    redirects: can(access, session, { action: "write", scope: "redirects" }),
     roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true || access.roles.map[role]?.manageRoles === true)
   };
 }

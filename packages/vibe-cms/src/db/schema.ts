@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { oauthTables } from "../oauth/schema.ts";
 
 /**
@@ -145,6 +145,33 @@ export const trash = sqliteTable("vibe_trash", {
   index("vibe_trash_item").on(t.item_id)
 ]);
 
+/**
+ * Where old URLs go. Matched against the request path before the site's own `fetch` runs; the handler
+ * caches the rules per isolate and reloads them when `vibe_meta.redirects_version` changes.
+ */
+export const redirects = sqliteTable("vibe_redirects", {
+  id: text().primaryKey(),
+  /** A normalized path: `/old-page`, or `/blog/*` with one trailing wildcard. Unique. */
+  from: text().notNull(),
+  /** A path, an absolute URL, or either with `*` standing for what the wildcard in `from` matched. */
+  to: text().notNull(),
+  status: integer().notNull(),
+  keep_query: integer().notNull(),
+  /** A label (the language of the page it came from); matching is on the path alone. */
+  locale: text(),
+  source: text().$type<"manual" | "slug-change" | "trash">().notNull(),
+  /** For automatic rules, the page they came from, and its content type for linking to it. */
+  document_id: text(),
+  document_type: text(),
+  created_by: text(),
+  created_at: integer().notNull(),
+  hits: integer().notNull().default(0),
+  last_hit_at: integer()
+}, t => [
+  uniqueIndex("vibe_redirects_from").on(t.from),
+  index("vibe_redirects_document").on(t.document_id)
+]);
+
 export const codes = sqliteTable("vibe_codes", {
   code: text().primaryKey(),
   payload: text().notNull(),
@@ -217,3 +244,4 @@ export type ScheduleRow = typeof schedules.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type TrashRow = typeof trash.$inferSelect;
 export type ActivityRow = typeof activity.$inferSelect;
+export type RedirectRow = typeof redirects.$inferSelect;

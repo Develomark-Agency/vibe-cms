@@ -20,7 +20,7 @@ Package subpaths used throughout (`vibe-cms/schema`, `vibe-cms/handler`, `vibe-c
 | [implementation.md](./implementation.md) | How the implementation settles open questions, and where it differs |
 | [change-sets.md](./change-sets.md) | Proposed: per-person branches, field diffs and merge on publish |
 | [audit-log.md](./audit-log.md) | Proposed: every action recorded with who, when and through which channel |
-| [redirects.md](./redirects.md) | Proposed: redirects in site settings, suggested when slugs change |
+| [redirects.md](./redirects.md) | Built: redirects in site settings, suggested when slugs change |
 
 ## The shape of a project
 

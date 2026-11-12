@@ -39,6 +39,7 @@ import { Button } from "../components/ui/button.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
 import { Input } from "../components/ui/input.tsx";
+import { Label } from "../components/ui/label.tsx";
 import { Kbd } from "../components/ui/kbd.tsx";
 import { Crossfade } from "../components/crossfade.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
@@ -109,6 +110,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const [busy, setBusy] = useState<null | "save" | "publish" | "unpublish" | "discard" | "delete">(null);
   const [conflict, setConflict] = useState<DocumentState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [redirectTo, setRedirectTo] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const loadedKey = useRef<string | null>(null);
@@ -276,7 +278,8 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     setBusy("delete");
     try {
       const translation = isTranslationOnly();
-      const { trash } = await cms.actions.documents.delete({ type, id: id!, locale: translation ? locale : undefined });
+      const target = redirectTo.trim();
+      const { trash } = await cms.actions.documents.delete({ type, id: id!, locale: translation ? locale : undefined, ...(!translation && target ? { redirectTo: target } : {}) });
       setNavigationBlocker(undefined);
       void queryClient.invalidateQueries({ queryKey: ["documents", type] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
@@ -306,8 +309,18 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
     } finally {
       setBusy(null);
       setConfirmDelete(false);
+      setRedirectTo("");
     }
   }
+
+  // A live page that can be redirected somewhere when it goes.
+  const urlInfo = useQuery({
+    queryKey: ["redirect-suggestion", type, id, locale],
+    enabled: permissions.delete && session.permissions.redirects === true && Boolean(id && doc.data?.published),
+    queryFn: () => cms.actions.redirects.suggest({ type, id: id!, locale }),
+    staleTime: 60_000
+  });
+  const offerRedirect = urlInfo.data?.hasUrl === true && !isTranslationOnly();
 
   function isTranslationOnly() {
     return locale !== config.defaultLocale && (doc.data?.locales.length ?? 0) > 1;
@@ -556,6 +569,13 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
               {isTranslationOnly() ? "Other languages are kept." : "Every language version goes to the trash, with its history. Files it uses stay in the media library."} You can restore it from the trash.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {offerRedirect && (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="delete-redirect">Send visitors to (optional)</Label>
+              <Input id="delete-redirect" placeholder="/another-page, or leave empty" value={redirectTo} onChange={event => setRedirectTo(event.target.value)} />
+              <p className="text-xs text-muted-foreground">Adds a redirect from this page's address. Restoring the page takes it away.</p>
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => void remove()} disabled={busy === "delete"}>

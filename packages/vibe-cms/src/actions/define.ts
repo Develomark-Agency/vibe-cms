@@ -96,7 +96,7 @@ export function fromHttpError(error: HttpError): ActionError {
 }
 
 /** Groups whose actions act on the group itself rather than a content type. */
-const NOT_CONTENT = new Set(["assets", "folders", "trash", "site", "backups", "schema", "activity"]);
+const NOT_CONTENT = new Set(["assets", "folders", "trash", "site", "backups", "schema", "activity", "redirects"]);
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;

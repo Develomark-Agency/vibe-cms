@@ -114,6 +114,16 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
     // A refetch mid-choice would move things under the cursor; it refetches on opening, and after a failed publish.
     refetchOnWindowFocus: false
   });
+  // When publishing changes the page's address, offer to send the old one to the new.
+  const canRedirect = canPublish && session.permissions.redirects === true;
+  const suggestion = useQuery({
+    queryKey: ["redirect-suggestion", type, id, locale],
+    enabled: canRedirect,
+    queryFn: async () => (await cms.actions.redirects.suggest({ type, id, locale })).suggestion,
+    staleTime: 0,
+    refetchOnWindowFocus: false
+  });
+  const [redirect, setRedirect] = useState(true);
   const [unticked, setUnticked] = useState<Set<string>>(new Set());
   const [choices, setChoices] = useState<Map<string, Choice>>(new Map());
   const [reopened, setReopened] = useState<Set<string>>(new Set());
@@ -192,10 +202,15 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
     try {
       const result = runAt
         ? await cms.actions.documents.schedule({ type, id, locale, action: "publish", runAt, ...selection() })
-        : await cms.actions.documents.publish({ type, id, locale, ...selection() });
+        : await cms.actions.documents.publish({ type, id, locale, ...(suggestion.data && !suggestion.data.exists && redirect ? { redirect: true } : {}), ...selection() });
       onDone(result);
       void queryClient.invalidateQueries({ queryKey: ["changes", type, id, locale] });
+      void queryClient.invalidateQueries({ queryKey: ["redirects"] });
+      void queryClient.invalidateQueries({ queryKey: ["redirect-suggestion", type, id, locale] });
       cms.toast(runAt ? `Scheduled ${counted} for ${formatDate(runAt)}` : `Published ${counted}`, { type: "success" });
+      const made = (result as { redirect?: { from: string, to: string, created: boolean, reason?: string } }).redirect;
+      if(made?.created) cms.toast(`Redirecting ${made.from} to ${made.to}`, { type: "success" });
+      else if(made?.reason) cms.toast(`No redirect added: ${made.reason}`, { type: "info" });
       onOpenChange(false);
     } catch (failure) {
       // Someone saved or published meanwhile: show the changes as they are now.
@@ -319,6 +334,22 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
         {/* Like the editor's sidebar: what's going on, and who. Under the changes on a phone, which come first. */}
         {/* Pinned while the changes scroll, and never taller than the window under the app bar and this header (10.5rem): the people list scrolls instead. */}
         <aside className={cn("flex flex-col gap-4 lg:sticky lg:top-20 lg:max-h-[calc(100dvh-10.5rem)]", arrival)}>
+          {canRedirect && suggestion.data && scheduling === null && (
+            <section className="flex flex-col gap-2 rounded-[16px] p-4 elevated" aria-label="Redirect">
+              <h3 className="text-sm font-medium">The page's address changes</h3>
+              {suggestion.data.exists ? (
+                <p className="text-sm text-muted-foreground">There's already a redirect from <code className="font-mono break-all">{suggestion.data.from}</code>.</p>
+              ) : (
+                <label className="flex items-start gap-2 text-sm">
+                  <Checkbox className="mt-0.5" checked={redirect} onCheckedChange={checked => setRedirect(Boolean(checked))} aria-label={`Redirect ${suggestion.data.from} to ${suggestion.data.to}`} />
+                  <span className="min-w-0">
+                    Redirect <code className="font-mono break-all">{suggestion.data.from}</code> → <code className="font-mono break-all">{suggestion.data.to}</code>
+                    <span className="block text-xs text-muted-foreground">So links and search results to the old address keep working.</span>
+                  </span>
+                </label>
+              )}
+            </section>
+          )}
           {(status || scheduling !== null) && canPublish && (
             <section className={cn("flex flex-col gap-3 rounded-[16px] p-4 elevated", error && "shadow-[inset_0_0_0_1px] shadow-destructive/30")}>
               {status && <p className={cn("text-sm", error ? "text-destructive" : "text-muted-foreground")}>{status}</p>}
