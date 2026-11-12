@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog.tsx";
+import { cn } from "../lib/utils.ts";
 import { Input } from "../components/ui/input.tsx";
 import { Label } from "../components/ui/label.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
@@ -13,6 +14,7 @@ import type { Redirect } from "../../handler/redirects.ts";
 import { askConfirm } from "./confirm.tsx";
 import { useAdmin } from "./context.tsx";
 import { parseCsv, stringifyCsv } from "./csv.ts";
+import { variablesOf } from "../../redirects.ts";
 import { Page, PageHeader } from "./page.tsx";
 import { Link } from "./router.tsx";
 
@@ -255,7 +257,7 @@ export function RedirectsPage() {
             >
               <DialogHeader>
                 <DialogTitle>{draft.id ? "Edit redirect" : "Add redirect"}</DialogTitle>
-                <DialogDescription>End “from” with /* to match everything under a path, and use * in “to” for what it matched: /blog/* → /news/*.</DialogDescription>
+                <DialogDescription>End “from” with /* to match everything under a path, and use * in “to” for what it matched: /blog/* → /news/*. Or name segments with {"{name}"} and use them in “to”, path or query: {"/items/{id} → /products?id={id}"}.</DialogDescription>
               </DialogHeader>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-from">From</Label>
@@ -263,7 +265,7 @@ export function RedirectsPage() {
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-to">To</Label>
-                <Input id="redirect-to" placeholder="/new-page or https://example.com/page" value={draft.to} onChange={event => setDraft({ ...draft, to: event.target.value })} />
+                <TargetInput id="redirect-to" value={draft.to} variables={variablesOf(draft.from)} from={draft.from} onChange={to => setDraft({ ...draft, to })} />
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="redirect-status">Status</Label>
@@ -284,5 +286,120 @@ export function RedirectsPage() {
         </DialogContent>
       </Dialog>
     </Page>
+  );
+}
+
+/**
+ * The “to” field. With variables in “from” (`/hello/{a}/bye/{b}`), typing `{` lists them to pick from, they
+ * can be inserted with a click, and an example shows what a visit becomes. Without any it's a plain input.
+ */
+function TargetInput({ id, value, variables, from, onChange }: { id: string, value: string, variables: string[], from: string, onChange(value: string): void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [caret, setCaret] = useState(0);
+  const [focused, setFocused] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [active, setActive] = useState(0);
+
+  // An unfinished `{par` before the caret: what's typed so far picks from the variables.
+  const open = /\{(\w*)$/.exec(value.slice(0, caret));
+  const options = open ? variables.filter(name => name.startsWith(open[1]!)) : [];
+  const showing = focused && !dismissed && options.length > 0;
+  const unknown = variablesOf(value).filter(name => !variables.includes(name));
+
+  function track(element: HTMLInputElement) {
+    setCaret(element.selectionStart ?? element.value.length);
+  }
+
+  function place(start: number, end: number, text: string) {
+    const next = value.slice(0, start) + text + value.slice(end);
+    onChange(next);
+    const position = start + text.length;
+    setCaret(position);
+    setDismissed(false);
+    requestAnimationFrame(() => {
+      input.current?.focus();
+      input.current?.setSelectionRange(position, position);
+    });
+  }
+
+  function pick(name: string) {
+    if(!open) return;
+    const start = caret - open[0].length;
+    // A closing brace that was already typed isn't doubled.
+    place(start, value[caret] === "}" ? caret + 1 : caret, `{${name}}`);
+  }
+
+  function example(text: string) {
+    return text.replace(/\{(\w+)\}/g, (_, name: string) => name);
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="relative">
+        <Input
+          id={id}
+          ref={input}
+          autoComplete="off"
+          placeholder="/new-page or https://example.com/page"
+          value={value}
+          role={variables.length ? "combobox" : undefined}
+          aria-expanded={variables.length ? showing : undefined}
+          aria-autocomplete={variables.length ? "list" : undefined}
+          onChange={event => {
+            onChange(event.target.value);
+            track(event.target);
+            setDismissed(false);
+            setActive(0);
+          }}
+          onSelect={event => track(event.currentTarget)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onKeyDown={event => {
+            if(!showing) return;
+            if(event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setActive((active + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length);
+            } else if(event.key === "Enter" || event.key === "Tab") {
+              event.preventDefault();
+              pick(options[Math.min(active, options.length - 1)]!);
+            } else if(event.key === "Escape") {
+              // Closes the list, not the dialog.
+              event.preventDefault();
+              event.stopPropagation();
+              setDismissed(true);
+            }
+          }}
+        />
+        {showing && (
+          <ul role="listbox" aria-label="Variables" className="absolute top-full right-0 left-0 z-50 mt-1 overflow-hidden rounded-lg border bg-popover p-1 text-popover-foreground shadow-md">
+            {options.map((name, index) => (
+              // mousedown, not click: the input keeps focus, so the list doesn't close before the pick.
+              <li key={name} role="option" aria-selected={index === active} onMouseDown={event => {
+                event.preventDefault();
+                pick(name);
+              }} onMouseEnter={() => setActive(index)} className={cn("flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm", index === active && "bg-accent text-accent-foreground")}>
+                <code className="font-mono">{`{${name}}`}</code>
+                <span className="text-xs text-muted-foreground">from “from”</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {variables.length > 0 && (
+        <div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-1.5">
+            Variables:
+            {variables.map(name => (
+              <button key={name} type="button" onMouseDown={event => event.preventDefault()} onClick={() => place(input.current?.selectionStart ?? value.length, input.current?.selectionEnd ?? value.length, `{${name}}`)} className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-foreground hover:bg-accent">{`{${name}}`}</button>
+            ))}
+            <span>Type <kbd className="font-mono">{"{"}</kbd> to pick one.</span>
+          </p>
+          {unknown.length > 0 && <p className="text-destructive">{unknown.map(name => `{${name}}`).join(", ")} {unknown.length === 1 ? "isn't" : "aren't"} in “from”.</p>}
+          {value.trim() && unknown.length === 0 && (
+            <p>Example: <code className="font-mono break-all text-foreground">{example(from)}</code> → <code className="font-mono break-all text-foreground">{example(value)}</code></p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

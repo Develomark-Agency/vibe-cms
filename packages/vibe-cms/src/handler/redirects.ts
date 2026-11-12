@@ -3,7 +3,7 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { HttpError } from "../config.ts";
 import { createDb } from "../db/client.ts";
 import { meta, redirects, type RedirectRow } from "../db/schema.ts";
-import { checkRule, findLoop, isWildcard, RedirectIndex, resolveRedirect, type MatchRule, type RedirectSource, type Resolved, type RuleInput } from "../redirects.ts";
+import { checkRule, findLoop, isDynamic, RedirectIndex, resolveRedirect, type MatchRule, type RedirectSource, type Resolved, type RuleInput } from "../redirects.ts";
 import { getMeta, newId } from "./db.ts";
 import type { D1, ExecutionContext } from "./platform.ts";
 
@@ -205,9 +205,9 @@ export class RedirectStore {
     // Rules that sent visitors to this path now send them to where it goes.
     const repointed: RedirectRow[] = [];
     const removed: string[] = [];
-    if(!isWildcard(checked.from)) {
+    if(!isDynamic(checked.from)) {
       for(const row of rows) {
-        if(row.id === ownId || isWildcard(row.to) || row.to !== checked.from) continue;
+        if(row.id === ownId || isDynamic(row.to) || row.to !== checked.from) continue;
         // An automatic rule going back to where it started cancels the rule that left (the page moved back); a person's is a loop.
         if(row.from === checked.to) {
           if(options.replace) removed.push(row.id);

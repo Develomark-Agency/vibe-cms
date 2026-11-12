@@ -8,8 +8,9 @@ Editors manage them on the editor's Redirects page (Settings → Redirects). The
 
 - **From** is a path: `/old-page`. End it with `/*` to match everything under it: `/blog/*`.
 - **To** is a path, a full URL, or with a wildcard `from`, a target with `*` for what was matched: `/blog/*` → `/news/*`.
+- **Variables** name whole segments: `/hello/{segA}/goodbye/{segB}` matches `/hello/one/goodbye/two`, and `to` can use `{segA}` and `{segB}` in the path or the query: `/bye/{segB}?from={segA}`. A variable matches exactly one segment and keeps its percent-escapes as they came. In the editor, typing `{` in “to” lists the variables from “from”. `to` can only use variables that “from” declares. They combine with a trailing `/*`.
 - **Status** is 301 (the default), 302, 307 or 308. **Keep query** passes the visitor's query string on.
-- Matching is on the path only, never regexes. An exact rule wins, then the longest wildcard. A trailing slash and the case of percent-escapes don't matter; the case of letters does.
+- Matching is on the path only, never regexes. An exact rule wins, then rules with variables (more fixed segments first), then the longest wildcard. A trailing slash and the case of percent-escapes don't matter; the case of letters does.
 - Redirects apply to `GET` and `HEAD` requests, and never to the CMS's own routes (`/_vibe`).
 - A relative target takes on the visitor's trailing slash, so a site that uses `/about/` isn't redirected twice.
 

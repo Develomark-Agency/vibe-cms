@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkRule, covers, documentUrl, findLoop, normalizePath, RedirectError, RedirectIndex, resolveRedirect, type MatchRule } from "../src/redirects.ts";
+import { checkRule, covers, variablesOf, documentUrl, findLoop, normalizePath, RedirectError, RedirectIndex, resolveRedirect, type MatchRule } from "../src/redirects.ts";
 
 function rule(from: string, to: string, extra: Partial<MatchRule> = {}): MatchRule {
   return { id: `r_${from}`, from, to, status: 301, keepQuery: true, ...extra };
@@ -117,4 +117,63 @@ describe("documentUrl", () => {
     expect(documentUrl({ preview: "https://x.test/{slug}" }, false, { slug: "x" }, "id", "en")).toBeNull();
     expect(documentUrl({ preview: "/posts/{slug}" }, false, {}, "id", "en")).toBeNull();
   });
+});
+
+describe("variables", () => {
+  const rules = [rule("/hello/{segA}/goodbye/{segB}", "/bye/{segB}/{segA}?from={segA}&to={segB}")];
+
+  test("fill the target's path and query", () => {
+    expect(go(rules, "/hello/one/goodbye/two")?.location).toBe("/bye/two/one?from=one&to=two");
+    expect(go(rules, "/hello/one/goodbye/two/")?.location).toBe("/bye/two/one?from=one&to=two");
+    expect(go(rules, "/hello/one/goodbye/two?x=1")?.location).toBe("/bye/two/one?from=one&to=two&x=1");
+  });
+
+  test("a variable is one whole segment", () => {
+    expect(go(rules, "/hello/one/goodbye")).toBeNull();
+    expect(go(rules, "/hello/a/b/goodbye/two")).toBeNull();
+    expect(go(rules, "/hello//goodbye/two")?.location).toBeUndefined();
+  });
+
+  test("percent-escapes pass through as they came", () => {
+    expect(go([rule("/p/{id}", "/q?id={id}")], "/p/caf%c3%a9")?.location).toBe("/q?id=caf%C3%A9");
+  });
+
+  test("order: exact, then variables (more fixed segments first), then wildcards", () => {
+    const all = [rule("/a/*", "/wild/*"), rule("/a/{x}", "/var/{x}"), rule("/a/{x}/b", "/deep/{x}"), rule("/a/fixed", "/exact")];
+    expect(go(all, "/a/fixed")?.location).toBe("/exact");
+    expect(go(all, "/a/q")?.location).toBe("/var/q");
+    expect(go(all, "/a/q/b")?.location).toBe("/deep/q");
+    expect(go(all, "/a/q/c")?.location).toBe("/wild/q/c");
+  });
+
+  test("with a wildcard after, and absolute targets", () => {
+    expect(go([rule("/s/{lang}/*", "https://example.com/{lang}/*")], "/s/fr/a/b")?.location).toBe("https://example.com/fr/a/b");
+  });
+
+  test("checks: declared names only, whole segments, no repeats", () => {
+    function check(from: string, to: string) {
+      return checkRule({ from, to }, "/_vibe");
+    }
+    expect(check("/p/{id}", "/q/{id}")).toMatchObject({ from: "/p/{id}", to: "/q/{id}" });
+    expect(() => check("/p/{id}", "/q/{other}")).toThrow(/isn't in “from”. Available: \{id\}/);
+    expect(() => check("/p", "/q/{id}")).toThrow(/no variables/);
+    expect(() => check("/p-{id}", "/q")).toThrow(/whole segment/);
+    expect(() => check("/p/{id}/{id}", "/q")).toThrow(/twice/);
+    expect(() => check("/p/{id}", "/q/{id")).toThrow(/complete/);
+    expect(() => check("/p/{id}", "/p/{id}")).toThrow(/same/);
+    expect(variablesOf("/a/{x}/b/{y}")).toEqual(["x", "y"]);
+  });
+
+  test("loops through variables, and covers", () => {
+    expect(findLoop([rule("/a/{x}", "/b/{x}")], rule("/b/{y}", "/a/{y}"))).not.toBeNull();
+    expect(findLoop([rule("/a/{x}", "/b/{x}")], rule("/c/{y}", "/d/{y}"))).toBeNull();
+    expect(covers("/a/{x}/b", "/a/q/b")).toBe(true);
+    expect(covers("/a/{x}/b", "/a/q")).toBe(false);
+  });
+});
+
+test("rules without variables behave exactly as before", () => {
+  expect(go([rule("/a/b", "/c")], "/a/x")).toBeNull();
+  expect(go([rule("/blog/*", "/news/*")], "/blog/x$&y")?.location).toBe("/news/x$&y");
+  expect(checkRule({ from: "/a/*", to: "/b/*" }, "/_vibe")).toEqual({ from: "/a/*", to: "/b/*", status: 301, keepQuery: true });
 });

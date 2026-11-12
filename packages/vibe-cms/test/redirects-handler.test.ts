@@ -136,6 +136,15 @@ describe("rules", () => {
     expect((await t.visit("/Old")).status).toBe(200);
   });
 
+  test("variables are served, with the query kept", async () => {
+    const made = await add("/hello/{segA}/goodbye/{segB}", "/bye/{segB}?a={segA}", { status: 302 });
+    expect(made.status).toBe(201);
+    const hit = await t.visit("/hello/x/goodbye/y?z=1");
+    expect(hit.status).toBe(302);
+    expect(hit.headers.get("location")).toBe("/bye/y?a=x&z=1");
+    expect((await add("/p/{id}", "/q/{nope}")).status).toBe(400);
+  });
+
   test("refuses duplicates and loops", async () => {
     await add("/a", "/b");
     expect((await add("/a", "/c")).status).toBe(409);
