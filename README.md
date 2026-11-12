@@ -64,15 +64,19 @@ In `examples/blog`: `bun run build` runs the production build (the same `astro b
 // vibe-cms.config.ts
 export default defineConfig({
   locales: ["en", "fr"],
-  schemas: {
-    post: v.object({
-      title: v.text({ min: 1 }),
-      slug: v.text({ indexed: true, format: "slug" }),
-      author: v.ref("author"),
-      cover: v.optional(image({ minWidth: 1200 })),
-      body: richText(),
-    }),
-    author: v.object({ name: v.text() }),
+  collections: {
+    post: {
+      icon: "newspaper",
+      preview: "/posts/{slug}",
+      schema: v.object({
+        title: v.text({ min: 1 }),
+        slug: v.text({ indexed: true, format: "slug" }),
+        author: v.ref("author"),
+        cover: v.optional(image({ minWidth: 1200 })),
+        body: richText(),
+      }),
+    },
+    author: { schema: v.object({ name: v.text() }) },
   },
 });
 ```

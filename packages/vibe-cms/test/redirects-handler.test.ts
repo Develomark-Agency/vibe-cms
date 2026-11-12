@@ -7,18 +7,22 @@ import v from "../src/schema/index.ts";
 import { createD1, ctx } from "./helpers.ts";
 
 const config = defineConfig({
-  schemas: {
-    page: v.object({
-      title: v.text({ min: 1 }),
-      path: v.text({ format: "path", indexed: true, unique: true })
-    }),
-    post: v.object({
-      title: v.text({ min: 1 }),
-      slug: v.text({ format: "slug", indexed: true, unique: true })
-    }),
-    note: v.object({ title: v.text({ min: 1 }) })
-  },
-  collections: { post: { url: "/blog/{slug}" } }
+  collections: {
+    page: {
+      schema: v.object({
+        title: v.text({ min: 1 }),
+        path: v.text({ format: "path", indexed: true, unique: true })
+      })
+    },
+    post: {
+      url: "/blog/{slug}",
+      schema: v.object({
+        title: v.text({ min: 1 }),
+        slug: v.text({ format: "slug", indexed: true, unique: true })
+      })
+    },
+    note: { schema: v.object({ title: v.text({ min: 1 }) }) }
+  }
 });
 
 const roles = {

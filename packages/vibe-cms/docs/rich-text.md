@@ -4,11 +4,13 @@ The `richText()` field from `vibe-cms/rich-text`: what it stores, its editor opt
 
 ```ts
 // examples/schemas/src/presets.ts
-    post: v.object({
-      title: v.text(),
-      // Rich text is an array of blocks and inline nodes, edited with a Tiptap widget.
-      body: richText(),
-      teaser: v.optional(richText({ toolbar: "minimal" })),
+    post: {
+      schema: v.object({
+        title: v.text(),
+        // Rich text is an array of blocks and inline nodes, edited with a Tiptap widget.
+        body: richText(),
+        teaser: v.optional(richText({ toolbar: "minimal" })),
+        // A block list as a field of your own.
 ```
 
 `richText(options)` is an ordinary `v.array` of block nodes with a Tiptap editor as its widget, so drafts, validation, versions, translations and queries need nothing special.

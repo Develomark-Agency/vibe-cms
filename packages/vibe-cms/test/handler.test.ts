@@ -693,7 +693,7 @@ describe("site settings", () => {
 
   test("each database is its own site, with an ID made once and kept", async () => {
     function site(env: { DB: ReturnType<typeof createD1> }) {
-      return createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { bindings: (e: typeof env) => ({ db: e.DB }) }).site(env);
+      return createHandler(defineConfig({ collections: { page: { schema: v.object({ title: v.text() }) } } }), { bindings: (e: typeof env) => ({ db: e.DB }) }).site(env);
     }
     const env = { DB: createD1() };
     const { id } = await site(env);
@@ -704,7 +704,7 @@ describe("site settings", () => {
 
   test("without an icon, the site's own favicon shows, found through its handler", async () => {
     const env = { DB: createD1() };
-    const vibe = createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { bindings: (e: typeof env) => ({ db: e.DB }) });
+    const vibe = createHandler(defineConfig({ collections: { page: { schema: v.object({ title: v.text() }) } } }), { bindings: (e: typeof env) => ({ db: e.DB }) });
     let homes = 0;
     const worker = vibe({
       fetch: async request => {
@@ -732,7 +732,7 @@ describe("site settings", () => {
   test("falls back to /favicon.ico, and to nothing", async () => {
     async function favicon(files: Record<string, string>) {
       const env = { DB: createD1() };
-      const vibe = createHandler(defineConfig({ schemas: { page: v.object({ title: v.text() }) } }), { bindings: (e: typeof env) => ({ db: e.DB }) });
+      const vibe = createHandler(defineConfig({ collections: { page: { schema: v.object({ title: v.text() }) } } }), { bindings: (e: typeof env) => ({ db: e.DB }) });
       const worker = vibe({
         fetch: async request => {
           const type = files[new URL(request.url).pathname];
@@ -757,8 +757,8 @@ describe("site settings", () => {
 });
 
 describe("content stored under an older schema", () => {
-  const before = defineConfig({ schemas: { post: v.object({ title: v.text(), cover: v.optional(v.text({ format: "url" })), views: v.optional(v.number()) }) } });
-  const after = defineConfig({ schemas: { post: v.object({ title: v.text(), cover: v.optional(image()), views: v.optional(v.number()), subtitle: v.text() }) } });
+  const before = defineConfig({ collections: { post: { schema: v.object({ title: v.text(), cover: v.optional(v.text({ format: "url" })), views: v.optional(v.number()) }) } } });
+  const after = defineConfig({ collections: { post: { schema: v.object({ title: v.text(), cover: v.optional(image()), views: v.optional(v.number()), subtitle: v.text() }) } } });
 
   async function publishedUnderOldSchema() {
     const env = { DB: createD1(), MEDIA: createR2() };

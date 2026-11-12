@@ -8,16 +8,18 @@ import { createD1, ctx } from "./helpers.ts";
 /** Pages editors set to "Hide from search results" get `X-Robots-Tag: noindex`. */
 
 const config = defineConfig({
-  schemas: {
-    page: pageSchema(),
-    post: v.object({
-      title: v.text({ min: 1 }),
-      slug: v.text({ format: "slug", indexed: true, unique: true }),
-      visibility: v.optional(v.enum(["public", "noindex"]))
-    }),
-    note: v.object({ title: v.text({ min: 1 }) })
-  },
-  collections: { post: { url: "/blog/{slug}" } }
+  collections: {
+    page: { schema: pageSchema() },
+    post: {
+      url: "/blog/{slug}",
+      schema: v.object({
+        title: v.text({ min: 1 }),
+        slug: v.text({ format: "slug", indexed: true, unique: true }),
+        visibility: v.optional(v.enum(["public", "noindex"]))
+      })
+    },
+    note: { schema: v.object({ title: v.text({ min: 1 }) }) }
+  }
 });
 
 function setup() {

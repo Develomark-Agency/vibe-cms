@@ -1,8 +1,8 @@
 # Config
 
-Every option `defineConfig` takes, how collections appear in the editor, and and where the site's identity (ID, name, accent, icon) lives instead.
+Every option `defineConfig` takes, how collections are declared and appear in the editor, and where the site's identity (ID, name, accent, icon) lives instead.
 
-The config is the default export of `vibe-cms.config.ts`. `defineConfig` checks its strings against its own schemas at the type level: collection keys, `title` fields, `preview` placeholders, icons, role rules, locales and `v.ref()` targets are all type errors when wrong.
+The config is the default export of `vibe-cms.config.ts`. Each content type is a collection: its schema, with its editor settings beside it. `defineConfig` checks the config's strings at the type level: a collection's `title` and `preview` placeholders against its own schema, and icons, role rules, locales and `v.ref()` targets, are all type errors when wrong.
 
 ```ts
 import { defineConfig } from "vibe-cms";
@@ -10,11 +10,12 @@ import v from "vibe-cms/schema";
 
 export default defineConfig({
   locales: ["en", "fr"],
-  schemas: {
-    post: v.object({ title: v.text(), slug: v.text({ format: "slug", unique: true }) })
-  },
   collections: {
-    post: { icon: "newspaper", preview: "/posts/{slug}" }
+    post: {
+      icon: "newspaper",
+      preview: "/posts/{slug}",
+      schema: v.object({ title: v.text(), slug: v.text({ format: "slug", unique: true }) })
+    }
   }
 });
 ```
@@ -23,8 +24,7 @@ export default defineConfig({
 
 | Option | Default | What |
 |---|---|---|
-| `schemas` | (required) | Content types: name → `v.object({…})`. Names start with a letter; letters, digits, `_` and `-`. See `vibe-cms docs schemas`. |
-| `collections` | `{}` | Editor settings per content type (below). |
+| `collections` | (required) | Content types: name → `{ schema, …settings }` (below). Names start with a letter; letters, digits, `_` and `-`. See `vibe-cms docs schemas`. |
 | `plugins` | `[]` | Plugin descriptors, e.g. `[SearchPlugin({ … })]`. See `vibe-cms docs plugins`. |
 | `locales` | `[defaultLocale]` | Locales documents can be translated into. See `vibe-cms docs localization`. |
 | `defaultLocale` | first of `locales`, else `"en"` | The locale reads fall back to. |
@@ -34,21 +34,48 @@ The config object is also how site code reaches content types: `config.schemas.p
 
 ## Collections
 
-`collections` controls how each content type looks in the editor. None of it changes what's stored.
+Each collection takes its `schema` (`v.object({…})`, see `vibe-cms docs schemas`) and settings that control how the content type looks in the editor. The settings don't change what's stored.
 
 ```ts
 // examples/schemas/src/collections.ts
   collections: {
-    // `title` names the text field shown in lists; `preview` is where the draft preview opens it.
-    article: { label: "Articles", icon: "newspaper", title: "headline", preview: "/articles/{slug}" },
-    faq: { label: "FAQ", icon: "message-square", title: "question" },
-    // One document only: the editor opens it directly instead of listing documents.
-    settings: { label: "Site content", icon: "settings", singleton: true }
+    article: {
+      // `title` names the text field shown in lists; `preview` is where the draft preview opens it.
+      label: "Articles",
+      icon: "newspaper",
+      title: "headline",
+      preview: "/articles/{slug}",
+      schema: v.object({
+        headline: v.text({ min: 1 }),
+        slug: v.text({ format: "slug", unique: true }),
+        body: v.text({ multiline: true })
+      })
+    },
+    faq: {
+      label: "FAQ",
+      icon: "message-square",
+      title: "question",
+      schema: v.object({
+        question: v.text(),
+        answer: v.text({ multiline: true })
+      })
+    },
+    settings: {
+      label: "Site content",
+      icon: "settings",
+      // One document only: the editor opens it directly instead of listing documents.
+      singleton: true,
+      schema: v.object({
+        footerText: v.optional(v.text()),
+        newsletterUrl: v.optional(v.text({ format: "url" }))
+      })
+    }
   }
 ```
 
 | Setting | What |
 |---|---|
+| `schema` | (required) The stored shape: `v.object({…})`. |
 | `label` | Name in the editor's navigation. Defaults to the content type's name. |
 | `icon` | An icon from the editor's set (`newspaper`, `user`, `home`, `layout`, `settings`, …; the type lists them all). |
 | `title` | Text field used as the document title in lists. Defaults to the first text field. |

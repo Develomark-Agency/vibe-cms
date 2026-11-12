@@ -90,7 +90,9 @@ const ToolsPlugin = definePlugin()(() => ({
 export function site(org = ORG, siteEnv: Record<string, unknown> = {}) {
   const config = defineConfig({
     plugins: [ToolsPlugin()],
-    schemas: { post: v.object({ title: v.text() }) }
+    collections: {
+      post: { schema: v.object({ title: v.text() }) }
+    }
   });
   const vibe = createHandler(config, { dev: false, bindings: (env: { DB: ReturnType<typeof createD1> }) => ({ db: env.DB }) });
   const env = { DB: createD1({ roles: { editor: { post: ["read", "write", "publish"] } } }), VIBE_ORG: org, ...siteEnv };

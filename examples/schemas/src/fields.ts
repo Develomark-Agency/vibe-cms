@@ -33,5 +33,7 @@ export const event = v.object({
 });
 
 export default defineConfig({
-  schemas: { event }
+  collections: {
+    event: { schema: event }
+  }
 });

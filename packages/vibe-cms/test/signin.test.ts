@@ -12,7 +12,9 @@ import { Authenticator } from "./webauthn.ts";
 const ORIGIN = "https://client.test";
 
 const config = defineConfig({
-  schemas: { post: v.object({ title: v.text() }) }
+  collections: {
+    post: { schema: v.object({ title: v.text() }) }
+  }
 });
 
 /** `users`: people already given roles on the Users page, by email. */

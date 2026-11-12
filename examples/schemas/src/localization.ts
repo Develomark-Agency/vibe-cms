@@ -6,12 +6,14 @@ import v from "vibe-cms/schema";
 export default defineConfig({
   locales: ["en", "fr", "de"],
   defaultLocale: "en",
-  schemas: {
-    page: v.object({
-      title: v.text({ min: 1 }),
-      path: v.text({ format: "path", unique: true }),
-      body: v.text({ multiline: true })
-    })
+  collections: {
+    page: {
+      schema: v.object({
+        title: v.text({ min: 1 }),
+        path: v.text({ format: "path", unique: true }),
+        body: v.text({ multiline: true })
+      })
+    }
   }
 });
 

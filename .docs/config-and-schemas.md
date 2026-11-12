@@ -13,12 +13,14 @@ import { ExamplePlugin } from "./plugins/example-plugin";
 export default defineConfig({
   plugins: [ExamplePlugin()],
   locales: ["en", "fr"],
-  schemas: {
-    post: v.object({
-      title: v.text(),
-      subtitle: v.optional(v.text()),
-      body: v.text({ widget: RichEditor() }),
-    }),
+  collections: {
+    post: {
+      schema: v.object({
+        title: v.text(),
+        subtitle: v.optional(v.text()),
+        body: v.text({ widget: RichEditor() }),
+      }),
+    },
   },
 });
 ```
@@ -79,7 +81,7 @@ const post = v.object({
 Content types are inferred:
 
 ```ts
-type Post = v.Infer<typeof config.schemas.post>;
+type Post = v.Infer<typeof config.schemas.post>; // `schemas` holds the collections you query, built from each collection's `schema`
 ```
 
 `v.ref()` and `v.asset()` are core because the engine needs to see references for integrity checks and for `with:` expansion in queries.
@@ -110,11 +112,13 @@ export const richText = (opts?: RichEditorOptions) =>
 Used in a config:
 
 ```ts
-schemas: {
-  post: v.object({
-    title: v.text(),
-    body: richText({ toolbar: "minimal" }),
-  }),
+collections: {
+  post: {
+    schema: v.object({
+      title: v.text(),
+      body: richText({ toolbar: "minimal" }),
+    }),
+  },
 }
 ```
 

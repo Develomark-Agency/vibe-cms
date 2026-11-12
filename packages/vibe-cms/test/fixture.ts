@@ -20,23 +20,27 @@ export const roles: Record<string, RoleRules> = {
 export const config = defineConfig({
   locales: ["en", "fr"],
   plugins: [AuditPlugin({ tag: "t" })],
-  schemas: {
-    author: v.object({
-      name: v.text({ min: 1 }),
-      email: v.optional(v.text({ format: "email" }))
-    }),
-    post: v.object({
-      title: v.text({ min: 1, max: 120 }),
-      slug: v.text({ indexed: true, format: "slug", unique: true }),
-      publishedAt: v.optional(v.date({ indexed: true })),
-      tags: v.array(v.text()),
-      layout: v.enum(["default", "wide"]),
-      author: v.optional(v.ref("author")),
-      related: v.optional(v.array(v.ref("post"))),
-      cover: v.optional(image({ minWidth: 100 })),
-      seo: v.optional(v.object({ description: v.text({ max: 160 }) })),
-      // Derived by the audit plugin on every write.
-      searchText: v.optional(v.text({ hidden: true }))
-    })
+  collections: {
+    author: {
+      schema: v.object({
+        name: v.text({ min: 1 }),
+        email: v.optional(v.text({ format: "email" }))
+      })
+    },
+    post: {
+      schema: v.object({
+        title: v.text({ min: 1, max: 120 }),
+        slug: v.text({ indexed: true, format: "slug", unique: true }),
+        publishedAt: v.optional(v.date({ indexed: true })),
+        tags: v.array(v.text()),
+        layout: v.enum(["default", "wide"]),
+        author: v.optional(v.ref("author")),
+        related: v.optional(v.array(v.ref("post"))),
+        cover: v.optional(image({ minWidth: 100 })),
+        seo: v.optional(v.object({ description: v.text({ max: 160 }) })),
+        // Derived by the audit plugin on every write.
+        searchText: v.optional(v.text({ hidden: true }))
+      })
+    }
   }
 });

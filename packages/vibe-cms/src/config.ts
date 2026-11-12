@@ -93,12 +93,16 @@ export interface CollectionSettings<S = ObjectSchema<any>> {
   url?: string | ((doc: Record<string, any>, context: { id: string, locale: string }) => string | null | undefined)
 }
 
+/** A content type as `defineConfig` takes it: its schema, with its editor settings beside it. */
+export interface CollectionInput<S extends ObjectSchema<any> = ObjectSchema<any>> extends CollectionSettings<S> {
+  /** The stored shape: `v.object({…})`. */
+  schema: S
+}
+
 /** What `defineConfig` takes. See `vibe-cms docs config`. */
 export interface ConfigInput {
-  /** Content types: name → `v.object({…})`. `config.schemas.<name>` is then the collection you query. */
-  schemas: Record<string, ObjectSchema<any>>,
-  /** Editor settings per content type. */
-  collections?: Record<string, CollectionSettings<any>>,
+  /** Content types: name → schema and editor settings. `config.schemas.<name>` is then the collection you query. */
+  collections: Record<string, CollectionInput<any>>,
   /** Plugin descriptors, e.g. `[SearchPlugin({ … })]`. See `vibe-cms docs plugins`. */
   plugins?: ReadonlyArray<PluginDescriptor<any, any, any>>,
   /** Locales documents can be translated into. Defaults to `[defaultLocale]`. See `vibe-cms docs localization`. */
@@ -149,12 +153,16 @@ export type Collection<N extends string = string, S extends ObjectSchema<any> = 
 
 /** `config.schemas`: a collection per content type. */
 export type Collections<C extends ConfigInput> = {
-  readonly [K in keyof C["schemas"] & string]: Collection<K, C["schemas"][K]>
+  readonly [K in keyof C["collections"] & string]: Collection<K, C["collections"][K]["schema"]>
 };
 
-/** What `defineConfig` returns: the input with `schemas` turned into collections. Pass `typeof config` to typed APIs. */
-export type Config<C extends ConfigInput = ConfigInput> = Omit<C, "schemas"> & {
+/**
+ * What `defineConfig` returns: `schemas` holds the collections you query, `collections` the editor settings.
+ * Pass `typeof config` to typed APIs.
+ */
+export type Config<C extends ConfigInput = ConfigInput> = Omit<C, "collections"> & {
   readonly schemas: Collections<C>,
+  readonly collections: { readonly [K in keyof C["collections"]]: Omit<C["collections"][K], "schema"> },
   readonly "~config": true
 };
 
@@ -163,9 +171,8 @@ export type AnyConfig = Config<ConfigInput>;
 
 // --- Checks that tie the config's strings to its own schemas ----------------------
 
-type Types<C extends ConfigInput> = keyof C["schemas"] & string;
+type Types<C extends ConfigInput> = keyof C["collections"] & string;
 type Locales<C> = C extends { locales: ReadonlyArray<infer L extends string> } ? L : string;
-type Extra<T, Allowed> = { [K in Exclude<keyof T, Allowed>]: never };
 
 /** Every content type a `v.ref("...")` anywhere in a schema points at. */
 type RefTargets<S> =
@@ -177,7 +184,7 @@ type RefTargets<S> =
             : S extends ObjectSchema<infer Sh> ? { [K in keyof Sh]: RefTargets<Sh[K]> }[keyof Sh]
               : never;
 
-type UnknownRefTargets<C extends ConfigInput> = Exclude<{ [K in Types<C>]: RefTargets<C["schemas"][K]> }[Types<C>], Types<C>>;
+type UnknownRefTargets<C extends ConfigInput> = Exclude<{ [K in Types<C>]: RefTargets<C["collections"][K]["schema"]> }[Types<C>], Types<C>>;
 
 type Placeholders<T> = T extends `${string}{${infer K}}${infer Rest}` ? K | Placeholders<Rest> : never;
 type FieldKeys<S> = S extends ObjectSchema<infer Sh> ? keyof Sh & string : string;
@@ -188,30 +195,33 @@ type CheckPreview<T, S> = [Exclude<Placeholders<T>, FieldKeys<S> | "id" | "local
   : `Unknown field in preview: {${Exclude<Placeholders<T>, FieldKeys<S> | "id" | "locale"> & string}}`;
 
 type CollectionChecks<C extends ConfigInput> = {
-  [K in Types<C>]?: CollectionSettings<C["schemas"][K]> & {
-    preview?: CheckPreview<NonNullable<NonNullable<C["collections"]>[K]>["preview"], C["schemas"][K]>
+  [K in Types<C>]: CollectionSettings<C["collections"][K]["schema"]> & {
+    preview?: CheckPreview<C["collections"][K]["preview"], C["collections"][K]["schema"]>
   }
 };
 
 type ConfigChecks<C extends ConfigInput> = {
-  collections?: CollectionChecks<C> & Extra<C["collections"], Types<C>>,
+  collections?: CollectionChecks<C>,
   defaultLocale?: Locales<C>
 } & ([UnknownRefTargets<C>] extends [never] ? {} : {
-  "~error": `v.ref("${UnknownRefTargets<C> & string}") points at a content type that isn't in schemas`
+  "~error": `v.ref("${UnknownRefTargets<C> & string}") points at a content type that isn't in collections`
 });
 
 /**
- * Defines the site: content types, editor settings, plugins and locales.
+ * Defines the site: content types (each a schema with its editor settings), plugins and locales.
  * The default export of `vibe-cms.config.ts`, imported by the Worker and the editor, so
- * keep it to schemas and descriptors. Strings that name schemas (collection keys, `title`,
- * `preview` placeholders, `v.ref()` targets, locales) are checked at the type level.
+ * keep it to schemas and descriptors. Strings that name a collection's fields (`title`,
+ * `preview` placeholders), `v.ref()` targets and locales are checked at the type level.
  * See `vibe-cms docs config`.
  */
 export function defineConfig<const C extends ConfigInput>(input: C & ConfigChecks<C>): Config<C> {
   const schemas: Record<string, Collection> = {};
-  for(const [name, schema] of Object.entries(input.schemas)) {
+  const collections: Record<string, Omit<CollectionInput, "schema">> = {};
+  for(const [name, { schema, ...settings }] of Object.entries(input.collections)) {
     if(!/^[a-zA-Z][\w-]*$/.test(name)) throw new Error(`vibe-cms: invalid content type name "${name}"`);
+    if(!schema) throw new Error(`vibe-cms: content type "${name}" has no schema`);
     schemas[name] = createCollection(name, schema);
+    collections[name] = settings;
   }
   const locales = input.locales?.length ? input.locales : [input.defaultLocale ?? "en"];
   setBreakpoints(input.media?.breakpoints);
@@ -219,6 +229,7 @@ export function defineConfig<const C extends ConfigInput>(input: C & ConfigCheck
     ...input,
     locales,
     defaultLocale: input.defaultLocale ?? locales[0],
+    collections,
     schemas,
     "~config": true
   } as unknown as Config<C>;

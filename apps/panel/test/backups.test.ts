@@ -60,7 +60,9 @@ const archive = bucket();
 
 function backupSite(origin: string) {
   const config = defineConfig({
-    schemas: { post: v.object({ title: v.text() }) }
+    collections: {
+      post: { schema: v.object({ title: v.text() }) }
+    }
   });
   const siteEnv = { DB: createD1({ roles: { editor: { post: ["read", "write", "publish"] }, ops: { post: ["read"], backups: true } } }), MEDIA: createR2(), VIBE_ORG: ORG };
   // Development mode only so the test can seed content with a dev session; panel users still sign in through the hub.

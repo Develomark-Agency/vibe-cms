@@ -11,7 +11,9 @@ import { Authenticator } from "./webauthn.ts";
 const ORIGIN = "https://client.test";
 
 const config = defineConfig({
-  schemas: { post: v.object({ title: v.text() }) }
+  collections: {
+    post: { schema: v.object({ title: v.text() }) }
+  }
 });
 
 function site(vars: Record<string, string> = {}) {

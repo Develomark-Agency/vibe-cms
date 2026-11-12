@@ -9,13 +9,15 @@ import { image } from "vibe-cms/media";
 import v from "vibe-cms/schema";
 
 export default defineConfig({
-  schemas: {
-    post: v.object({
-      title: v.text({ min: 1 }),
-      slug: v.text({ format: "slug", unique: true }),
-      cover: v.optional(image()),
-      body: v.text({ multiline: true })
-    })
+  collections: {
+    post: {
+      schema: v.object({
+        title: v.text({ min: 1 }),
+        slug: v.text({ format: "slug", unique: true }),
+        cover: v.optional(image()),
+        body: v.text({ multiline: true })
+      })
+    }
   }
 });
 ```

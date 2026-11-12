@@ -26,15 +26,17 @@ test("widgets are typed against field values", () => {
 
 test("content types are inferred from the config", () => {
   const config = defineConfig({
-    schemas: {
-      post: v.object({
-        title: v.text(),
-        subtitle: v.optional(v.text()),
-        layout: v.enum(["default", "wide"]),
-        author: v.ref("author"),
-        cover: image()
-      }),
-      author: v.object({ name: v.text() })
+    collections: {
+      post: {
+        schema: v.object({
+          title: v.text(),
+          subtitle: v.optional(v.text()),
+          layout: v.enum(["default", "wide"]),
+          author: v.ref("author"),
+          cover: image()
+        })
+      },
+      author: { schema: v.object({ name: v.text() }) }
     }
   });
   type Post = Infer<typeof config.schemas.post>;
@@ -50,7 +52,7 @@ test("content types are inferred from the config", () => {
 test("plugin binding contracts flow into createHandler", () => {
   interface KV { get(key: string): Promise<string | null> }
   const Search = definePlugin<{ cache: KV }>()(() => ({ name: "search", options: {} }));
-  const config = defineConfig({ plugins: [Search()], schemas: { post: v.object({ title: v.text() }) } });
+  const config = defineConfig({ plugins: [Search()], collections: { post: { schema: v.object({ title: v.text() }) } } });
   const db = {} as D1;
   const cache = {} as KV;
   createHandler(config, { bindings: () => ({ db, search: { cache } }) });
@@ -62,9 +64,9 @@ test("plugin binding contracts flow into createHandler", () => {
 test("hooks are typed per content type when given the site's config", () => {
   const Audit = definePlugin()(() => ({ name: "audit", options: {} }));
   const site = defineConfig({
-    schemas: {
-      post: v.object({ title: v.text(), words: v.optional(v.number({ readOnly: true })) }),
-      author: v.object({ name: v.text() })
+    collections: {
+      post: { schema: v.object({ title: v.text(), words: v.optional(v.number({ readOnly: true })) }) },
+      author: { schema: v.object({ name: v.text() }) }
     }
   });
   defineServer<typeof Audit, typeof site>(() => ({
@@ -89,37 +91,36 @@ test("hooks are typed per content type when given the site's config", () => {
   expect(true).toBe(true);
 });
 
-test("config strings are checked against the config's own schemas", () => {
-  const schemas = {
-    post: v.object({ title: v.text(), slug: v.text(), views: v.number(), author: v.ref("author") }),
-    author: v.object({ name: v.text() })
-  };
+test("a collection's settings are checked against its own schema", () => {
+  const post = v.object({ title: v.text(), slug: v.text(), views: v.number(), author: v.ref("author") });
+  const author = v.object({ name: v.text() });
   defineConfig({
     locales: ["en", "fr"],
     defaultLocale: "fr",
-    schemas,
     collections: {
-      post: { title: "title", icon: "newspaper", preview: "/{locale}/posts/{slug}" },
-      author: { icon: "user-round" }
+      post: { title: "title", icon: "newspaper", preview: "/{locale}/posts/{slug}", schema: post },
+      author: { icon: "user-round", schema: author }
     }
   });
   // @ts-expect-error not an icon
-  defineConfig({ schemas, collections: { post: { icon: "ajlkwerjawl" } } });
+  defineConfig({ collections: { author: { icon: "ajlkwerjawl", schema: author } } });
   // @ts-expect-error `views` is a number, not a text field
-  defineConfig({ schemas, collections: { post: { title: "views" } } });
+  defineConfig({ collections: { post: { title: "views", schema: post }, author: { schema: author } } });
   // @ts-expect-error `slugg` isn't a field
-  defineConfig({ schemas, collections: { post: { preview: "/posts/{slugg}" } } });
-  // @ts-expect-error "pots" isn't a content type
-  defineConfig({ schemas, collections: { pots: { icon: "file" } } });
+  defineConfig({ collections: { post: { preview: "/posts/{slugg}", schema: post }, author: { schema: author } } });
+  // @ts-expect-error `title` isn't a field of authors, even though it is one of posts
+  defineConfig({ collections: { post: { schema: post }, author: { title: "title", schema: author } } });
+  // @ts-expect-error a collection needs its schema
+  expect(() => defineConfig({ collections: { author: { icon: "user-round" } } })).toThrow('content type "author" has no schema');
   // @ts-expect-error "de" isn't one of the locales
-  defineConfig({ locales: ["en", "fr"], defaultLocale: "de", schemas });
+  defineConfig({ locales: ["en", "fr"], defaultLocale: "de", collections: { author: { schema: author } } });
   // @ts-expect-error v.ref("authr") points at nothing
-  defineConfig({ schemas: { post: v.object({ author: v.ref("authr") }), author: v.object({ name: v.text() }) } });
+  defineConfig({ collections: { post: { schema: v.object({ author: v.ref("authr") }) }, author: { schema: author } } });
   expect(true).toBe(true);
 });
 
 test("query locales are the site's locales", () => {
-  const site = defineConfig({ locales: ["en", "fr"], schemas: { post: v.object({ title: v.text() }) } });
+  const site = defineConfig({ locales: ["en", "fr"], collections: { post: { schema: v.object({ title: v.text() }) } } });
   const cms = createHandler(site, { bindings: () => ({ db: {} as D1 }) }).client({});
   void cms.query(site.schemas.post).findMany({ locale: "fr" });
   // @ts-expect-error "de" isn't one of the site's locales

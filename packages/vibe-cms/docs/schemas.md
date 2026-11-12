@@ -2,7 +2,7 @@
 
 The `v` schema builder: every field type and option, what's required, how documents are validated, and the TypeScript types you get.
 
-A content type is a `v.object({…})` in the config's `schemas`. The same schema drives storage validation, the editor's form, the API's JSON Schema (`schema.get`) and the types of query results. Import the builder as `v`:
+A content type is a `v.object({…})`, the `schema` of a collection in the config. (`config.schemas.<name>` is then the collection you query.) The same schema drives storage validation, the editor's form, the API's JSON Schema (`schema.get`) and the types of query results. Import the builder as `v`:
 
 ```ts
 import v from "vibe-cms/schema";

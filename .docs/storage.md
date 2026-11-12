@@ -95,7 +95,7 @@ All in scope for v1:
 export default defineConfig({
   locales: ["en", "fr", "de"],
   defaultLocale: "en",
-  schemas: { /* … */ },
+  collections: { /* … */ },
 });
 ```
 

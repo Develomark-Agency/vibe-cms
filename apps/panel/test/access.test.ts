@@ -7,7 +7,13 @@ import { env, idp, installMock, ISSUER, jar, ORG, panel, removeMock, setupToken,
 
 /** A site with no roles of its own yet: what templates are for. */
 function bareSite(origin: string) {
-  const config = defineConfig({ locales: ["en", "fr"], schemas: { post: v.object({ title: v.text() }), page: v.object({ title: v.text() }) } });
+  const config = defineConfig({
+    locales: ["en", "fr"],
+    collections: {
+      post: { schema: v.object({ title: v.text() }) },
+      page: { schema: v.object({ title: v.text() }) }
+    }
+  });
   const vibe = createHandler(config, { dev: false, bindings: (e: { DB: ReturnType<typeof createD1> }) => ({ db: e.DB }) });
   const siteEnv = { DB: createD1(), VIBE_ORG: ORG };
   sites[origin] = request => vibe.handle(request, siteEnv, { waitUntil() {} });

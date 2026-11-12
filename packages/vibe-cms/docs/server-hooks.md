@@ -65,8 +65,8 @@ A derived field must be declared in the schema, or step 4 drops it. Mark it `rea
 
 ```ts
 // examples/plugins/vibe-cms.config.ts
-      // Derived by the slugs plugin on every write: declared so it's kept, read-only so editors can't change it.
-      wordCount: v.optional(v.number({ integer: true, readOnly: true })),
+        // Derived by the slugs plugin on every write: declared so it's kept, read-only so editors can't change it.
+        wordCount: v.optional(v.number({ integer: true, readOnly: true })),
 ```
 
 ### Refuse a write

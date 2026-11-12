@@ -5,9 +5,9 @@ import v from "vibe-cms/schema";
 // VIBE_ORG=my-agency.com. Who may do what isn't in this file either: roles are stored in the
 // site's database and edited on the editor's Roles page. Development sites don't need any.
 export default defineConfig({
-  schemas: {
-    post: v.object({ title: v.text() }),
-    page: v.object({ title: v.text() })
+  collections: {
+    post: { schema: v.object({ title: v.text() }) },
+    page: { schema: v.object({ title: v.text() }) }
   }
 });
 

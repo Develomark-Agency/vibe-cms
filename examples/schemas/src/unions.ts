@@ -10,14 +10,18 @@ const link = v.union([
 ]);
 
 export default defineConfig({
-  schemas: {
-    page: v.object({
-      title: v.text(),
-      path: v.text({ format: "path", unique: true })
-    }),
-    menu: v.object({
-      name: v.text(),
-      items: v.array(v.object({ label: v.text(), link }, { label: "Menu item" }))
-    })
+  collections: {
+    page: {
+      schema: v.object({
+        title: v.text(),
+        path: v.text({ format: "path", unique: true })
+      })
+    },
+    menu: {
+      schema: v.object({
+        name: v.text(),
+        items: v.array(v.object({ label: v.text(), link }, { label: "Menu item" }))
+      })
+    }
   }
 });

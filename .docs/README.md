@@ -45,13 +45,15 @@ import { SearchPlugin } from "@acme/search";
 
 export default defineConfig({
   plugins: [SearchPlugin()],
-  schemas: {
-    post: v.object({
-      title: v.text(),
-      slug: v.text({ indexed: true }),
-      subtitle: v.optional(v.text()),
-      body: richText(),
-    }),
+  collections: {
+    post: {
+      schema: v.object({
+        title: v.text(),
+        slug: v.text({ indexed: true }),
+        subtitle: v.optional(v.text()),
+        body: richText(),
+      }),
+    },
   },
 });
 ```

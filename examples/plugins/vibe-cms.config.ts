@@ -23,18 +23,20 @@ export default defineConfig({
     MediaPlugin({ maxSize: 10_000_000 }),
     CounterPlugin()
   ],
-  schemas: {
-    post: v.object({
-      title: v.text({ min: 1, max: 120 }),
-      // Filled from the title by the slugs plugin when left empty.
-      slug: v.text({ format: "slug", indexed: true }),
-      body: v.text({ multiline: true }),
-      // Derived by the slugs plugin on every write: declared so it's kept, read-only so editors can't change it.
-      wordCount: v.optional(v.number({ integer: true, readOnly: true })),
-      // The rules plugin refuses to delete pinned posts.
-      pinned: v.boolean(),
-      rating: v.optional(v.number({ integer: true, min: 1, max: 5, widget: Rating({ max: 5 }) })),
-      width: v.optional(v.number({ min: 0, max: 100, widget: Slider({ step: 5 }) }))
-    })
+  collections: {
+    post: {
+      schema: v.object({
+        title: v.text({ min: 1, max: 120 }),
+        // Filled from the title by the slugs plugin when left empty.
+        slug: v.text({ format: "slug", indexed: true }),
+        body: v.text({ multiline: true }),
+        // Derived by the slugs plugin on every write: declared so it's kept, read-only so editors can't change it.
+        wordCount: v.optional(v.number({ integer: true, readOnly: true })),
+        // The rules plugin refuses to delete pinned posts.
+        pinned: v.boolean(),
+        rating: v.optional(v.number({ integer: true, min: 1, max: 5, widget: Rating({ max: 5 }) })),
+        width: v.optional(v.number({ min: 0, max: 100, widget: Slider({ step: 5 }) }))
+      })
+    }
   }
 });

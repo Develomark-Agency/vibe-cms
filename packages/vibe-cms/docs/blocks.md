@@ -24,11 +24,16 @@ Use blocks in two ways:
 
 ```ts
 // examples/schemas/src/presets.ts
-      // A block list as a field of your own.
-      sidebar: blocks([Callout], { max: 3 })
-    }),
+        // A block list as a field of your own.
+        sidebar: blocks([Callout], { max: 3 })
+      })
+    },
     // A page with a title, a unique `path`, a search description and blocks (built-ins plus yours).
-    page: pageSchema({ blocks: [Callout] }),
+    page: {
+      title: "title",
+      preview: "{path}",
+      schema: pageSchema({ blocks: [Callout] })
+    },
 ```
 
 - `blocks([...], { label, description, min, max })` is a field: an array of a union told apart by each block's `type`. The editor gives it drag-to-reorder, insertion points and a searchable add menu.

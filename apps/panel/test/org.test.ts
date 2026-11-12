@@ -11,7 +11,9 @@ import { assignRoles, env, HUB, hubOrigins, idp, installMock, ORG, panel, remove
 function orgSite(origin: string, siteEnv: Record<string, string> = {}) {
   const db = createD1({ roles: { admin: { all: true }, editor: { post: ["read", "write", "publish"] } } });
   const config = defineConfig({
-    schemas: { post: v.object({ title: v.text() }) }
+    collections: {
+      post: { schema: v.object({ title: v.text() }) }
+    }
   });
   function deploy(vars: Record<string, string>) {
     const vibe = createHandler(config, { dev: false, bindings: (e: { DB: typeof db }) => ({ db: e.DB }) });

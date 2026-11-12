@@ -17,7 +17,7 @@ The `vibe-cms` CLI (`vibe-cms docs`, `vibe-cms admin`, actions against a site) r
 
 ## 2. Write the config
 
-`vibe-cms.config.ts` at the project root declares the content types. The Vite plugin looks for it there.
+`vibe-cms.config.ts` at the project root declares the content types, each a schema with its editor settings. The Vite plugin looks for it there.
 
 ```ts
 // examples/worker/vibe-cms.config.ts
@@ -26,14 +26,15 @@ import v from "vibe-cms/schema";
 
 export default defineConfig({
   collections: {
-    post: { title: "title", preview: "/posts/{slug}" }
-  },
-  schemas: {
-    post: v.object({
-      title: v.text({ min: 1 }),
-      slug: v.text({ format: "slug", indexed: true, unique: true }),
-      body: v.text({ multiline: true })
-    })
+    post: {
+      title: "title",
+      preview: "/posts/{slug}",
+      schema: v.object({
+        title: v.text({ min: 1 }),
+        slug: v.text({ format: "slug", indexed: true, unique: true }),
+        body: v.text({ multiline: true })
+      })
+    }
   }
 });
 ```
