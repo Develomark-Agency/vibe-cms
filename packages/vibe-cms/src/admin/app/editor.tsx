@@ -379,7 +379,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
       <div className="mx-auto flex max-w-md flex-col items-center gap-3 p-16 text-center">
         <TriangleAlertIcon className="size-8 text-muted-foreground" />
         <h1 className="text-lg font-semibold">{(doc.error as ApiError).status === 404 ? "Document not found" : "Couldn't load this document"}</h1>
-        <p className="text-sm text-muted-foreground">{(doc.error as Error).message}</p>
+        <p className="text-sm text-pretty text-muted-foreground">{(doc.error as ApiError).status === 404 ? "It may have been deleted, or the link may be wrong." : (doc.error as Error).message}</p>
         <Button variant="outline" nativeButton={false} render={<Link to={`/content/${type}`} />}>Back to {collectionLabel(config, type).toLowerCase()}</Button>
       </div>
     );
