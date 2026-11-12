@@ -28,6 +28,7 @@ import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Input } from "../components/ui/input.tsx";
 import { Skeleton } from "../components/ui/skeleton.tsx";
+import { Segmented } from "./segmented.tsx";
 import { Spinner } from "../components/ui/spinner.tsx";
 import { cn } from "../lib/utils.ts";
 import { isActionError } from "../../actions/errors.ts";
@@ -130,14 +131,11 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
   const [onlyChoices, setOnlyChoices] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [scheduling, setScheduling] = useState<string | null>(null);
+  // When it goes out: now, or at a time. The time is kept while you switch back and forth.
+  const [mode, setMode] = useState<"now" | "later">("now");
+  const [when, setWhen] = useState(() => toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)));
   const publishButton = useRef<HTMLButtonElement>(null);
-  const schedulePanel = useRef<HTMLDivElement>(null);
-  const isScheduling = scheduling !== null;
-  // On a phone the sidebar is under the changes: bring the schedule into view when it opens.
-  useEffect(() => {
-    if(isScheduling) schedulePanel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [isScheduling]);
+  const scheduled = mode === "later";
 
   function reset() {
     setUnticked(new Set());
@@ -149,9 +147,19 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
     if(!open) return;
     reset();
     setError(null);
-    setScheduling(null);
+    setMode("now");
     setOnlyChoices(false);
   }, [open]);
+
+  // Already scheduled: start on that time, so changing it is one click away.
+  const existing = doc.data?.schedules.find(item => item.action === "publish");
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if(prefilled.current || !existing) return;
+    prefilled.current = true;
+    setMode("later");
+    setWhen(toLocalInput(new Date(existing.runAt)));
+  }, [existing]);
 
   // The second click: once the changes are in, Enter publishes them.
   useEffect(() => {
@@ -196,7 +204,8 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
     return { branches: owners, skip, resolve };
   }
 
-  async function publish(runAt?: string) {
+  async function publish() {
+    const runAt = scheduled ? new Date(when).toISOString() : undefined;
     setBusy(true);
     setError(null);
     try {
@@ -254,7 +263,10 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
   function discardFor(owner: string) {
     return canPublish || owner === session.user.sub ? () => discard(owner) : undefined;
   }
-  const status = error ?? reason ?? (undecided > 0 ? `${undecided} skipped` : null);
+  // What's waiting on a choice, by field name: "Title", "Title and Body".
+  const waiting = rows.filter(row => row.kind === "choice" && !choices.has(row.id)).map(row => row.outer.label.at(-1) ?? "A field");
+  const waitingNames = waiting.length <= 2 ? waiting.join(" and ") : `${waiting.slice(0, 2).join(", ")} and ${waiting.length - 2} more`;
+  const leftOut = rows.length - chosen.length - undecided;
 
   return (
     <div className="flex min-h-full flex-col">
@@ -270,15 +282,9 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
           </p>
         </div>
         {canPublish && (
-          <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="sm" disabled={busy || reason !== null} aria-label="Schedule"
-              onClick={() => setScheduling(scheduling === null ? toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)) : null)}>
-              <CalendarClockIcon /> <span className="max-sm:hidden">Schedule…</span>
-            </Button>
-            <Button ref={publishButton} size="sm" disabled={busy || reason !== null} onClick={() => void publish()}>
-              {busy && scheduling === null ? <Spinner /> : <CloudUploadIcon />} Publish{chosen.length ? <> {chosen.length}<span className="max-sm:hidden"> {chosen.length === 1 ? "change" : "changes"}</span></> : ""}
-            </Button>
-          </div>
+          <Button ref={publishButton} size="sm" disabled={busy || reason !== null || (scheduled && !when)} onClick={() => void publish()}>
+            {busy ? <Spinner /> : scheduled ? <CalendarClockIcon /> : <CloudUploadIcon />} {scheduled ? "Schedule" : "Publish"}{chosen.length ? <> {chosen.length}<span className="max-sm:hidden"> {chosen.length === 1 ? "change" : "changes"}</span></> : ""}
+          </Button>
         )}
       </header>
 
@@ -335,7 +341,28 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
         {/* Like the editor's sidebar: what's going on, and who. Under the changes on a phone, which come first. */}
         {/* Pinned while the changes scroll, and never taller than the window under the app bar and this header (10.5rem): the people list scrolls instead. */}
         <aside className={cn("flex flex-col gap-4 lg:sticky lg:top-20 lg:max-h-[calc(100dvh-10.5rem)]", arrival)}>
-          {canRedirect && suggestion.data && scheduling === null && (
+          {canPublish && !changes.isPending && rows.length > 0 && (
+            <section className={cn("flex flex-col gap-3 rounded-[16px] p-4 elevated", error && "shadow-[inset_0_0_0_1px] shadow-destructive/30")} aria-label="When">
+              <Segmented<"now" | "later"> fill label="When" value={mode} onChange={setMode} options={[{ value: "now", label: "Publish now" }, { value: "later", label: <><CalendarClockIcon className="size-3.5" /> Schedule</> }]} />
+              {scheduled && (
+                <div className="flex flex-col gap-1.5">
+                  <Input type="datetime-local" value={when} onChange={event => setWhen(event.target.value)} aria-label="When to publish" />
+                  <p className="text-xs text-muted-foreground">The selected changes are captured now. Edits saved after this aren't included.</p>
+                  {existing && <p className="text-xs text-violet-700 dark:text-violet-300">Already scheduled for {formatDate(existing.runAt)}. Scheduling again replaces it.</p>}
+                </div>
+              )}
+              <div className="flex flex-col gap-1.5 text-sm">
+                {error ? <p className="text-destructive">{error}</p> : reason ? <p className="text-muted-foreground">{reason}</p> : (
+                  <p>{counted} will be {scheduled ? `scheduled${when ? ` for ${formatDate(new Date(when).toISOString())}` : ""}` : "published"}.</p>
+                )}
+                {undecided > 0 && (
+                  <p className="text-amber-700 dark:text-amber-400">{waitingNames} {waiting.length === 1 ? "needs" : "need"} a choice. Until you choose, {waiting.length === 1 ? "it stays" : "they stay"} unpublished.</p>
+                )}
+                {(leftOut > 0 || undecided > 0) && <p className="text-xs text-muted-foreground">Anything left out stays saved as unpublished changes.</p>}
+              </div>
+            </section>
+          )}
+          {canRedirect && suggestion.data && !scheduled && (
             <section className="flex flex-col gap-2 rounded-[16px] p-4 elevated" aria-label="Redirect">
               <h3 className="text-sm font-medium">The page's address changes</h3>
               {suggestion.data.exists ? (
@@ -348,24 +375,6 @@ export function ReviewPage({ type, id }: { type: string, id: string }) {
                     <span className="block text-xs text-muted-foreground">So links and search results to the old address keep working.</span>
                   </span>
                 </label>
-              )}
-            </section>
-          )}
-          {(status || scheduling !== null) && canPublish && (
-            <section className={cn("flex flex-col gap-3 rounded-[16px] p-4 elevated", error && "shadow-[inset_0_0_0_1px] shadow-destructive/30")}>
-              {status && <p className={cn("text-sm", error ? "text-destructive" : "text-muted-foreground")}>{status}</p>}
-              {scheduling !== null && (
-                <div className="flex flex-col gap-2" ref={schedulePanel}>
-                  <h3 className="flex items-center gap-1.5 text-sm font-medium text-violet-700 dark:text-violet-300"><CalendarClockIcon className="size-3.5" /> Schedule</h3>
-                  <Input type="datetime-local" value={scheduling} onChange={e => setScheduling(e.target.value)} aria-label="When to publish" />
-                  <p className="text-xs text-muted-foreground">What's selected now is captured; later saves aren't included.</p>
-                  <div className="flex gap-1.5">
-                    <Button size="sm" disabled={busy || reason !== null || !scheduling} onClick={() => void publish(new Date(scheduling).toISOString())}>
-                      {busy ? <Spinner /> : <CalendarClockIcon />} Schedule{chosen.length ? ` ${counted}` : ""}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setScheduling(null)}>Cancel</Button>
-                  </div>
-                </div>
               )}
             </section>
           )}

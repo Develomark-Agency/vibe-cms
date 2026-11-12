@@ -154,3 +154,11 @@ The editor also says when other people have unpublished changes, and has "Discar
 - Whether to show other people's pending changes to a field while you edit it ("Bob also changed this").
 - Whether saves should become versions, so a discarded branch can be recovered.
 - Branches whose owner left the site: who cleans them up.
+
+## Publishing flow (revised)
+
+- One door: the editor's **Review…** opens the review page, which publishes or schedules. The ⋯ menu no longer schedules a publish (its dialog sent no selection, so any conflict was a bare 409); it keeps **Unpublish…** (now or at a time).
+- The review page's side panel always shows **When** (*Publish now* / *Schedule* with an inline date), a status of what will go and what waits on a choice, and the redirect offer in publish-now mode. The header holds the one primary button, which follows the mode.
+- A schedule shows as a banner in the editor: time, the fields it carries (versions differ from live, read from the captured version), and a warning when someone saved after it was captured.
+- Conflict errors from `documents.publish` and `documents.schedule` name the field and the people.
+- Still open: scheduling doesn't yet carry the "also redirect" choice.

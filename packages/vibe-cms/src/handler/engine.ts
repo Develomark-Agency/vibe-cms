@@ -1006,8 +1006,7 @@ export class Engine {
     }
     const result = merge(schema, live, { branches: chosen.map(b => toBranch(schema, b)), ...this.selectionMaps(selection) });
     if(result.unresolved.length) {
-      const conflicting = result.unresolved.some(u => u.status === "conflict");
-      throw new HttpError(409, conflicting ? "Some changes conflict. Choose which to publish." : "Some changes were made to an older version. Choose which to publish.", {
+      throw new HttpError(409, `${this.describeUnresolved(result.unresolved, chosen)} Choose which to publish.`, {
         conflicts: result.unresolved.map(u => ({ group: u.group, status: u.status, owners: u.changes.map(c => c.owner), paths: u.changes.map(c => c.change.path) }))
       });
     }
@@ -1042,6 +1041,25 @@ export class Engine {
     this.afterWrite({ type, id, locale, action: "publish", valid: true, doc });
     const redirect = await this.redirectAfterPublish(type, id, locale, live, doc, selection.redirect === true);
     return { ...(await this.getDocument(type, id, locale)), issues: [], ...(redirect ? { redirect } : {}) };
+  }
+
+  /**
+   * The changes that need a choice, in words: which field, and who changed it differently (or that live
+   * moved on since). "Title was changed differently by Sam and you."
+   */
+  private describeUnresolved(unresolved: Array<{ group: string, status: "stale" | "conflict", changes: Array<{ owner: string, change: { label: string[] } }> }>, rows: BranchRow[]): string {
+    const names = new Map(rows.map(row => [row.owner, row.owner === this.scope.session?.sub ? "you" : row.owner_name ?? "someone else"]));
+    function list(items: string[]) {
+      return items.length <= 1 ? items[0] ?? "" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+    }
+    const sentences = unresolved.slice(0, 3).map(u => {
+      const label = u.changes[0]?.change.label.at(-1) ?? "A field";
+      if(u.status === "stale") return `${label} was changed on the live page since these edits started.`;
+      const people = [...new Set(u.changes.map(c => names.get(c.owner) ?? "someone else"))].sort((a, b) => Number(a === "you") - Number(b === "you"));
+      return `${label} was changed differently by ${list(people)}.`;
+    });
+    const more = unresolved.length > 3 ? ` And ${unresolved.length - 3} more.` : "";
+    return `${sentences.join(" ")}${more}`;
   }
 
   /** Documents with unpublished changes, of the types the reader can read, most recently changed first. */
@@ -1299,7 +1317,7 @@ export class Engine {
       if(!chosen.length && !live) throw new HttpError(409, "There's nothing to publish");
       const result = merge(schema, live, { branches: chosen.map(b => toBranch(schema, b)), ...this.selectionMaps(selection) });
       if(result.unresolved.length) {
-        throw new HttpError(409, "Some changes conflict. Publish now to choose between them, or schedule once they're settled.", {
+        throw new HttpError(409, `${this.describeUnresolved(result.unresolved, chosen)} Settle them on the review screen, then schedule.`, {
           conflicts: result.unresolved.map(u => ({ group: u.group, status: u.status, owners: u.changes.map(c => c.owner), paths: u.changes.map(c => c.change.path) }))
         });
       }

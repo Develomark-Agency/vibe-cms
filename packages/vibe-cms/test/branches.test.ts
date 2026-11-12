@@ -213,6 +213,19 @@ describe("branches", () => {
     expect(refused.status).toBe(409);
   });
 
+  test("conflicts are named in the error: which field, and who", async () => {
+    const doc = await published();
+    await edit(alice, doc.id, { title: "Summer sale" });
+    await edit(bob, doc.id, { title: "Winter sale" });
+    const runAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const asBob = await t.call(bob, "documents.schedule", { type: "post", id: doc.id, action: "publish", runAt });
+    expect(asBob.status).toBe(409);
+    expect(asBob.body.error ?? asBob.body.message).toBe("Title was changed differently by Alice and you. Settle them on the review screen, then schedule.");
+    const publish = await t.call(dev, "documents.publish", { type: "post", id: doc.id });
+    expect(publish.status).toBe(409);
+    expect(publish.body.error ?? publish.body.message).toMatch(/^Title was changed differently by (Alice and Bob|Bob and Alice)\. Choose which to publish\.$/);
+  });
+
   test("documents.pending lists what awaits publishing across the site", async () => {
     const doc = await published();
     await edit(alice, doc.id, { title: "Summer sale" });

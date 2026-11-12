@@ -57,6 +57,7 @@ import {
   documentTitle,
   formatDate,
   formatRelative,
+  humanize,
   localeName,
   useAdmin
 } from "./context.tsx";
@@ -113,7 +114,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
   const [redirectAfter, setRedirectAfter] = useState(true);
   // Resolves when the delete dialog has finished closing, so the page doesn't change under it.
   const deleteClosed = useRef<(() => void) | null>(null);
-  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [unpublishOpen, setUnpublishOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const loadedKey = useRef<string | null>(null);
 
@@ -455,8 +456,8 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                   active={busy === "publish" ? "busy" : status === "published" && !dirty ? "published" : id === null ? "publish" : "review"}
                   options={{
                     publish: <><CloudUploadIcon /> Publish</>,
-                    review: <><GitPullRequestArrowIcon /> Review</>,
-                    busy: <><Spinner /> {id === null ? "Publish" : "Review"}</>,
+                    review: <><GitPullRequestArrowIcon /> Review…</>,
+                    busy: <><Spinner /> {id === null ? "Publish" : "Review…"}</>,
                     published: <><CheckIcon /> Published</>
                   }}
                 />
@@ -468,11 +469,8 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                 <DropdownMenuContent align="end" className="w-64">
                   <DocumentInfo doc={doc.data} />
                   <DropdownMenuSeparator />
-                  {permissions.publish && !readOnly && (
-                    <DropdownMenuItem onClick={() => setScheduleOpen(true)}><CalendarClockIcon /> Schedule…</DropdownMenuItem>
-                  )}
                   {permissions.publish && !readOnly && status && status !== "draft" && (
-                    <DropdownMenuItem onClick={() => void action("unpublish")}><EyeOffIcon /> Unpublish</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setUnpublishOpen(true)}><EyeOffIcon /> Unpublish…</DropdownMenuItem>
                   )}
                   {liveUrl && (
                     <DropdownMenuItem render={<a href={liveUrl} target="_blank" rel="noreferrer" />}><ExternalLinkIcon /> View live page</DropdownMenuItem>
@@ -508,6 +506,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
                 <p>There's no {localeName(locale)} version yet. The form starts from the {localeName(config.defaultLocale!)} copy; saving creates the translation.</p>
               </div>
             )}
+            {doc.data?.schedules.length ? <ScheduleBanner type={type} id={id!} doc={doc.data} onChange={applyResult} /> : null}
             {others.length > 0 && (
               <div className="flex items-start gap-3 rounded-[14px] well p-3 text-sm text-muted-foreground">
                 <GitBranchIcon className="mt-0.5 size-4 shrink-0" />
@@ -559,7 +558,6 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
             </FieldChangesProvider>
           </main>
           <aside className="flex flex-col gap-4">
-            {doc.data?.schedules.length ? <Schedules type={type} id={id!} doc={doc.data} onChange={applyResult} /> : null}
             {panels.map(panel => (
               <section key={panel.id} className="rounded-[16px] elevated p-4">
                 <h3 className="mb-2 text-sm font-medium">{panel.label}</h3>
@@ -641,7 +639,7 @@ export function EditorPage({ type, id }: { type: string, id: string | null }) {
 
       {id !== null && (
         <>
-          <ScheduleDialog open={scheduleOpen} onOpenChange={setScheduleOpen} type={type} id={id} status={status} dirty={dirty} onDone={applyResult} onError={handleError} />
+          <UnpublishDialog open={unpublishOpen} onOpenChange={setUnpublishOpen} type={type} id={id} onDone={applyResult} onError={handleError} />
         </>
       )}
     </FormValueContext.Provider>
@@ -701,28 +699,49 @@ function DocumentInfo({ doc }: { doc: DocumentState | undefined }) {
   );
 }
 
-function Schedules({ type, id, doc, onChange }: { type: string, id: string, doc: DocumentState, onChange(doc: DocumentState): void }) {
-  const { cms, locale } = useAdmin();
+/**
+ * What's scheduled for this document, above the form: when, which fields the publish carries (it was
+ * captured when it was scheduled), and whether there are newer edits that aren't in it.
+ */
+function ScheduleBanner({ type, id, doc, onChange }: { type: string, id: string, doc: DocumentState, onChange(doc: DocumentState): void }) {
+  const { cms, config, locale } = useAdmin();
+  const schema = collectionSchema(config, type);
+  const publish = doc.schedules.find(item => item.action === "publish");
+  // The captured version, to say what it changes against live.
+  const captured = useQuery({
+    queryKey: ["scheduled-version", type, id, locale, publish?.ver],
+    enabled: publish?.ver != null,
+    queryFn: () => cms.actions.documents.version({ type, id, locale, ver: publish!.ver! }),
+    staleTime: 60_000
+  });
+  const fields = captured.data
+    ? Object.keys(schema.shape).filter(key => JSON.stringify(captured.data!.data[key]) !== JSON.stringify(doc.published?.[key])).map(key => schema.shape[key]!.label ?? humanize(key))
+    : null;
+  // Anyone's edits saved after it was captured aren't in it.
+  const newer = captured.data?.createdAt ? doc.pending.some(person => person.updatedAt > captured.data!.createdAt!) : false;
   return (
-    <section className="rounded-[16px] bg-violet-500/8 p-4 shadow-[inset_0_0_0_1px] shadow-violet-500/20">
-      <h3 className="mb-2 flex items-center gap-1.5 text-sm font-medium text-violet-700 dark:text-violet-300">
-        <CalendarClockIcon className="size-3.5" /> Scheduled
-      </h3>
-      <ul className="grid gap-2 text-sm">
-        {doc.schedules.map(s => (
-          <li key={s.action} className="flex items-center justify-between gap-2">
-            <Tooltip>
-              <TooltipTrigger render={<span className="cursor-default underline decoration-violet-500/50 decoration-dotted underline-offset-4 hover:decoration-violet-500" />}>
-                {s.action === "publish" ? "Publish" : "Unpublish"} {formatDate(s.runAt)}
-              </TooltipTrigger>
-              <TooltipContent>{formatRelative(s.runAt)}</TooltipContent>
-            </Tooltip>
-            <Button variant="ghost" size="icon-xs" aria-label="Cancel schedule" onClick={async () => {
-              onChange(await cms.actions.documents.unschedule({ type, id, locale, action: s.action }));
-            }}><XIcon /></Button>
-          </li>
-        ))}
-      </ul>
+    <section className="flex flex-col gap-2 rounded-[16px] bg-violet-500/8 p-4 shadow-[inset_0_0_0_1px] shadow-violet-500/20" aria-label="Scheduled">
+      {doc.schedules.map(item => (
+        <div key={item.action} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+            <CalendarClockIcon className="size-4 shrink-0 text-violet-700 dark:text-violet-300" />
+            <span className="font-medium text-violet-700 dark:text-violet-300">
+              Scheduled to {item.action === "publish" ? "publish" : "unpublish"} {formatDate(item.runAt)}
+            </span>
+            <span className="text-muted-foreground">{formatRelative(item.runAt)}</span>
+          </p>
+          <div className="flex items-center gap-1">
+            {item.action === "publish" && (
+              <Button variant="ghost" size="xs" nativeButton={false} render={<Link to={`/content/${type}/${id}/review${location.search}`} />}>Change…</Button>
+            )}
+            <Button variant="ghost" size="xs" onClick={async () => {
+              onChange(await cms.actions.documents.unschedule({ type, id, locale, action: item.action }));
+            }}><XIcon /> Cancel schedule</Button>
+          </div>
+        </div>
+      ))}
+      {publish && fields && fields.length > 0 && <p className="text-sm text-muted-foreground">Publishes changes to {fields.join(", ")}.</p>}
+      {publish && newer && <p className="text-sm text-amber-700 dark:text-amber-400">There are newer edits that aren't included. Change the schedule to capture them.</p>}
     </section>
   );
 }
@@ -734,58 +753,55 @@ function toLocalInput(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function ScheduleDialog({ open, onOpenChange, type, id, status, dirty, onDone, onError }: {
+/** Taking a page off the site: now, or at a time. (Publishing, now or later, is decided on the review page.) */
+function UnpublishDialog({ open, onOpenChange, type, id, onDone, onError }: {
   open: boolean,
   onOpenChange(open: boolean): void,
   type: string,
   id: string,
-  status: DocumentState["status"],
-  dirty: boolean,
   onDone(doc: DocumentState): void,
   onError(error: unknown): void
 }) {
   const { cms, locale } = useAdmin();
-  const [action, setAction] = useState<"publish" | "unpublish">("publish");
+  const [mode, setMode] = useState<"now" | "later">("now");
   const [when, setWhen] = useState(() => toLocalInput(new Date(Date.now() + 24 * 3600 * 1000)));
   const [busy, setBusy] = useState(false);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Schedule</DialogTitle>
-          <DialogDescription>
-            {action === "publish"
-              ? "Everyone's saved, unpublished changes are merged now and published at the chosen time. Later edits aren't included."
-              : "The document is taken off the site at the chosen time."}
-          </DialogDescription>
+          <DialogTitle>Unpublish</DialogTitle>
+          <DialogDescription>The page comes off the site. Its changes and history are kept, and you can publish it again.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
-          <Segmented<"publish" | "unpublish">
-            label="Action"
-            value={action}
-            onChange={setAction}
-            options={[{ value: "publish", label: "Publish" }, { value: "unpublish", label: "Unpublish", disabled: !status }]}
-          />
-          <label className="grid gap-1.5 text-sm font-medium">
-            Date and time
-            <Input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} />
-          </label>
-          {dirty && action === "publish" && <p className="text-sm text-amber-600">You have unsaved changes; save first if they should be included.</p>}
+          <Segmented<"now" | "later"> label="When" value={mode} onChange={setMode} options={[{ value: "now", label: "Now" }, { value: "later", label: "At a time" }]} />
+          {mode === "later" && (
+            <label className="grid gap-1.5 text-sm font-medium">
+              Date and time
+              <Input type="datetime-local" value={when} onChange={event => setWhen(event.target.value)} />
+            </label>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button disabled={busy || !when} onClick={async () => {
+          <Button variant="destructive" disabled={busy || (mode === "later" && !when)} onClick={async () => {
             setBusy(true);
             try {
-              onDone(await cms.actions.documents.schedule({ type, id, locale, action, runAt: new Date(when).toISOString() }));
-              cms.toast(`Scheduled to ${action} ${formatDate(new Date(when).toISOString())}`, { type: "success" });
+              if(mode === "now") {
+                onDone(await cms.actions.documents.unpublish({ type, id, locale }));
+                cms.toast("Unpublished", { type: "success" });
+              } else {
+                const runAt = new Date(when).toISOString();
+                onDone(await cms.actions.documents.schedule({ type, id, locale, action: "unpublish", runAt }));
+                cms.toast(`Scheduled to unpublish ${formatDate(runAt)}`, { type: "success" });
+              }
               onOpenChange(false);
             } catch (error) {
               onError(error);
             } finally {
               setBusy(false);
             }
-          }}>{busy && <Spinner />} Schedule</Button>
+          }}>{busy && <Spinner />} {mode === "now" ? "Unpublish" : "Schedule unpublish"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
