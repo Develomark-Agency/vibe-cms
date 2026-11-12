@@ -101,6 +101,8 @@ export function formatRelative(date: string | number | null | undefined): string
   for(const [unit, seconds] of units) {
     if(Math.abs(diff) >= seconds) return rtf.format(Math.round(diff / seconds), unit);
   }
+  // Under a minute: past times stay "just now", but an upcoming time is not "now" yet.
+  if(diff > 0) return rtf.format(Math.max(1, Math.round(diff)), "second");
   return "just now";
 }
 

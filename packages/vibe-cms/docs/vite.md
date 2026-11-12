@@ -24,6 +24,7 @@ Generated files (the editor's stylesheet and dependency cache) go to `node_modul
 |---|---|---|
 | `config` | `./vibe-cms.config.ts` | Config path, relative to the Vite root |
 | `entry` | none | Your Worker entry, for deploy tooling that pins the framework's server entry (Alchemy 2's Astro resource). Imports of that pinned entry are redirected to yours |
+| `devCron` | `true` | In dev, runs the Worker's `scheduled` handler every minute, standing in for the production cron trigger, which local dev never fires. Scheduled publishing, trash purging and plugin cron jobs then run while the dev server is up. Pass `false` to turn it off and trigger it yourself at `/cdn-cgi/handler/scheduled` |
 
 ## A plain Worker
 

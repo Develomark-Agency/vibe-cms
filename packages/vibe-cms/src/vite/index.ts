@@ -19,7 +19,38 @@ export interface VibeOptions {
    * deploy tooling pins the server entry (Alchemy 2's Astro resource). Their
    * entry is redirected to yours, which wraps it with `vibe({...})`.
    */
-  entry?: string
+  entry?: string,
+  /**
+   * Runs the Worker's `scheduled` handler once a minute while the dev server is up, standing in for the
+   * production cron trigger, which local dev never fires. Scheduled publishing, trash purging and plugin
+   * cron jobs then run as they do deployed. Pass `false` to turn it off. Defaults to on.
+   */
+  devCron?: boolean
+}
+
+/** How often the dev server calls the Worker's `scheduled` handler, matching the `* * * * *` cron. */
+const DEV_CRON_MS = 60_000;
+
+/** Calls the Worker's scheduled handler (Cloudflare's local-dev endpoint) every minute until the server closes. */
+function startDevCron(server: ViteDevServer) {
+  let running = false;
+  const tick = async () => {
+    const base = server.resolvedUrls?.local[0];
+    if(running || !base) return;
+    running = true;
+    try {
+      const response = await fetch(new URL("/cdn-cgi/handler/scheduled", base), { signal: AbortSignal.timeout(DEV_CRON_MS) });
+      if(!response.ok) console.warn(`vibe-cms: dev cron got ${response.status}; scheduled publishing won't run until the dev server runs a Worker. Disable with vibe({ devCron: false }).`);
+    } catch(error) {
+      console.warn("vibe-cms: dev cron failed:", (error as Error).message);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(() => void tick(), DEV_CRON_MS);
+  timer.unref();
+  server.httpServer?.once("listening", () => void tick());
+  server.httpServer?.once("close", () => clearInterval(timer));
 }
 
 /** Server entry modules that tools pin and `entry` replaces. */
@@ -319,6 +350,7 @@ export function vibe(options: VibeOptions = {}): Plugin[] {
       async configureServer(server) {
         await readPrefix();
         server.middlewares.use(serveAdmin(server, root, configFile, `${prefix}/admin/`));
+        if(options.devCron !== false) startDevCron(server);
       }
     },
     ...(options.entry ? [entryPlugin(options.entry)] : []),
