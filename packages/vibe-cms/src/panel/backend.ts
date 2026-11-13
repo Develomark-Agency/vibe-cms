@@ -305,12 +305,21 @@ export async function fetchDescriptor(url: string): Promise<SiteDescriptor> {
   } catch {
     throw new PanelError(400, "That doesn't look like a URL");
   }
-  let response: Response;
-  try {
-    response = await fetch(`${origin}/.well-known/vibe-cms`);
-  } catch {
-    throw new PanelError(502, `Couldn't reach ${origin}`);
+  // Proxies like portless serve `name.localhost` over HTTPS on the default port (and redirect HTTP, which a
+  // cross-origin fetch can't follow), so with no scheme or port typed, try HTTPS before the local HTTP default.
+  const candidates = [origin];
+  if(!/^https?:\/\//.test(url.trim()) && new URL(origin).hostname.endsWith(".localhost") && !new URL(origin).port) {
+    candidates.unshift(origin.replace("http:", "https:"));
   }
+  let response: Response | undefined;
+  for(const candidate of candidates) {
+    try {
+      response = await fetch(`${candidate}/.well-known/vibe-cms`);
+      origin = candidate;
+      break;
+    } catch {}
+  }
+  if(!response) throw new PanelError(502, `Couldn't reach ${origin}`);
   if(!response.ok) {
     if(isSameZoneBlock(await response.text().catch(() => ""))) throw new PanelError(502, sameZoneAdvice(origin));
     throw new PanelError(422, `${origin} isn't a Vibe CMS site (no /.well-known/vibe-cms)`);
