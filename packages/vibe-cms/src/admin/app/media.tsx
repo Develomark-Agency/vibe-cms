@@ -7,6 +7,7 @@ import {
   ChevronRightIcon,
   CopyIcon,
   CornerLeftUpIcon,
+  CrosshairIcon,
   FileIcon,
   FilmIcon,
   FolderIcon,
@@ -46,7 +47,7 @@ import { ApiError } from "./client.ts";
 import { formatDate, useAdmin } from "./context.tsx";
 import { Delayed } from "./delayed.tsx";
 import { UsageLink, staggerIndex, useDebounced } from "./pages.tsx";
-import { AssetPreview, AssetThumb, describeAsset, formatBytes, useUpload } from "./pickers.tsx";
+import { AssetPreview, AssetThumb, CENTER, describeAsset, focalLabel, formatBytes, useUpload, type Focal } from "./pickers.tsx";
 import { Page, PageHeader } from "./page.tsx";
 import { navigate, useLocation } from "./router.tsx";
 import { Segmented } from "./segmented.tsx";
@@ -1452,6 +1453,8 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
   useEffect(() => {
     if(detail.data) setFilename(detail.data.filename);
   }, [detail.data?.filename]);
+  // Shown while a new focal point saves, so the marker moves at once.
+  const [pendingFocal, setPendingFocal] = useState<{ id: string, focal: Focal | null } | null>(null);
 
   if(!id || detail.isError) {
     const subfolders = library.childrenOf(folder).length;
@@ -1473,6 +1476,22 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
   if(!asset) return <div className="flex justify-center rounded-[18px] elevated p-10"><Delayed><Spinner /></Delayed></div>;
   const url = new URL(asset.url, location.href).href;
 
+  const isImage = asset.mime.startsWith("image/");
+  const focal = pendingFocal?.id === asset.id ? pendingFocal.focal ?? undefined : asset.meta.focal;
+
+  async function saveFocal(next: Focal | null) {
+    setPendingFocal({ id: asset!.id, focal: next });
+    try {
+      await cms.actions.assets.update({ id: asset!.id, focal: next });
+      if(!next) cms.toast("Focal point reset to the center");
+    } catch (error) {
+      cms.toast(error instanceof ApiError ? error.message : "Couldn't save the focal point", { type: "error" });
+    }
+    library.refresh();
+    await detail.refetch();
+    setPendingFocal(null);
+  }
+
   async function saveName() {
     const next = filename.trim();
     if(!next || next === asset!.filename) {
@@ -1486,7 +1505,14 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
     <div className="flex flex-col gap-4 rounded-[18px] elevated p-2 pb-4">
       {/* The checkerboard shows transparency in images; text gets a plain well. */}
       <div className={cn("overflow-hidden rounded-[10px] well", !assetTextKind(asset) && "bg-[repeating-conic-gradient(var(--muted)_0_25%,transparent_0_50%)] bg-[length:16px_16px]")}>
-        {assetTextKind(asset) ? <TextPreview asset={asset} /> : <AssetPreview asset={asset} />}
+        {assetTextKind(asset) ? <TextPreview asset={asset} /> : (
+          <AssetPreview
+            asset={asset}
+            focal={isImage && (focal || library.canWrite) ? focal ?? CENTER : undefined}
+            inherited={!focal}
+            onFocal={isImage && library.canWrite ? next => void saveFocal(next) : undefined}
+          />
+        )}
       </div>
       <div className="flex flex-col gap-4 px-2">
         {assetTextKind(asset) && library.canWrite && (
@@ -1507,6 +1533,24 @@ function PreviewPane({ id, folder, library, onMove, onEdit, onRename, onDeleted,
           />
           <p className="px-1 text-xs text-muted-foreground">{describeAsset(asset)}</p>
         </div>
+
+        {isImage && (
+          <div className="flex flex-col gap-1">
+            <div className="flex min-h-7 items-center justify-between gap-3">
+              <h4 className="eyebrow px-1">Focal point</h4>
+              {library.canWrite && (
+                <Button variant="ghost" size="xs" disabled={!focal} onClick={() => void saveFocal(null)}>
+                  <CrosshairIcon /> Reset to center
+                </Button>
+              )}
+            </div>
+            <p className="px-1 text-sm">{focalLabel(focal)}</p>
+            <p className="px-1 text-xs text-pretty text-muted-foreground">
+              {library.canWrite ? "Click the image to choose the part kept in view when it's cropped. " : ""}
+              Every use of this image gets it, unless that use sets its own.
+            </p>
+          </div>
+        )}
 
         <Row label="Folder">
           <div className="flex min-w-0 items-center gap-1">

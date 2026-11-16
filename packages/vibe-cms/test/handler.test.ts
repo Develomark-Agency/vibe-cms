@@ -342,6 +342,35 @@ describe("media", () => {
     const inUse = await t.api(`/api/assets/${big.body.id}`, { method: "DELETE" });
     expect(inUse.status).toBe(409);
   });
+
+  test("an image's default focal point reaches every use without its own", async () => {
+    const form = new FormData();
+    form.set("file", new File([png(1200, 600)], "cover.png", { type: "image/png" }));
+    const { body: asset } = await t.api("/api/assets", { method: "POST", body: form });
+    await createPost({ title: "Default", slug: "default", cover: { asset: asset.id, alt: "A" } });
+    await createPost({ title: "Own", slug: "own", cover: { asset: asset.id, alt: "B", focal: { x: 0.1, y: 0.2 } } });
+    async function covers() {
+      return Object.fromEntries((await t.vibe.client(t.env).query(post).findMany()).map(p => [p.slug, p.cover?.focal]));
+    }
+    expect(await covers()).toEqual({ default: undefined, own: { x: 0.1, y: 0.2 } });
+
+    const set = await t.api(`/api/assets/${asset.id}`, { method: "PATCH", json: { focal: { x: 0.3, y: 0.7 } } });
+    expect(set.body.meta).toEqual({ width: 1200, height: 600, focal: { x: 0.3, y: 0.7 } });
+    expect(await covers()).toEqual({ default: { x: 0.3, y: 0.7 }, own: { x: 0.1, y: 0.2 } });
+
+    // Renaming leaves it alone; null resets it to the center.
+    await t.api(`/api/assets/${asset.id}`, { method: "PATCH", json: { filename: "hero.png" } });
+    expect((await t.api(`/api/assets/${asset.id}`)).body.meta.focal).toEqual({ x: 0.3, y: 0.7 });
+    const reset = await t.api(`/api/assets/${asset.id}`, { method: "PATCH", json: { focal: null } });
+    expect(reset.body.meta).toEqual({ width: 1200, height: 600 });
+    expect(await covers()).toEqual({ default: undefined, own: { x: 0.1, y: 0.2 } });
+
+    expect((await t.api(`/api/assets/${asset.id}`, { method: "PATCH", json: { focal: { x: 2, y: 0 } } })).status).toBe(400);
+    const text = new FormData();
+    text.set("file", new File(["hi"], "notes.txt", { type: "text/plain" }));
+    const { body: notes } = await t.api("/api/assets", { method: "POST", body: text });
+    expect((await t.api(`/api/assets/${notes.id}`, { method: "PATCH", json: { focal: { x: 0.5, y: 0.5 } } })).status).toBe(415);
+  });
 });
 
 describe("trash", () => {

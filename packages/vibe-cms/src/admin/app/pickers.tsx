@@ -23,6 +23,7 @@ import { Delayed } from "./delayed.tsx";
 import { collectionLabel, documentTitle, humanize, useAdmin } from "./context.tsx";
 import { Field, fieldId } from "./fields.tsx";
 import { Link } from "./router.tsx";
+import { Segmented } from "./segmented.tsx";
 import { StatusDot } from "./status.tsx";
 
 interface PickerProps {
@@ -232,7 +233,10 @@ export function AssetControl({ schema, value, onChange, path, issues, readOnly, 
     if(!readOnly) void handleFile(event.dataTransfer.files[0]);
   }
 
-  const focal = usage?.focal as { x: number, y: number } | undefined;
+  // A use without its own focal point gets the image's default from the media library (or the center).
+  const ownFocal = usage?.focal as Focal | undefined;
+  const defaultFocal = asset.data?.meta.focal;
+  const showFocal = Boolean(options.focal && asset.data?.mime.startsWith("image/"));
   const fieldEntries = Object.entries(s.fields).filter(([key]) => !(key === "focal" && options.focal));
 
   return (
@@ -262,8 +266,9 @@ export function AssetControl({ schema, value, onChange, path, issues, readOnly, 
                 : asset.data ? (
                   <AssetPreview
                     asset={asset.data}
-                    focal={options.focal && !readOnly ? focal : undefined}
-                    onFocal={options.focal && !readOnly ? next => onChange({ ...usage, focal: next }) : undefined}
+                    focal={showFocal ? ownFocal ?? defaultFocal ?? CENTER : undefined}
+                    inherited={!ownFocal}
+                    onFocal={showFocal && !readOnly ? next => onChange({ ...usage, focal: next }) : undefined}
                   />
                 ) : <div className="p-6 text-sm text-destructive">This file no longer exists</div>}
             </div>
@@ -271,8 +276,25 @@ export function AssetControl({ schema, value, onChange, path, issues, readOnly, 
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{asset.data?.filename ?? usage.asset}</p>
                 {asset.data && <p className="text-xs text-muted-foreground">{describeAsset(asset.data)}</p>}
-                {options.focal && !readOnly && asset.data?.mime.startsWith("image/") && (
-                  <p className="mt-1 text-xs text-muted-foreground">Click the image to set its focal point{focal ? ` (${Math.round(focal.x * 100)}%, ${Math.round(focal.y * 100)}%)` : ""}.</p>
+                {showFocal && !readOnly && (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    <Segmented
+                      label="Focal point"
+                      value={ownFocal ? "own" : "default"}
+                      options={[{ value: "default", label: "Library focal point" }, { value: "own", label: "Custom" }]}
+                      onChange={mode => {
+                        const copy = { ...usage };
+                        if(mode === "own") copy.focal = { ...(defaultFocal ?? CENTER) };
+                        else delete copy.focal;
+                        onChange(copy);
+                      }}
+                    />
+                    <p className="text-xs text-pretty text-muted-foreground">
+                      {ownFocal
+                        ? `${focalLabel(ownFocal)}, set just for this use. Click the image to move it.`
+                        : `${focalLabel(defaultFocal)}, from the media library. Click the image to set a different one here.`}
+                    </p>
+                  </div>
                 )}
               </div>
               {!readOnly && (
@@ -366,10 +388,22 @@ export function describeAsset(asset: Asset): string {
   return parts.join(" · ");
 }
 
-export function AssetPreview({ asset, focal, onFocal, className }: {
+export type Focal = { x: number, y: number };
+
+export const CENTER: Focal = { x: 0.5, y: 0.5 };
+
+/** `"40%, 60%"`, or "Center". */
+export function focalLabel(focal: Focal | undefined): string {
+  if(!focal || (focal.x === 0.5 && focal.y === 0.5)) return "Center";
+  return `${Math.round(focal.x * 100)}%, ${Math.round(focal.y * 100)}%`;
+}
+
+export function AssetPreview({ asset, focal, inherited, onFocal, className }: {
   asset: Asset,
-  focal?: { x: number, y: number },
-  onFocal?: (focal: { x: number, y: number }) => void,
+  focal?: Focal,
+  /** The marker shows a point that comes from elsewhere (the library's default, or the center), drawn hollow. */
+  inherited?: boolean,
+  onFocal?: (focal: Focal) => void,
   className?: string
 }) {
   if(asset.mime.startsWith("image/")) {
@@ -391,7 +425,11 @@ export function AssetPreview({ asset, focal, onFocal, className }: {
         />
         {focal && (
           <span
-            className="pointer-events-none absolute size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,.4),0_2px_6px_rgba(0,0,0,.4)]"
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,.4),0_2px_6px_rgba(0,0,0,.4)] transition-[left,top] duration-150 ease-out",
+              inherited ? "border-dashed opacity-70" : "bg-white/30"
+            )}
             style={{ left: `${focal.x * 100}%`, top: `${focal.y * 100}%` }}
           />
         )}

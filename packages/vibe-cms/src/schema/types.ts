@@ -185,6 +185,8 @@ export interface AssetMeta {
   duration?: number,
   /** Location and camera details were removed on upload. */
   metadataRemoved?: boolean,
+  /** An image's default focal point (0–1 from the top left), set in the media library. Uses can override it. */
+  focal?: { x: number, y: number },
   [key: string]: unknown
 }
 

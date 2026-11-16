@@ -46,16 +46,20 @@ const assetsUpload = base({
   }));
 
 const assetsUpdate = base({
-  summary: "Rename or move a file",
-  description: "Changes a file's name or folder. `folder: null` moves it to the root.",
+  summary: "Rename or move a file, or set an image's focal point",
+  description: "Changes a file's name or folder (`folder: null` moves it to the root), or an image's default focal point. Every use of the image gets that focal point unless the use sets its own `focal`; `focal: null` removes it, so those uses center the image again.",
   idempotent: true
 })
   .input(z.object({
     id: assetId,
     filename: z.string().optional(),
-    folder: folder.nullable().optional()
+    folder: folder.nullable().optional(),
+    focal: z.object({
+      x: z.number().min(0).max(1).describe("0 is the left edge, 1 the right"),
+      y: z.number().min(0).max(1).describe("0 is the top edge, 1 the bottom")
+    }).nullable().optional().describe("Images only. The default focal point for every use that doesn't set its own; null resets it to the center")
   }))
-  .handler(({ context: { engine }, input }) => engine.updateAsset(input.id, { filename: input.filename, folder: input.folder }));
+  .handler(({ context: { engine }, input }) => engine.updateAsset(input.id, { filename: input.filename, folder: input.folder, focal: input.focal }));
 
 const assetsReplaceContent = base({
   summary: "Edit a text file",

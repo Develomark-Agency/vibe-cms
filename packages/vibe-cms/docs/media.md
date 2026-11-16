@@ -30,7 +30,7 @@ Uploads go to the R2 bucket passed as `storage` in `createHandler` bindings, int
 
 | Field | Stores | Options |
 |---|---|---|
-| `image()` | `{ asset, alt, focal?: { x, y } }` | `accept` (default `image/*`), `maxSize`, `folder`, `minWidth`, `minHeight`, `aspectRatio` (width / height, 1% tolerance), `alt: "optional"` (alt text is required by default) |
+| `image()` | `{ asset, alt, focal?: { x, y } }` (`focal` overrides the image's default: [Focal points](#focal-points)) | `accept` (default `image/*`), `maxSize`, `folder`, `minWidth`, `minHeight`, `aspectRatio` (width / height, 1% tolerance), `alt: "optional"` (alt text is required by default) |
 | `video()` | `{ asset, poster? }` (poster is an image) | `accept` (default mp4, webm), `maxSize` (default 500MB), `folder`, `maxDuration` (seconds; needs a `media.analyze` plugin reporting `duration`) |
 | `file()` | `{ asset, title? }` | `accept`, `maxSize`, `folder` |
 | `v.asset()` | `{ asset, …fields }` | `accept` (MIME types, wildcards allowed), `maxSize` (`"5MB"`, `"1.5GiB"` or bytes), `folder`, `fields`, `validate(meta)` (return `true` or an error message) |
@@ -39,6 +39,15 @@ Uploads go to the R2 bucket passed as `storage` in `createHandler` bindings, int
 - The rules are checked on upload (when the upload names the field) and again on every document write: a document referencing a file that's too small, the wrong type, or missing gets an issue on that field.
 - Image dimensions are read from the file on upload (PNG, GIF, JPEG, WebP). Other metadata comes from `media.analyze` plugins: `vibe-cms docs server-hooks`.
 - Deleting a document never deletes its files. Files used by documents can't be deleted from the library.
+
+## Focal points
+
+An image's focal point is the part kept in view when it's cropped (`object-fit: cover`). It's set in two places:
+
+- **The media library**: click the image in its preview pane. That's the image's default, and every use of it gets it. **Reset to center** removes it.
+- **One use**: in the image field, switch from **Library focal point** to **Custom** (or click the image) to give just this use its own. Switching back removes it, and the use follows the library's default again.
+
+The default lives with the file (`meta.focal`); a use's own lives in the document (`focal`). Queries return whichever applies as `focal`. With neither, `focus()` gives the center. From code: `assets_update` with `focal: { x, y }`, or `focal: null` to reset (`PATCH /_vibe/api/assets/<id>`).
 
 ## What queries return
 
@@ -52,7 +61,7 @@ product.photo
 //   width: 1600, height: 1200, meta: { width: 1600, height: 1200 } }
 ```
 
-`url` is root-relative and served by the CMS with immutable caching (edits to text files add `?v=<n>`). Use `width`, `height` and `focal` for layout:
+`url` is root-relative and served by the CMS with immutable caching (edits to text files add `?v=<n>`). `focal` is the use's own focal point, or the image's default from the library when the use has none. Use `width`, `height` and `focal` for layout:
 
 ```astro
 <img {...img(product.photo, { sizes: 768 })} style={`object-position: ${focus(product.photo)}`} />

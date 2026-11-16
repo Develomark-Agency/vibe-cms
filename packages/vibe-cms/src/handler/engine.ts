@@ -275,6 +275,11 @@ export interface MediaFolder {
   files: number
 }
 
+/** A focal point coordinate: 0–1, to three decimals. */
+function clampUnit(n: number): number {
+  return Math.round(Math.min(1, Math.max(0, n)) * 1000) / 1000;
+}
+
 /** `" /posts//covers/ "` → `"posts/covers"`; empty → null (the root). Rejects names a directory couldn't have. */
 export function normalizeFolder(input: string | null | undefined): string | null {
   if(input === null || input === undefined) return null;
@@ -684,7 +689,10 @@ export class Engine {
       const row = rows.get(usage.asset);
       if(!row) return { ...usage, url: null };
       const meta = JSON.parse(row.meta) as AssetMeta;
-      return { url: this.assetUrl(row), mime: row.mime, size: row.size, filename: row.filename, ...meta, meta, ...usage };
+      // Usage fields come last, so a use's own `focal` overrides the image's default one from `meta`.
+      // Unset ones (undefined, from `mapAssets` visiting every declared field) mustn't hide the default.
+      const own = Object.fromEntries(Object.entries(usage).filter(([, v]) => v !== undefined));
+      return { url: this.assetUrl(row), mime: row.mime, size: row.size, filename: row.filename, ...meta, meta, ...own };
     };
     return docs.map(doc => mapAssets(schema, doc, resolve) as Doc);
   }
@@ -1593,15 +1601,25 @@ export class Engine {
     return { stream: object.body as ReadableStream<Uint8Array>, name: row.filename, type: row.mime, size: row.size };
   }
 
-  async updateAsset(id: string, patch: { folder?: string | null, filename?: string }) {
+  /**
+   * Renames or moves a file, or sets an image's default focal point: the one every use gets unless it
+   * sets its own. `focal: null` removes it, so uses without their own center the image again.
+   */
+  async updateAsset(id: string, patch: { folder?: string | null, filename?: string, focal?: { x: number, y: number } | null }) {
     this.writer({ action: "write", scope: "media" });
     const row = await this.assetRow(id);
     if(!row) throw new HttpError(404, "Asset not found");
     const folder = patch.folder === undefined ? row.folder : normalizeFolder(patch.folder);
     const filename = patch.filename?.trim().replace(/[/\\]/g, "_").slice(0, 200) || row.filename;
+    let meta = row.meta;
+    if(patch.focal !== undefined) {
+      if(!row.mime.startsWith("image/")) throw new HttpError(415, "Only images have a focal point");
+      const { focal: _, ...rest } = JSON.parse(row.meta) as AssetMeta;
+      meta = JSON.stringify(patch.focal ? { ...rest, focal: { x: clampUnit(patch.focal.x), y: clampUnit(patch.focal.y) } } : rest);
+    }
     await this.touchFolder(folder);
-    await this.orm.update(assets).set({ folder, filename }).where(eq(assets.id, id));
-    return this.toAsset({ ...row, folder, filename });
+    await this.orm.update(assets).set({ folder, filename, meta }).where(eq(assets.id, id));
+    return this.toAsset({ ...row, folder, filename, meta });
   }
 
   /** Replaces a text file's content in place; the asset keeps its ID, so documents still point at it. */
