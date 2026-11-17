@@ -46,7 +46,7 @@ export default defineServer<typeof StatsPlugin, typeof config>(({ cms }) => ({
 
 ### Who is calling
 
-`session` is the signed-in editor or agent (`{ sub, email, name, roles }`), from a bearer token or the editor's cookie, or `null` for anonymous requests. Routes are public unless you check: the CMS applies no permissions to them. Check `session` for "any signed-in user", and `session.roles` for more. On development sites, the dev sign-in's session has `roles: ["dev"]`.
+`session` is the signed-in editor or agent (`{ sub, email, name, roles }`), from a bearer token or the editor's cookie, or `null` for anonymous requests. Routes are public unless you check: the CMS applies no permissions to them. Check `session` for "any signed-in user". For more, declare permissions in the plugin's descriptor and check them with `can(session, "<permission>")` from the server entry's context, which reads the site's roles for you (`vibe-cms docs permissions`). On development sites, the dev sign-in's session has `roles: ["dev"]` and every permission.
 
 ## Editor pages and nav
 
@@ -65,6 +65,8 @@ export default defineAdmin(() => ({
 ```
 
 A page component gets `{ cms, params }`; `params` holds the page key's `:name` segments. Nav items take `label`, `to` and an optional `icon`, either a name from the editor's icon set (a type error if unknown) or your own component.
+
+Pages, nav items and commands take a `permit` naming one of the plugin's own permissions, `{ permission: "apiKey" }` or with a `level`: people without it don't see the nav item or command, and get "Page not found" for the page. It only hides them, so the routes they call must check too (`vibe-cms docs permissions`).
 
 ## Calling routes from the editor
 

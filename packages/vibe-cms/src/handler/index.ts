@@ -3,7 +3,7 @@ import type { PluginDescriptor } from "../descriptor.ts";
 import { createQueryClient, type QueryClient } from "../query/index.ts";
 import { createRouter } from "./router.ts";
 import { readCookie } from "./http.ts";
-import { can, verifySession } from "./auth.ts";
+import { can, canPlugin, verifySession } from "./auth.ts";
 import { getOrCreateMeta, migrate, newId, sha256 } from "./db.ts";
 import { Engine, type EngineState, type SiteSettings } from "./engine.ts";
 import type { D1, ExecutionContext, Fetcher, ImagesBinding, MessageBatch, R2, ScheduledEvent } from "./platform.ts";
@@ -199,7 +199,8 @@ export function createHandler<C extends AnyConfig, E = any>(config: C, options: 
       options: plugin.options,
       env,
       log: console,
-      cms: createQueryClient(queries => new Engine(full, { origin: "", session: null, trusted: true }).execute(queries))
+      cms: createQueryClient(queries => new Engine(full, { origin: "", session: null, trusted: true }).execute(queries)),
+      can: (session, permission, level) => canPlugin(full, session ?? null, { plugin: plugin.name, permission, ...(level !== undefined ? { level } : {}) })
     }));
     const full: EngineState = { ...partial, plugins };
     return full;

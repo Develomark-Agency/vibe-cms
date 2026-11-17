@@ -13,5 +13,6 @@ One small plugin per feature, all registered in [`vibe-cms.config.ts`](./vibe-cm
 | [`src/scheduled`](./src/scheduled) | `cron` and `queues` | `vibe-cms docs server-hooks` |
 | [`src/media`](./src/media) | `media.beforeUpload`, `media.analyze` | `vibe-cms docs server-hooks` |
 | [`src/counter`](./src/counter) | A Durable Object exported through `vibe-cms/exports` | `vibe-cms docs plugins` |
+| [`src/newsletter`](./src/newsletter) | The plugin's own permissions, guarding a secret setting | `vibe-cms docs permissions` |
 
 Each plugin folder has an `index.ts` (the descriptor, imported by the config), a `plugin.server.ts` (Worker only) and/or a `plugin.admin.tsx` (editor only).

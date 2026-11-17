@@ -78,7 +78,7 @@ function WordsPanel({ value }: DocumentSlotProps) {
 
 ## Commands
 
-A command's `run` may be async; if it throws, the editor shows the message as an error toast.
+A command's `run` may be async; if it throws, the editor shows the message as an error toast. A `permit` hides it from people without one of the plugin's permissions, as it does for pages and nav items (`vibe-cms docs plugin-routes`).
 
 ## Field decorators
 
@@ -109,6 +109,7 @@ Every component and the factory itself get `cms`, an `AdminClient` that sends th
 | `assets.list(…)`, `assets.get(id)` | The media library |
 | `documents.list(type, …)` | Drafts of a content type |
 | `mediaUrl(id)` | An uploaded file's URL |
+| `can(permission, level?)` | Whether the signed-in person has a plugin's permission, named in full: `cms.can("newsletter.apiKey", "edit")`. For showing and hiding only (`vibe-cms docs permissions`) |
 | `types` | The site's content type names |
 | `navigate(path)` | Opens an editor path, like `/content/post/new` or `/p/<plugin>/…` |
 | `toast(message, { type? })` | A notification: `"success"`, `"error"` or `"info"` |

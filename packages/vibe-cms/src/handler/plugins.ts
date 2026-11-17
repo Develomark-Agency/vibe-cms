@@ -1,12 +1,14 @@
 import { coreActions } from "../actions/core.ts";
-import { listActions, type ActionEntry } from "../actions/define.ts";
+import { listActions, resolvePermit, type ActionEntry } from "../actions/define.ts";
 import { inputJsonSchema } from "../actions/describe.ts";
-import { loadLazy, IMPL, type PluginDescriptor } from "../descriptor.ts";
+import { loadLazy, IMPL, permissionLevels, type PluginDescriptor, type PluginPermission } from "../descriptor.ts";
 import type { ServerContext, ServerHooks, ServerPlugin } from "../server/index.ts";
 
 export interface LoadedPlugin {
   name: string,
-  hooks: ServerHooks
+  hooks: ServerHooks,
+  /** What its descriptor declares in `permissions`. */
+  permissions?: Record<string, PluginPermission>
 }
 
 export type HookArgs<K extends keyof ServerHooks> = NonNullable<ServerHooks[K]> extends (...args: infer A) => unknown ? A : never;
@@ -36,7 +38,7 @@ export class PluginHost {
       if(typeof define !== "function") {
         throw new Error(`vibe-cms: plugin "${plugin.name}" server entry must default-export defineServer(...)`);
       }
-      loaded.push({ name: plugin.name, hooks: await define(context(plugin)) });
+      loaded.push({ name: plugin.name, hooks: await define(context(plugin)), ...(plugin.permissions ? { permissions: plugin.permissions } : {}) });
     }
     const host = new PluginHost(loaded);
     // Fail at boot, not on the first call, if an action is malformed or a name is taken.
@@ -63,6 +65,16 @@ export class PluginHost {
       }
       const added = listActions({ [plugin.name]: plugin.hooks.actions }, plugin.name);
       for(const entry of added) {
+        // A permit naming a permission the plugin doesn't declare would refuse everyone but owners: say so now.
+        const permit = resolvePermit(entry.annotations.permit, plugin.name);
+        if(permit && "plugin" in permit) {
+          const declared = plugin.permissions?.[permit.permission];
+          if(!declared) throw new Error(`vibe-cms: action "${entry.name}" asks for permission "${permit.permission}", which plugin "${plugin.name}" doesn't declare in its permissions`);
+          const levels = permissionLevels(declared)?.map(level => level.value);
+          if(permit.level !== undefined && !levels?.includes(permit.level)) {
+            throw new Error(`vibe-cms: action "${entry.name}" asks for permission "${permit.permission}" at level "${permit.level}", which it ${levels ? `doesn't have (${levels.join(", ")})` : "can't have: it's yes or no"}`);
+          }
+        }
         // Agents and listings need the input described, so find out now whether it can be.
         try {
           inputJsonSchema(entry.input, { files: "json" });

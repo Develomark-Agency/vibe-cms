@@ -102,6 +102,7 @@ A role is an object of rules; a user may do anything any of their roles allows.
 | `manageTrash: true` | Changing how long deleted documents and files stay restorable (the Trash page's Retention). Not implied by anything but `all`. |
 | `manageActivity: true` | Changing how long the activity log is kept (the Activity page's Retention, `vibe-cms docs activity`). Not implied by anything but `all`. |
 | `manageScheduledBackups: true` | Turning scheduled backups on or off on the Site page: whether the site's hub may take and restore snapshots on its own (`vibe-cms docs backups`). It gives standing access to every draft and file. Not implied by anything but `all`. |
+| `plugins: { <plugin>: { <permission>: … } }` | Permissions plugins add (below): `true` for a yes or no permission, a level's value for one with levels. Not implied by anything but `all`. |
 
 Details that matter:
 
@@ -111,6 +112,56 @@ Details that matter:
 - Actions that plugins add are checked too: they need a signed-in user, read-only connections only run those marked `readOnly`, and an action can ask for a permission of its own (`vibe-cms docs plugin-actions`).
 - Rules naming content types the site doesn't have are ignored at runtime and refused when saving.
 
+## Plugin permissions
+
+A plugin can add permissions of its own, for what only some people should do with it: change its API key, send a newsletter, see its reports. It declares them in its descriptor, and they appear on the Roles page under the plugin, given role by role like everything else.
+
+```ts
+// examples/plugins/src/newsletter/index.ts
+  permissions: {
+    // Levels, lowest first: each includes the ones before it.
+    apiKey: { label: "API key", description: "See whether the key is set, or change it", levels: ["view", "edit"] },
+    // Yes or no.
+    send: { label: "Send newsletters", description: "Email a published post to every subscriber" }
+  },
+```
+
+| Field | |
+|---|---|
+| `label` | Shown on the Roles page. Required |
+| `description` | Shown under it |
+| `levels` | Without them, the permission is yes or no. With them, a role picks one, lowest first, and each includes the ones before it. A level is a value (`"edit"`, labelled "Edit") or `{ value, label }`. `none` is taken: it's how the Roles page shows not having it |
+| `readOnly` | Having it only lets people look, so connections approved read only (agents) keep it. Without it, read-only connections never have the permission |
+
+Names and level values are letters, digits, `-` and `_`. A role stores what it gives under `plugins`: `{ newsletter: { apiKey: "view", send: true } }`.
+
+Who has them:
+
+- Owners, the dev sign-in and roles with `all: true` have every plugin permission, at its highest level. Nobody else does until a role gives it.
+- Someone with several roles has the most any of them gives.
+- People who manage roles without being owners can only give what they have themselves, as with every other rule.
+- A permission or level a plugin stops declaring is ignored, and the Roles page offers to remove it, as it does for deleted content types.
+- Templates in the hub keep a role's plugin permissions as they are, and a site skips any its plugins don't declare when one is applied.
+
+The plugin checks them; nothing is checked for it unless it asks:
+
+| Where | How |
+|---|---|
+| Actions | `permit: { permission: "send" }`, or with `level: "edit"`, checked before the handler runs (`vibe-cms docs plugin-actions`) |
+| Routes, hooks, cron | `can(session, "apiKey", "edit")` from the server entry's context. False for `null` |
+| Editor pages, nav items, commands | `permit: { permission: "apiKey" }` hides them (`vibe-cms docs plugin-routes`) |
+| Anything else in the editor | `cms.can("newsletter.apiKey", "edit")`, named in full since the editor's client is shared |
+
+A level asks for that level or above, and leaving it out asks for any. Naming a permission or level the plugin doesn't declare throws, rather than quietly refusing everyone.
+
+```ts
+// examples/plugins/src/newsletter/plugin.server.ts
+    "PUT /key": async (request, { session }) => {
+      if(!can(session, "apiKey", "edit")) return Response.json({ error: "Not allowed" }, { status: 403 });
+```
+
+The editor only hides what people can't use: anything in the browser can be called directly, so the server checks every time. Keep secrets on the server, too: the newsletter's route tells people who may see the key whether it's set and how it ends, never the key itself.
+
 ## Checking access from code
 
-Plugin hooks and routes receive the request's `session` (`{ sub, email, name, roles }`, or `null` for public requests); see `vibe-cms docs server-hooks`. In-process clients (`vibe.client(env)`, a plugin's `ctx.cms`) are trusted and skip permission checks.
+Plugin hooks and routes receive the request's `session` (`{ sub, email, name, roles }`, or `null` for public requests); see `vibe-cms docs server-hooks`. Check a plugin's own permissions with `can` (above). In-process clients (`vibe.client(env)`, a plugin's `ctx.cms`) are trusted and skip permission checks.

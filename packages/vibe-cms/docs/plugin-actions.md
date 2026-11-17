@@ -90,11 +90,13 @@ Plugin actions don't go through the engine's checks the way built-in ones do, so
 
 - A signed-in user is required. Nothing is public.
 - Read-only connections (agents the user approved read only) can only run actions marked `readOnly: true`.
-- `permit` names a permission the user must have, using the same rules as everything else (`vibe-cms docs permissions`): `permit: { action: "write", scope: "site" }`.
+- `permit` names a permission the user must have: one of the site's, using the same rules as everything else (`permit: { action: "write", scope: "site" }`), or one the plugin declares itself (`permit: { permission: "send" }`, or `{ permission: "apiKey", level: "edit" }` for that level or above). See `vibe-cms docs permissions`.
 
 ```ts
 defineAction({ summary: "Rebuild search", description: "Rebuilds the search index.", permit: { action: "write", scope: "site" }, handler: … })
 ```
+
+A `permit` naming a permission or level the plugin doesn't declare stops the site from starting.
 
 A failed check is a `401` or `403` (`UNAUTHORIZED`, `FORBIDDEN`). Anything finer is for the handler, which can use `engine` and the `cms` client the plugin was given (trusted, reads drafts).
 

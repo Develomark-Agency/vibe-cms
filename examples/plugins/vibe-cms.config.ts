@@ -3,6 +3,7 @@ import v from "vibe-cms/schema";
 import { CounterPlugin } from "./src/counter/index.ts";
 import { EditorPlugin } from "./src/editor/index.ts";
 import { MediaPlugin } from "./src/media/index.ts";
+import { NewsletterPlugin } from "./src/newsletter/index.ts";
 import { RulesPlugin } from "./src/rules/index.ts";
 import { ScheduledPlugin } from "./src/scheduled/index.ts";
 import { SlugsPlugin } from "./src/slugs/index.ts";
@@ -21,7 +22,8 @@ export default defineConfig({
     EditorPlugin(),
     ScheduledPlugin(),
     MediaPlugin({ maxSize: 10_000_000 }),
-    CounterPlugin()
+    CounterPlugin(),
+    NewsletterPlugin()
   ],
   collections: {
     post: {

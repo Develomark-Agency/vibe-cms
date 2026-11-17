@@ -1,6 +1,7 @@
 import { TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
-import type { Action, RoleRules } from "../../config.ts";
+import type { Action, PluginGrants, RoleRules } from "../../config.ts";
+import { permissionLevels, type PluginPermission } from "../../descriptor.ts";
 import { Button } from "../components/ui/button.tsx";
 import { Checkbox } from "../components/ui/checkbox.tsx";
 import { Input } from "../components/ui/input.tsx";
@@ -37,7 +38,7 @@ const BACKUP_LEVELS: Array<{ value: "none" | "take" | "restore", label: string }
   { value: "restore", label: "Take and restore" }
 ];
 
-const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "viewActivity", "manageRedirects", "manageTrash", "manageActivity", "manageScheduledBackups", "*"]);
+const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "viewActivity", "manageRedirects", "manageTrash", "manageActivity", "manageScheduledBackups", "manageRoles", "plugins", "*"]);
 
 function levelOf(actions: Action[] | undefined): Level {
   if(!actions?.length) return "none";
@@ -76,18 +77,35 @@ export function sameRules(a: RoleRules, b: RoleRules): boolean {
 function canonical(rules: RoleRules): string {
   const entries = Object.entries(rules)
     .filter(([key, value]) => value !== undefined && value !== false && !(Array.isArray(value) && !value.length && !SPECIAL.has(key) && !rules["*"]))
-    .map(([key, value]) => [key, Array.isArray(value) ? [...value].sort() : value] as const)
+    .filter(([key, value]) => key !== "plugins" || Object.values(value as PluginGrants).some(grants => Object.keys(grants).length))
+    .map(([key, value]) => [key, Array.isArray(value) ? [...value].sort() : key === "plugins" ? sortedGrants(value as PluginGrants) : value] as const)
     .sort(([x], [y]) => x.localeCompare(y));
   return JSON.stringify(entries);
 }
 
-export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
+/** Plugin grants with plugins and permissions in name order, so edits that end where they began compare equal. */
+function sortedGrants(grants: PluginGrants): Array<[string, Array<[string, true | string]>]> {
+  return Object.entries(grants)
+    .filter(([, entries]) => Object.keys(entries).length)
+    .map(([plugin, entries]) => [plugin, Object.entries(entries).sort(([x], [y]) => x.localeCompare(y))] as [string, Array<[string, true | string]>])
+    .sort(([x], [y]) => x.localeCompare(y));
+}
+
+/** The plugins on a site that add permissions, as the Roles page lists them. */
+export type PluginPermissions = Array<{ name: string, permissions: Record<string, PluginPermission> }>;
+
+export function RoleRulesEditor({ rules, onChange, types, locales, plugins, readOnly }: {
   rules: RoleRules,
   onChange(next: RoleRules): void,
   /** The site's content types; null for a template, where types are typed in. */
   types: Array<{ name: string, label: string }> | null,
   /** The site's locales; null for a template. */
   locales: string[] | null,
+  /**
+   * Plugins that add permissions, shown as their own section. Left out for a template, where the hub
+   * doesn't know a site's plugins: what a template's rules already give is kept as it is.
+   */
+  plugins?: PluginPermissions,
   readOnly?: boolean
 }) {
   const [newType, setNewType] = useState("");
@@ -97,6 +115,16 @@ export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
     if(value === undefined || value === false) delete next[key];
     else next[key] = value as RoleRules[string];
     onChange(next);
+  }
+
+  function setGrant(plugin: string, key: string, value: true | string | undefined) {
+    const grants: PluginGrants = structuredClone(rules.plugins ?? {});
+    const entries = grants[plugin] ?? {};
+    if(value === undefined) delete entries[key];
+    else entries[key] = value;
+    if(Object.keys(entries).length) grants[plugin] = entries;
+    else delete grants[plugin];
+    set("plugins", Object.keys(grants).length ? grants : undefined);
   }
 
   const star = rules["*"] as Action[] | undefined;
@@ -246,6 +274,42 @@ export function RoleRulesEditor({ rules, onChange, types, locales, readOnly }: {
               onChange={value => set("backups", value === "restore" ? true : value === "take" ? "take" : undefined)}
             />
           </ul>
+
+          {plugins?.map(plugin => (
+            <div key={plugin.name} className="flex flex-col border-t">
+              <div className="flex flex-col gap-1 px-5 pt-4 pb-1">
+                <p className="text-sm font-medium">Plugin: <code className="font-mono">{plugin.name}</code></p>
+                <p className="text-sm text-muted-foreground">Permissions this plugin adds. Nobody but owners and roles with Everything has them until they're given here.</p>
+              </div>
+              <ul>
+                {Object.entries(plugin.permissions).map(([key, permission]) => {
+                  const levels = permissionLevels(permission);
+                  const value = rules.plugins?.[plugin.name]?.[key];
+                  if(!levels) {
+                    return (
+                      <li key={key} className="list-none">
+                        <Row title={permission.label} description={permission.description}>
+                          <Switch checked={value === true} disabled={readOnly} aria-label={permission.label} onCheckedChange={on => setGrant(plugin.name, key, on ? true : undefined)} />
+                        </Row>
+                      </li>
+                    );
+                  }
+                  const options = [{ value: "none", label: "No access" }, ...levels];
+                  return (
+                    <AccessRow
+                      key={key}
+                      title={permission.label}
+                      hint={permission.description}
+                      levels={options}
+                      level={typeof value === "string" && levels.some(level => level.value === value) ? value : "none"}
+                      readOnly={readOnly}
+                      onChange={level => setGrant(plugin.name, key, level === "none" ? undefined : level)}
+                    />
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </>
       )}
     </div>
@@ -302,12 +366,12 @@ function wordBreaks(id: string): React.ReactNode {
 }
 
 /** A setting with its control at the right. `wide` controls go under the name when the editor is narrow. */
-function Row({ title, description, wide, children }: { title: string, description: string, wide?: boolean, children: React.ReactNode }) {
+function Row({ title, description, wide, children }: { title: string, description?: string, wide?: boolean, children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2.5 border-t px-5 py-4 first:border-t-0">
       <div className="min-w-0">
         <p className="text-sm font-medium">{title}</p>
-        <p className="text-sm text-muted-foreground">{description}</p>
+        {description && <p className="text-sm text-muted-foreground">{description}</p>}
       </div>
       <div className={cn("flex justify-end", wide && "col-span-2 justify-start @2xl:col-span-1")}>{children}</div>
     </div>

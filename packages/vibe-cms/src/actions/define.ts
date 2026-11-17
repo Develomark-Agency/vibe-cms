@@ -3,7 +3,7 @@ import { call, defineMeta, ORPCError, os, walkProcedureContractsSync, type AnyPr
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { z } from "zod";
 import { HttpError } from "../config.ts";
-import type { Permit } from "../handler/auth.ts";
+import type { Permit, PluginPermit } from "../handler/auth.ts";
 import type { Engine } from "../handler/engine.ts";
 import { codeForStatus, type ActionError, type ActionErrorCode } from "./errors.ts";
 import type { ActionInput } from "./inputs.ts";
@@ -28,13 +28,31 @@ export interface ActionAnnotations {
    * actions only when `true`. Every action stays reachable by name over REST and the CLI.
    */
   mcp?: boolean,
-  /** A plugin action's permission, checked before it runs, on top of needing a signed-in user: `{ action: "write", scope: "site" }`. */
-  permit?: Permit,
+  /**
+   * A plugin action's permission, checked before it runs, on top of needing a signed-in user: one of the
+   * site's (`{ action: "write", scope: "site" }`), or one the plugin declares (`{ permission: "manageKeys" }`,
+   * `{ permission: "keys", level: "edit" }` for that level or above).
+   */
+  permit?: Permit | OwnPermit,
   /**
    * `"read"` records a sensitive read in the activity log (a backup download, a user list). Every action
    * that changes something is recorded anyway; ordinary reads aren't.
    */
   audit?: "read"
+}
+
+/** A permission the action's own plugin declares in its descriptor's `permissions`. */
+export interface OwnPermit {
+  permission: string,
+  /** For a permission with levels: this one or above. Any level when left out. */
+  level?: string
+}
+
+/** The check an action's `permit` stands for, with a plugin's own permission named in full. */
+export function resolvePermit(permit: Permit | OwnPermit | undefined, plugin: string | undefined): Permit | PluginPermit | undefined {
+  if(!permit || !("permission" in permit)) return permit;
+  if(!plugin) throw new Error("vibe-cms: only plugin actions can ask for a plugin's permission");
+  return { plugin, permission: permit.permission, ...(permit.level !== undefined ? { level: permit.level } : {}) };
 }
 
 const [annotationsMeta, getAnnotations] = defineMeta<"vibe/annotations", ActionAnnotations>("vibe/annotations", (incoming, current) => ({ ...current, ...incoming }));
@@ -305,7 +323,7 @@ export async function runAction(entry: ActionEntry, ctx: ActionContext, input: u
   try {
     if(entry.plugin) {
       try {
-        ctx.engine.authorize(entry.annotations, entry.annotations.permit);
+        ctx.engine.authorize(entry.annotations, resolvePermit(entry.annotations.permit, entry.plugin));
       } catch (error) {
         if(error instanceof HttpError && error.status === 403) ctx.engine.recordActivity({ action: `plugin:${entry.name}`, ok: false, error: "FORBIDDEN", targetType: entry.plugin });
         throw error;

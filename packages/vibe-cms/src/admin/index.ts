@@ -63,6 +63,12 @@ export interface AdminClient {
   plugins: Record<string, Record<string, (body?: unknown) => Promise<unknown>>>,
   /** URL of an uploaded file by asset ID. */
   mediaUrl(id: string): string,
+  /**
+   * Whether the signed-in person has a plugin's permission, named `<plugin>.<permission>`: `cms.can("stripe.manageKeys")`,
+   * or `cms.can("stripe.keys", "edit")` for that level or above. Only for showing and hiding things: the server
+   * must check too. See `vibe-cms docs permissions`.
+   */
+  can(permission: string, level?: string): boolean,
   /** Content type names of this site. */
   types: string[],
   /** Opens an editor path without `/_vibe/admin`: `/content/post/new`, `/p/<plugin>/…`. */
@@ -111,8 +117,20 @@ export interface DocumentSlotProps {
   cms: AdminClient
 }
 
+/**
+ * One of the plugin's own permissions (its descriptor's `permissions`) that someone needs to see an
+ * editor page, nav link or command. It only hides them: check on the server as well.
+ */
+export interface AdminPermit {
+  permission: string,
+  /** For a permission with levels: this one or above. Any level when left out. */
+  level?: string
+}
+
 /** A link in the editor's navigation, under "Tools". */
 export interface NavItem {
+  /** Hidden from people without this permission. */
+  permit?: AdminPermit,
   label: string,
   /** Relative to the plugin: `"/"` links to `/_vibe/admin/p/<plugin>`. */
   to: string,
@@ -178,6 +196,8 @@ export interface FieldDecorator {
 
 /** An entry in the editor's command menu. If `run` throws, its message is shown as an error toast. */
 export interface Command {
+  /** Hidden from people without this permission. */
+  permit?: AdminPermit,
   id: string,
   label: string,
   run: () => void | Promise<void>
@@ -185,6 +205,8 @@ export interface Command {
 
 /** An editor page, registered under a path relative to the plugin. */
 export interface AdminPage {
+  /** People without this permission get "Page not found". */
+  permit?: AdminPermit,
   title: string,
   /** `params` holds the page key's `:name` segments. */
   component: ComponentType<{ cms: AdminClient, params: Record<string, string> }>

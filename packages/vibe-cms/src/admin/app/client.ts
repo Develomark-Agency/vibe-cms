@@ -1,7 +1,8 @@
 import type { SiteWarning } from "../../handler/images.ts";
 import { toast } from "sonner";
 import { hc } from "hono/client";
-import type { SerializedConfig } from "../../config.ts";
+import type { AnyConfig, PluginGrants, SerializedConfig } from "../../config.ts";
+import { grantRank, neededRank } from "../../roles.ts";
 import { ORPCError } from "@orpc/client";
 import { createActionClient, encodeInput } from "../../actions/client.ts";
 import type { CoreActions } from "../../actions/core.ts";
@@ -53,7 +54,26 @@ export interface Permissions {
   /** May change how long activity is kept. Missing from older sites. */
   activityRetention?: boolean,
   /** May turn scheduled backups on or off. Missing from older sites. */
-  scheduledBackups?: boolean
+  scheduledBackups?: boolean,
+  /** Plugins' permissions this person has: `{ stripe: { manageKeys: true, keys: "view" } }`. Missing from older sites. */
+  plugins?: PluginGrants
+}
+
+/**
+ * `cms.can`: whether the signed-in person has a plugin's permission, named `<plugin>.<permission>`, at
+ * least at `level` when given. Throws for one no plugin declares, as the server does.
+ */
+export function pluginCan(config: Pick<AnyConfig, "plugins">, permissions: () => Permissions | null | undefined) {
+  return (name: string, level?: string): boolean => {
+    const dot = name.indexOf(".");
+    const plugin = name.slice(0, dot);
+    const key = name.slice(dot + 1);
+    const declared = dot > 0 ? config.plugins?.find(entry => entry.name === plugin)?.permissions?.[key] : undefined;
+    if(!declared) throw new Error(`vibe-cms: no plugin declares the permission "${name}" (name it as <plugin>.<permission>)`);
+    const needed = neededRank(declared, level);
+    if(needed < 0) throw new Error(`vibe-cms: the permission "${name}" has no level "${level}"`);
+    return grantRank(declared, permissions()?.plugins?.[plugin]?.[key]) >= needed;
+  };
 }
 
 export interface SessionState {
@@ -182,7 +202,7 @@ export async function requestBlob(prefix: string, path: string): Promise<Blob> {
 /** The read-only core actions (`readOnly` in their annotations), by name, so the editor doesn't load their definitions. */
 const READ_ONLY_ACTION = /\.(list|get|references|versions?)$/;
 
-export function createAdminClient(prefix: string, types: string[], navigate: (path: string) => void): AdminClient {
+export function createAdminClient(prefix: string, types: string[], navigate: (path: string) => void, access?: { config: Pick<AnyConfig, "plugins">, permissions: () => Permissions | null | undefined }): AdminClient {
   function api<T>(path: string, init?: RequestInit & { json?: unknown }) {
     return request<T>(prefix, path, init);
   }
@@ -213,6 +233,7 @@ export function createAdminClient(prefix: string, types: string[], navigate: (pa
     },
     plugins,
     mediaUrl: id => `${prefix}/media/${id}`,
+    can: pluginCan(access?.config ?? {}, access?.permissions ?? (() => null)),
     types,
     navigate,
     toast(message, options = {}) {

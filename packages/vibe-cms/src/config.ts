@@ -1,4 +1,4 @@
-import type { PluginDescriptor } from "./descriptor.ts";
+import type { PluginDescriptor, PluginPermission } from "./descriptor.ts";
 import { setBreakpoints } from "./media/widths.ts";
 import type {
   AnySchema,
@@ -60,9 +60,17 @@ export interface RoleRules {
    * and restore them as itself, with no one signed in. Gives standing access to every draft and file.
    */
   manageScheduledBackups?: boolean,
+  /**
+   * Permissions plugins add, by plugin and then permission: `{ stripe: { manageKeys: true, keys: "view" } }`.
+   * `true` for a yes or no permission, the level's value for one with levels. Not implied by anything but `all`.
+   */
+  plugins?: PluginGrants,
   /** Per content type, or `"*"` for every type without its own rule (a type's rule replaces `"*"`). `delete` is never implied. */
-  [type: string]: Action[] | boolean | "take" | { locales: string[] } | undefined
+  [type: string]: Action[] | boolean | "take" | { locales: string[] } | PluginGrants | undefined
 }
+
+/** What a role gives of plugins' permissions: plugin name → permission → `true` or a level. */
+export type PluginGrants = Record<string, Record<string, true | string>>;
 
 /** Who may do what on a deployed site. Development sessions have every permission. */
 type TextKeys<S> = S extends ObjectSchema<infer Sh>
@@ -323,7 +331,7 @@ export function serializeConfig(config: AnyConfig) {
     defaultLocale: config.defaultLocale,
     collections: config.collections ?? {},
     schemas,
-    plugins: (config.plugins ?? []).map(p => ({ name: p.name }))
+    plugins: (config.plugins ?? []).map(p => ({ name: p.name, ...(p.permissions ? { permissions: p.permissions } : {}) }))
   })) as SerializedConfig;
 }
 
@@ -333,5 +341,5 @@ export interface SerializedConfig {
   defaultLocale: string,
   collections: Record<string, CollectionSettings>,
   schemas: Record<string, ObjectSchema>,
-  plugins: Array<{ name: string }>
+  plugins: Array<{ name: string, permissions?: Record<string, PluginPermission> }>
 }

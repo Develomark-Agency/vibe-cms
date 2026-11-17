@@ -60,7 +60,8 @@ export function roleSchema(config: AnyConfig): RoleSchema {
   const collections = (config.collections ?? {}) as Record<string, { label?: string } | undefined>;
   return {
     types: Object.keys(config.schemas).map(name => ({ name, label: collections[name]?.label ?? name })),
-    locales: [...(config.locales ?? [config.defaultLocale ?? "en"])]
+    locales: [...(config.locales ?? [config.defaultLocale ?? "en"])],
+    plugins: (config.plugins ?? []).flatMap(plugin => (plugin.permissions ? [{ name: plugin.name, permissions: plugin.permissions }] : []))
   };
 }
 

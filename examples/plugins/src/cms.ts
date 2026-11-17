@@ -5,7 +5,8 @@ export interface Env {
   DB: D1Database,
   MEDIA: R2Bucket,
   COUNTERS: DurableObjectNamespace<import("./counter/counter.server.ts").Counter>,
-  WEBHOOK_URL: string
+  WEBHOOK_URL: string,
+  NEWSLETTER: KVNamespace
 }
 
 // Each plugin's binding contract is supplied under its name; a missing one is a type error.
@@ -14,6 +15,7 @@ export const vibe = createHandler(config, {
     db: env.DB,
     storage: env.MEDIA,
     webhook: { url: env.WEBHOOK_URL },
-    counter: { counters: env.COUNTERS }
+    counter: { counters: env.COUNTERS },
+    newsletter: { settings: env.NEWSLETTER }
   })
 });

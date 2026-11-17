@@ -1,5 +1,7 @@
 import { jwtVerify, SignJWT } from "jose";
-import { HttpError, type Action, type AnyConfig, type RoleRules } from "../config.ts";
+import { HttpError, type Action, type AnyConfig, type PluginGrants, type RoleRules } from "../config.ts";
+import type { PluginPermission } from "../descriptor.ts";
+import { grantRank, grantValue, neededRank } from "../roles.ts";
 import type { Session } from "../server/index.ts";
 import type { EngineState } from "./engine.ts";
 import { eq, lt } from "drizzle-orm";
@@ -180,6 +182,67 @@ export function can(access: Access, session: Session | null, permit: Permit): bo
   });
 }
 
+/** A check of a permission a plugin declared: any level unless `level` names one, which includes those above it. */
+export interface PluginPermit {
+  plugin: string,
+  permission: string,
+  level?: string
+}
+
+/** The plugin's declaration of a permission. Throws for one it doesn't declare: a mistake in the plugin, not a refusal. */
+export function declaredPermission(config: AnyConfig, { plugin, permission, level }: PluginPermit): PluginPermission {
+  const declared = config.plugins?.find(entry => entry.name === plugin)?.permissions?.[permission];
+  if(!declared) throw new Error(`vibe-cms: plugin "${plugin}" checks permission "${permission}", which it doesn't declare in its permissions`);
+  if(neededRank(declared, level) < 0) throw new Error(`vibe-cms: plugin "${plugin}" checks permission "${permission}" at level "${level}", which it doesn't have`);
+  return declared;
+}
+
+/** How much of a plugin permission someone has: 0 none, otherwise its rank (see `grantRank`). */
+function pluginRank(access: Access, session: Session | null, plugin: string, key: string, permission: PluginPermission): number {
+  if(!session) return 0;
+  if(session.readOnly && !permission.readOnly) return 0;
+  const top = permission.levels?.length ?? 1;
+  if(session.sub === "dev" || session.roles.includes(OWNER)) return top;
+  let rank = 0;
+  for(const name of session.roles) {
+    const rules = access.roles.map[name];
+    if(!rules) continue;
+    if(rules.all) return top;
+    rank = Math.max(rank, grantRank(permission, rules.plugins?.[plugin]?.[key]));
+  }
+  return rank;
+}
+
+/**
+ * Whether someone has a plugin's permission, at least at `level` when given. Owners, the dev sign-in
+ * and `all` roles have every one; read-only connections only those the plugin marks `readOnly`.
+ */
+export function canPlugin(access: Access, session: Session | null, permit: PluginPermit): boolean {
+  const declared = declaredPermission(access.config, permit);
+  return pluginRank(access, session, permit.plugin, permit.permission, declared) >= neededRank(declared, permit.level);
+}
+
+export function requirePlugin(access: Access, session: Session | null, permit: PluginPermit): Session {
+  if(!session) throw new HttpError(401, "Sign in required");
+  if(!canPlugin(access, session, permit)) {
+    const declared = declaredPermission(access.config, permit);
+    throw new HttpError(403, `Not allowed: needs ${declared.label}${permit.level ? ` (${permit.level})` : ""}`);
+  }
+  return session;
+}
+
+/** Every plugin permission someone has, for the editor: `{ stripe: { manageKeys: true, keys: "view" } }`. */
+function pluginSummary(access: Access, session: Session): PluginGrants {
+  const out: PluginGrants = {};
+  for(const plugin of access.config.plugins ?? []) {
+    for(const [key, permission] of Object.entries(plugin.permissions ?? {})) {
+      const value = grantValue(permission, pluginRank(access, session, plugin.name, key, permission));
+      if(value !== undefined) (out[plugin.name] ??= {})[key] = value;
+    }
+  }
+  return out;
+}
+
 function allows(rules: RoleRules, { action, type, locale, scope }: Permit): boolean {
   if(rules.all) return true;
   // Who may sign in, and as what: role managers too, limited to roles within their own (signin.ts).
@@ -253,6 +316,7 @@ export function permissionSummary(access: Access, session: Session) {
     trash: can(access, session, { action: "write", scope: "trash" }),
     activityRetention: can(access, session, { action: "write", scope: "activityRetention" }),
     scheduledBackups: can(access, session, { action: "write", scope: "scheduledBackups" }),
-    roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true || access.roles.map[role]?.manageRoles === true)
+    roles: session.sub === "dev" || session.roles.includes(OWNER) || session.roles.some(role => access.roles.map[role]?.all === true || access.roles.map[role]?.manageRoles === true),
+    plugins: pluginSummary(access, session)
   };
 }

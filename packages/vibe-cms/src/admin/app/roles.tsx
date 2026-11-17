@@ -3,7 +3,7 @@ import { ChevronDownIcon, MoreHorizontalIcon, PlusIcon, Trash2Icon, TriangleAler
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { RoleRules } from "../../config.ts";
-import { describeRules, validRoleName } from "../../roles.ts";
+import { describeRules, validRoleName, withoutStale } from "../../roles.ts";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog.tsx";
 import { Badge } from "../components/ui/badge.tsx";
 import { Button } from "../components/ui/button.tsx";
@@ -229,6 +229,7 @@ function RoleEditor({ role, canEdit, onDeleted, onDirtyChange }: { role: RoleVie
   });
 
   const types = Object.keys(config.schemas).map(name => ({ name, label: collectionLabel(config, name, false) }));
+  const plugins = (config.plugins ?? []).flatMap(plugin => (plugin.permissions && Object.keys(plugin.permissions).length ? [{ name: plugin.name, permissions: plugin.permissions }] : []));
 
   return (
     <section className="flex flex-col rounded-[16px] elevated">
@@ -265,12 +266,12 @@ function RoleEditor({ role, canEdit, onDeleted, onDirtyChange }: { role: RoleVie
             no longer {role.stale.length === 1 ? "exists" : "exist"} on this site.
           </p>
           {canEdit && (
-            <Button size="sm" variant="ghost" onClick={() => setRules(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !role.stale.includes(key))) as RoleRules)}>Remove</Button>
+            <Button size="sm" variant="ghost" onClick={() => setRules(previous => withoutStale(previous, role.stale))}>Remove</Button>
           )}
         </div>
       )}
 
-      <RoleRulesEditor rules={rules} onChange={setRules} types={types} locales={locales} readOnly={readOnly} />
+      <RoleRulesEditor rules={rules} onChange={setRules} types={types} locales={locales} plugins={plugins} readOnly={readOnly} />
 
       {role.updatedBy && (
         <p className="border-t px-5 py-4 text-sm text-muted-foreground">

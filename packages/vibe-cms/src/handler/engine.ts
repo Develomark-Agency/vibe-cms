@@ -19,7 +19,7 @@ import type {
 import { findReferences, isAssetValue, isRecord, pickUnionOption, schemaAt, shapeMismatches, validate, type Issue } from "../schema/validate.ts";
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
-import { BACKUP_ACCESS_KEY, backupAccess, can, require, type Permit } from "./auth.ts";
+import { BACKUP_ACCESS_KEY, backupAccess, can, canPlugin, require, requirePlugin, type Permit, type PluginPermit } from "./auth.ts";
 import { detectFavicon, type SiteFetch } from "./favicon.ts";
 import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
@@ -901,11 +901,12 @@ export class Engine {
    * Gate for plugin actions, whose handlers don't pass through the engine's own checks: needs a session,
    * refuses non-`readOnly` actions to read-only connections, and applies the action's `permit`.
    */
-  authorize(action: { readOnly?: boolean }, permit?: Permit): Session {
+  authorize(action: { readOnly?: boolean }, permit?: Permit | PluginPermit): Session {
     const session = this.scope.session;
     if(!session) throw new HttpError(401, "Sign in required");
     if(session.readOnly && !action.readOnly) throw new HttpError(403, "This connection is read only");
-    return permit ? require(this.state, session, permit) : session;
+    if(!permit) return session;
+    return "plugin" in permit ? requirePlugin(this.state, session, permit) : require(this.state, session, permit);
   }
 
   private writer(permit: Parameters<typeof require>[2]): Session | null {
@@ -2271,7 +2272,8 @@ export class Engine {
   }
 
   /** Whether the current session may do something; exposed for plugin routes. */
-  can(permit: Parameters<typeof can>[2]): boolean {
+  can(permit: Parameters<typeof can>[2] | PluginPermit): boolean {
+    if("plugin" in permit) return canPlugin(this.state, this.scope.session, permit);
     return can(this.state, this.scope.session, permit);
   }
 }

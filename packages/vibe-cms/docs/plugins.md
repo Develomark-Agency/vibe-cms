@@ -45,6 +45,7 @@ The examples in this topic come from `examples/plugins` in the vibe-cms reposito
 | `scheduled` | `cron` and `queues` |
 | `media` | `media.beforeUpload` and `media.analyze` |
 | `counter` | A Durable Object exported through `vibe-cms/exports` |
+| `newsletter` | Permissions of its own, guarding an API key (`vibe-cms docs permissions`) |
 
 ## The descriptor
 
@@ -81,7 +82,8 @@ Register plugins in the config. Transforming hooks run in this order, each seein
     EditorPlugin(),
     ScheduledPlugin(),
     MediaPlugin({ maxSize: 10_000_000 }),
-    CounterPlugin()
+    CounterPlugin(),
+    NewsletterPlugin()
   ],
 ```
 
@@ -109,6 +111,7 @@ The context:
 | `cms` | An in-process query client (`vibe-cms docs queries`). Trusted, so `drafts: true` works. Read only: there is no in-process write client |
 | `env` | The Worker's whole `env`, untyped |
 | `log` | `info`, `warn`, `error` (the console) |
+| `can(session, permission, level?)` | Whether `session` has one of the plugin's own permissions (`vibe-cms docs permissions`) |
 
 `defineServer<typeof Plugin>` types `options` and `bindings`. A site's own plugin can add `typeof config` as a second type argument to type documents in hooks against the site's schemas; a plugin written for any site leaves it out and gets plain JSON (`DocumentData`). A server entry may import the config itself, as the one above does, to query its collections.
 
@@ -153,7 +156,8 @@ export const vibe = createHandler(config, {
     db: env.DB,
     storage: env.MEDIA,
     webhook: { url: env.WEBHOOK_URL },
-    counter: { counters: env.COUNTERS }
+    counter: { counters: env.COUNTERS },
+    newsletter: { settings: env.NEWSLETTER }
   })
 });
 ```

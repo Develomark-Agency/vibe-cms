@@ -4,14 +4,14 @@ import type { IconName } from "../../icons.ts";
 import type { SiteWarning } from "../../handler/images.ts";
 import { MetadataPromptHost } from "./upload-metadata.tsx";
 import { FileTextIcon, HomeIcon, ImageIcon, LanguagesIcon, LogOutIcon, MonitorIcon, Trash2Icon, MoonIcon, SunIcon, PlusIcon, SlidersHorizontalIcon, AppWindowIcon, TriangleAlertIcon, UsersIcon, PlugIcon, ShieldIcon, ActivityIcon, SignpostIcon } from "lucide-react";
-import { createContext, StrictMode, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
+import { createContext, StrictMode, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Outlet, useRouteError, type RouteObject } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import Fuse from "fuse.js";
 import type { AnyConfig } from "../../config.ts";
 import { collectDescriptors, IMPL, loadLazy } from "../../descriptor.ts";
-import type { AdminPlugin, AdminPluginFactory, AdminClient } from "../index.ts";
+import type { AdminPermit, AdminPlugin, AdminPluginFactory, AdminClient, NavItem as NavLink } from "../index.ts";
 import { Button } from "../components/ui/button.tsx";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "../components/ui/command.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "../components/ui/dropdown-menu.tsx";
@@ -74,14 +74,23 @@ async function loadPlugins(config: AnyConfig, cms: AdminClient): Promise<Require
     try {
       const factory = await loadLazy(admin) as AdminPluginFactory;
       const result = factory({ cms });
+      // Permits name the plugin's own permissions; merged, they're named in full (`stats.reports`), as `cms.can` takes them.
+      const name = plugin.name;
+      function qualify<T extends { permit?: AdminPermit }>(item: T): T {
+        if(!item.permit) return item;
+        const permit = { ...item.permit, permission: `${name}.${item.permit.permission}` };
+        // Throws for a permission the plugin doesn't declare, so the mistake shows when the editor loads.
+        cms.can(permit.permission, permit.level);
+        return { ...item, permit };
+      }
       Object.assign(merged.widgets, result.widgets);
-      for(const [path, page] of Object.entries(result.pages ?? {})) merged.pages[`/p/${plugin.name}${path}`] = page;
+      for(const [path, page] of Object.entries(result.pages ?? {})) merged.pages[`/p/${plugin.name}${path}`] = qualify(page);
       for(const [slot, items] of Object.entries(result.slots ?? {})) {
         const list = merged.slots[slot as keyof typeof merged.slots] as unknown[];
-        list.push(...(items as unknown[]).map(item => (slot === "nav" ? { ...(item as object), to: `/p/${plugin.name}${(item as { to: string }).to}` } : item)));
+        list.push(...(items as unknown[]).map(item => (slot === "nav" ? qualify({ ...(item as NavLink), to: `/p/${plugin.name}${(item as NavLink).to}` }) : item)));
       }
       merged.fieldDecorators.push(...result.fieldDecorators ?? []);
-      merged.commands.push(...result.commands ?? []);
+      merged.commands.push(...(result.commands ?? []).map(qualify));
     } catch (error) {
       console.error(`vibe-cms: admin entry for plugin "${plugin.name}" failed to load`, error);
     }
@@ -135,7 +144,10 @@ function Shell({ config, info, session, prefix, onSignOut }: {
   prefix: string,
   onSignOut(): void
 }) {
-  const cms = useMemo(() => createAdminClient(prefix, Object.keys(config.schemas), path => navigate(path)), [prefix]);
+  // `cms.can` reads the live session: it's renewed (and roles can change) while the editor is open.
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const cms = useMemo(() => createAdminClient(prefix, Object.keys(config.schemas), path => navigate(path), { config, permissions: () => sessionRef.current.permissions }), [prefix]);
   setPreviewPrefix(prefix);
   const [plugins, setPlugins] = useState<Required<AdminPlugin> | null>(null);
   const site = useQuery({ queryKey: ["site"], queryFn: () => cms.actions.site.get(), initialData: info.settings, staleTime: Infinity }).data;
@@ -183,7 +195,7 @@ function adminRoutes(plugins: Required<AdminPlugin>): RouteObject[] {
       { path: "connections", element: <Allowed when={a => a.canConnect}><ConnectionsPage /></Allowed> },
       { path: "activity", element: <ActivityPage /> },
       { path: "trash", element: <Allowed when={a => a.canTrash}><TrashPage /></Allowed> },
-      ...Object.entries(plugins.pages).map(([pattern, entry]): RouteObject => ({ path: pattern, element: <PluginRoute component={entry.component} /> })),
+      ...Object.entries(plugins.pages).map(([pattern, entry]): RouteObject => ({ path: pattern, element: <PluginRoute page={entry} /> })),
       { path: "*", element: <NotFound /> }
     ]
   }];
@@ -263,10 +275,17 @@ function ContentReview() {
   return useAccess().types.includes(type!) ? <ReviewPage key={`${type}/${id}`} type={type!} id={id!} /> : <NotFound />;
 }
 
-function PluginRoute({ component: Page }: { component: Required<AdminPlugin>["pages"][string]["component"] }) {
+function PluginRoute({ page }: { page: Required<AdminPlugin>["pages"][string] }) {
   const { cms } = useAdmin();
   const params = useParams();
+  if(page.permit && !cms.can(page.permit.permission, page.permit.level)) return <NotFound />;
+  const Page = page.component;
   return <PluginPage><Page cms={cms} params={params} /></PluginPage>;
+}
+
+/** Whether an editor page, nav link or command's permit (already named in full) lets this person see it. */
+function allowed(cms: AdminClient, permit: AdminPermit | undefined): boolean {
+  return !permit || cms.can(permit.permission, permit.level);
 }
 
 function NotFound() {
@@ -362,7 +381,7 @@ function Layout({ onSignOut }: { onSignOut(): void }) {
     {
       key: "tools",
       label: "Tools",
-      items: plugins.slots.nav!.map((item): NavItem => ({ key: `tool:${item.to}`, to: item.to, label: item.label, icon: <Icon name={item.icon} /> }))
+      items: plugins.slots.nav!.filter(item => allowed(cms, item.permit)).map((item): NavItem => ({ key: `tool:${item.to}`, to: item.to, label: item.label, icon: <Icon name={item.icon} /> }))
     }
   ].filter(group => group.items.length > 0);
 
@@ -586,7 +605,7 @@ function Palette({ open, onOpenChange }: { open: boolean, onOpenChange(open: boo
     ...types.filter(t => session.permissions.types[t]?.write && !collectionSettings(config, t).singleton).map((type): PaletteCommand => ({
       id: `new-${type}`, group: "Create", label: `New ${collectionLabel(config, type, false).toLowerCase()}`, icon: <PlusIcon />, run: () => go(`/content/${type}/new`)
     })),
-    ...plugins.commands.map((command): PaletteCommand => ({ id: `command-${command.id}`, group: "Commands", label: command.label, run: async () => {
+    ...plugins.commands.filter(command => allowed(cms, command.permit)).map((command): PaletteCommand => ({ id: `command-${command.id}`, group: "Commands", label: command.label, run: async () => {
       onOpenChange(false);
       try {
         await command.run();

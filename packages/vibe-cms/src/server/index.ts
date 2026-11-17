@@ -150,6 +150,16 @@ export interface ServerContext<B = unknown, O = unknown> {
   options: O,
   /** In-process content access, read only. Drafts are allowed: server plugins are trusted. */
   cms: QueryClient<AnyConfig>,
+  /**
+   * Whether `session` has one of this plugin's own permissions (its descriptor's `permissions`), at
+   * least at `level` when given. False for `null`. Owners and `all` roles have every one. Throws for a
+   * permission or level the plugin doesn't declare. See `vibe-cms docs permissions`.
+   *
+   * ```ts
+   * if(!can(session, "manageKeys")) return Response.json({ error: "Not allowed" }, { status: 403 });
+   * ```
+   */
+  can(session: Session | null | undefined, permission: string, level?: string): boolean,
   /** The Worker's whole `env`. Prefer a binding contract. */
   env: unknown,
   log: Logger

@@ -56,6 +56,27 @@ export interface PluginWorkerExports {
   names: string[]
 }
 
+/**
+ * A permission a plugin adds to the site's roles, shown on the Roles page under the plugin. Without
+ * `levels` it's yes or no; with them, a role picks one level, and each includes the ones before it.
+ * Only owners and roles with `all` have it without being given it. See `vibe-cms docs permissions`.
+ */
+export interface PluginPermission {
+  /** Shown on the Roles page: "Manage API keys". */
+  label: string,
+  description?: string,
+  /**
+   * Lowest first: `["view", "edit"]`, or `{ value, label }` to label them. Values are letters, digits,
+   * `_` and `-`, and can't be `none`, which is what the Roles page calls not having the permission.
+   */
+  levels?: ReadonlyArray<string | { value: string, label: string }>,
+  /**
+   * Having it only lets people look, so connections approved read only (agents) keep it. Without
+   * this, read-only connections never have the permission, whatever the roles say.
+   */
+  readOnly?: boolean
+}
+
 /** What a `definePlugin` factory returns. */
 export interface PluginDefinition<O> {
   /** Letters, digits, `_` and `-`: used in URLs (`/_vibe/plugins/<name>/`, `/_vibe/admin/p/<name>/`) and as the bindings key. */
@@ -67,7 +88,12 @@ export interface PluginDefinition<O> {
   /** `() => import("./plugin.admin.tsx")`, whose default export is `defineAdmin(…)`. Loaded only in the editor. */
   admin?: Lazy<unknown>,
   /** Classes re-exported through `vibe-cms/exports`. */
-  exports?: PluginWorkerExports
+  exports?: PluginWorkerExports,
+  /**
+   * Permissions this plugin adds to the site's roles, keyed by a name the plugin checks them by
+   * (`manageKeys`). Plain data: the Worker, the editor and the Roles page all read it.
+   */
+  permissions?: Record<string, PluginPermission>
 }
 
 /** A plugin as listed in the config's `plugins`. Made by a `definePlugin` factory. */
@@ -76,6 +102,7 @@ export interface PluginDescriptor<B = {}, O = any, N extends string = string> {
   name: N,
   options: O,
   exports?: PluginWorkerExports,
+  permissions?: Record<string, PluginPermission>,
   [IMPL]: { server?: Lazy<unknown>, admin?: Lazy<unknown> },
   /** Phantom: the binding contract supplied through `createHandler`. */
   readonly "~bindings"?: B
@@ -100,16 +127,43 @@ export function definePlugin<B = {}>() {
     define: (...args: A) => PluginDefinition<O> & { name: N }
   ): (...args: A) => PluginDescriptor<B, O, N> {
     return (...args: A) => {
-      const { name, options, server, admin, exports } = define(...args);
+      const { name, options, server, admin, exports, permissions } = define(...args);
+      if(permissions) checkPermissions(name, permissions);
       return {
         kind: "plugin",
         name,
         options,
         ...(exports ? { exports } : {}),
+        ...(permissions ? { permissions } : {}),
         [IMPL]: { server, admin }
       };
     };
   };
+}
+
+const PERMISSION_NAME = /^[a-z][a-z0-9_-]{0,39}$/i;
+
+/** Throws at definition time for permission names and levels the roles couldn't store. */
+function checkPermissions(plugin: string, permissions: Record<string, PluginPermission>) {
+  for(const [key, permission] of Object.entries(permissions)) {
+    const where = `vibe-cms: plugin "${plugin}" permission "${key}"`;
+    if(!PERMISSION_NAME.test(key)) throw new Error(`${where}: names are letters, digits, - and _, starting with a letter`);
+    if(typeof permission?.label !== "string" || !permission.label) throw new Error(`${where} needs a label`);
+    if(permission.levels === undefined) continue;
+    const values = permissionLevels(permission)!.map(level => level.value);
+    if(!values.length) throw new Error(`${where}: levels can't be empty; leave them out for a yes or no permission`);
+    for(const value of values) {
+      if(!PERMISSION_NAME.test(value)) throw new Error(`${where}: level "${value}" must be letters, digits, - and _, starting with a letter`);
+      if(value === "none") throw new Error(`${where}: "none" is what the Roles page calls not having it, so it can't be a level`);
+    }
+    if(new Set(values).size !== values.length) throw new Error(`${where}: levels must be different`);
+  }
+}
+
+/** A permission's levels as `{ value, label }`, lowest first; null for a yes or no permission. */
+export function permissionLevels(permission: PluginPermission): Array<{ value: string, label: string }> | null {
+  if(!permission.levels) return null;
+  return permission.levels.map(level => (typeof level === "string" ? { value: level, label: level.charAt(0).toUpperCase() + level.slice(1) } : level));
 }
 
 /** Resolves a lazy import, unwrapping a default export. */

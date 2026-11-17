@@ -1,4 +1,5 @@
-import type { Action, RoleRules } from "./config.ts";
+import type { Action, PluginGrants, RoleRules } from "./config.ts";
+import { permissionLevels, type PluginPermission } from "./descriptor.ts";
 
 /**
  * Roles as data: the shapes a site stores and the hub's templates copy, the packaged presets, and the
@@ -8,7 +9,7 @@ import type { Action, RoleRules } from "./config.ts";
 export const ACTIONS: readonly Action[] = ["read", "write", "publish", "delete"];
 
 /** Rule keys that aren't content types. */
-const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "manageRoles", "viewActivity", "manageRedirects", "manageTrash", "manageActivity", "manageScheduledBackups", "*"]);
+const SPECIAL = new Set(["all", "publish", "write", "media", "siteSettings", "backups", "manageRoles", "viewActivity", "manageRedirects", "manageTrash", "manageActivity", "manageScheduledBackups", "plugins", "*"]);
 
 /** Built in, never stored: every permission, plus managing roles and who may sign in. */
 export const OWNER_ROLE = "owner";
@@ -20,10 +21,113 @@ export interface StoredRole {
   updatedAt: number | null
 }
 
-/** What a site has that rules can name: its content types (with labels) and locales. */
+/** What a site has that rules can name: its content types (with labels), locales, and plugins' permissions. */
 export interface RoleSchema {
   types: Array<{ name: string, label: string }>,
-  locales: string[]
+  locales: string[],
+  /** Plugins that add permissions. Missing from older sites, which have none. */
+  plugins?: Array<{ name: string, permissions: Record<string, PluginPermission> }>
+}
+
+// --- Plugin permissions --------------------------------------------------------------
+
+/**
+ * How much of a plugin's permission a stored value gives: 0 nothing, 1 for yes, or the level's place
+ * (1 is the lowest). A level the plugin doesn't declare (any more) gives nothing.
+ */
+export function grantRank(permission: PluginPermission, value: unknown): number {
+  const levels = permissionLevels(permission);
+  if(!levels) return value === true ? 1 : 0;
+  return typeof value === "string" ? levels.findIndex(level => level.value === value) + 1 : 0;
+}
+
+/** The rank a check needs: any level when none is named. -1 for a level the permission doesn't have. */
+export function neededRank(permission: PluginPermission, level?: string): number {
+  const levels = permissionLevels(permission);
+  if(!levels) return level === undefined ? 1 : -1;
+  if(level === undefined) return 1;
+  return levels.findIndex(entry => entry.value === level) + 1 || -1;
+}
+
+/** The value that stores a rank: `true`, or the level's value. Undefined for 0. */
+export function grantValue(permission: PluginPermission, rank: number): true | string | undefined {
+  if(rank <= 0) return undefined;
+  const levels = permissionLevels(permission);
+  return levels ? levels[Math.min(rank, levels.length) - 1]!.value : true;
+}
+
+/** Every declared plugin permission, flat. */
+function pluginPermissions(schema: RoleSchema): Array<{ plugin: string, key: string, permission: PluginPermission }> {
+  return (schema.plugins ?? []).flatMap(plugin => Object.entries(plugin.permissions).map(([key, permission]) => ({ plugin: plugin.name, key, permission })));
+}
+
+/** A permission in words, for messages: `"Manage API keys" (stripe)`, with the level when it has them. */
+function permissionPhrase(plugin: string, permission: PluginPermission, rank: number): string {
+  const levels = permissionLevels(permission);
+  const level = levels && rank > 0 ? `: ${levels[Math.min(rank, levels.length) - 1]!.label}` : "";
+  return `${permission.label}${level} (${plugin})`;
+}
+
+/** Rule problems in a role's `plugins`. */
+function pluginIssues(value: unknown, schema: RoleSchema): string[] {
+  if(typeof value !== "object" || value === null || Array.isArray(value)) return ["plugins must be { plugin: { permission: value } }"];
+  const issues: string[] = [];
+  for(const [plugin, grants] of Object.entries(value as Record<string, unknown>)) {
+    const declared = schema.plugins?.find(entry => entry.name === plugin)?.permissions;
+    if(!declared) {
+      issues.push(`"${plugin}" isn't a plugin with permissions on this site`);
+      continue;
+    }
+    if(typeof grants !== "object" || grants === null || Array.isArray(grants)) {
+      issues.push(`plugins.${plugin} must be { permission: value }`);
+      continue;
+    }
+    for(const [key, grant] of Object.entries(grants as Record<string, unknown>)) {
+      const permission = declared[key];
+      if(!permission) issues.push(`"${key}" isn't one of ${plugin}'s permissions`);
+      else if(grantRank(permission, grant) === 0) {
+        const levels = permissionLevels(permission);
+        issues.push(levels ? `plugins.${plugin}.${key} must be one of ${levels.map(level => level.value).join(", ")}` : `plugins.${plugin}.${key} must be true`);
+      }
+    }
+  }
+  return issues;
+}
+
+/** A role's `plugins` trimmed to what the site's plugins declare, with what was dropped. */
+function fitGrants(value: PluginGrants, schema: RoleSchema): { grants: PluginGrants, skipped: string[] } {
+  const grants: PluginGrants = {};
+  const skipped: string[] = [];
+  for(const [plugin, entries] of Object.entries(value ?? {})) {
+    const declared = schema.plugins?.find(entry => entry.name === plugin)?.permissions;
+    for(const [key, grant] of Object.entries(entries ?? {})) {
+      const permission = declared?.[key];
+      if(!declared) skipped.push(`plugin ${plugin} isn't on this site`);
+      else if(!permission) skipped.push(`permission ${plugin}.${key} doesn't exist on this site`);
+      else if(grantRank(permission, grant) === 0) skipped.push(`${plugin}.${key} has no level "${String(grant)}"`);
+      else (grants[plugin] ??= {})[key] = grant;
+    }
+  }
+  return { grants, skipped: [...new Set(skipped)] };
+}
+
+/** Removes stale entries (as {@link staleKeys} names them) from rules. */
+export function withoutStale(rules: RoleRules, stale: string[]): RoleRules {
+  const out: RoleRules = {};
+  for(const [key, value] of Object.entries(rules)) {
+    if(stale.includes(key)) continue;
+    if(key === "plugins" && value && typeof value === "object") {
+      const grants: PluginGrants = {};
+      for(const [plugin, entries] of Object.entries(value as PluginGrants)) {
+        const kept = Object.fromEntries(Object.entries(entries).filter(([permission]) => !stale.includes(`${plugin}.${permission}`)));
+        if(Object.keys(kept).length) grants[plugin] = kept;
+      }
+      if(Object.keys(grants).length) out.plugins = grants;
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
 }
 
 export interface Preset {
@@ -101,6 +205,8 @@ export function ruleIssues(rules: unknown, schema: RoleSchema): string[] {
       const locales = (value as { locales?: unknown })?.locales;
       if(!Array.isArray(locales) || locales.some(l => typeof l !== "string")) issues.push("write must be { locales: [...] }");
       else for(const locale of locales as string[]) if(!schema.locales.includes(locale)) issues.push(`Locale "${locale}" isn't one of this site's locales`);
+    } else if(key === "plugins") {
+      issues.push(...pluginIssues(value, schema));
     } else if(key === "media" || key === "*" || types.has(key)) {
       if(!isActions(value)) issues.push(`${key} must be a list of ${ACTIONS.join(", ")}`);
     } else {
@@ -125,6 +231,10 @@ export function fitRules(rules: RoleRules, schema: RoleSchema): { rules: RoleRul
       const kept = locales.filter(locale => schema.locales.includes(locale));
       for(const locale of locales) if(!kept.includes(locale)) skipped.push(`locale ${locale} doesn't exist on this site`);
       out.write = { locales: kept };
+    } else if(key === "plugins") {
+      const fitted = fitGrants(value as PluginGrants, schema);
+      skipped.push(...fitted.skipped);
+      if(Object.keys(fitted.grants).length) out.plugins = fitted.grants;
     } else if(SPECIAL.has(key) || types.has(key)) {
       out[key] = value;
     } else {
@@ -134,10 +244,22 @@ export function fitRules(rules: RoleRules, schema: RoleSchema): { rules: RoleRul
   return { rules: out, skipped };
 }
 
-/** Rule keys naming content types a site doesn't have: ignored when checking access, flagged in the editor. */
+/**
+ * Rules naming what a site doesn't have: content types by their key, plugin permissions as
+ * `<plugin>.<permission>` (including levels the plugin no longer has). Ignored when checking access,
+ * flagged in the editor.
+ */
 export function staleKeys(rules: RoleRules, schema: RoleSchema): string[] {
   const types = new Set(schema.types.map(type => type.name));
-  return Object.keys(rules).filter(key => !SPECIAL.has(key) && !types.has(key));
+  const stale = Object.keys(rules).filter(key => !SPECIAL.has(key) && !types.has(key));
+  for(const [plugin, entries] of Object.entries(rules.plugins ?? {})) {
+    const declared = schema.plugins?.find(entry => entry.name === plugin)?.permissions;
+    for(const [key, grant] of Object.entries(entries ?? {})) {
+      const permission = declared?.[key];
+      if(!permission || grantRank(permission, grant) === 0) stale.push(`${plugin}.${key}`);
+    }
+  }
+  return stale;
 }
 
 /** One line describing what a role may do, for lists. */
@@ -158,6 +280,8 @@ export function describeRules(rules: RoleRules): string {
   if(rules.backups) parts.push(rules.backups === "take" ? "takes backups" : "backups");
   if(rules.manageRoles) parts.push("manages roles");
   if(rules.viewActivity) parts.push("sees activity");
+  const plugins = Object.entries(rules.plugins ?? {}).filter(([, grants]) => Object.keys(grants ?? {}).length).map(([plugin]) => plugin);
+  if(plugins.length) parts.push(`${plugins.join(", ")} permissions`);
   return parts.join(", ") || "Nothing yet";
 }
 
@@ -179,7 +303,9 @@ interface Reach {
   manageRedirects: boolean,
   manageTrash: boolean,
   manageActivity: boolean,
-  manageScheduledBackups: boolean
+  manageScheduledBackups: boolean,
+  /** Per `<plugin>.<permission>`, the highest rank any role gives. */
+  plugins: Map<string, number>
 }
 
 function typeActions(rules: RoleRules, key: string): Action[] {
@@ -195,8 +321,9 @@ function anyWrite(rules: RoleRules): boolean {
     || (Array.isArray(rules["*"]) && rules["*"].includes("write"));
 }
 
-function reach(roles: RoleRules[], types: string[]): Reach {
-  const out: Reach = { all: false, types: new Map(), media: new Set(), locales: new Set(), siteSettings: false, backups: 0, manageRoles: false, viewActivity: false, manageRedirects: false, manageTrash: false, manageActivity: false, manageScheduledBackups: false };
+function reach(roles: RoleRules[], schema: RoleSchema): Reach {
+  const types = schema.types.map(type => type.name);
+  const out: Reach = { all: false, types: new Map(), media: new Set(), locales: new Set(), siteSettings: false, backups: 0, manageRoles: false, viewActivity: false, manageRedirects: false, manageTrash: false, manageActivity: false, manageScheduledBackups: false, plugins: new Map() };
   for(const key of [...types, "*"]) out.types.set(key, new Set());
   for(const rules of roles) {
     if(rules.all) out.all = true;
@@ -214,6 +341,10 @@ function reach(roles: RoleRules[], types: string[]): Reach {
     if(rules.manageTrash) out.manageTrash = true;
     if(rules.manageActivity) out.manageActivity = true;
     if(rules.manageScheduledBackups) out.manageScheduledBackups = true;
+    for(const { plugin, key, permission } of pluginPermissions(schema)) {
+      const rank = grantRank(permission, rules.plugins?.[plugin]?.[key]);
+      if(rank > (out.plugins.get(`${plugin}.${key}`) ?? 0)) out.plugins.set(`${plugin}.${key}`, rank);
+    }
   }
   return out;
 }
@@ -225,9 +356,9 @@ function reach(roles: RoleRules[], types: string[]): Reach {
  */
 export function beyondReach(candidate: RoleRules, holder: RoleRules[], schema: RoleSchema): string[] {
   const types = schema.types.map(type => type.name);
-  const mine = reach(holder, types);
+  const mine = reach(holder, schema);
   if(mine.all) return [];
-  const theirs = reach([candidate], types);
+  const theirs = reach([candidate], schema);
   const problems: string[] = [];
   if(theirs.all) problems.push("Everything");
   for(const key of [...types, "*"]) {
@@ -248,5 +379,9 @@ export function beyondReach(candidate: RoleRules, holder: RoleRules[], schema: R
   if(theirs.manageTrash && !mine.manageTrash) problems.push("changing how long the trash is kept");
   if(theirs.manageActivity && !mine.manageActivity) problems.push("changing how long activity is kept");
   if(theirs.manageScheduledBackups && !mine.manageScheduledBackups) problems.push("turning scheduled backups on or off");
+  for(const { plugin, key, permission } of pluginPermissions(schema)) {
+    const rank = theirs.plugins.get(`${plugin}.${key}`) ?? 0;
+    if(rank > (mine.plugins.get(`${plugin}.${key}`) ?? 0)) problems.push(permissionPhrase(plugin, permission, rank));
+  }
   return problems;
 }
