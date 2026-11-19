@@ -55,8 +55,8 @@ const backupsCheck = base({
   description: "Whether a snapshot can be restored on this site, without changing anything: `problems` stop a restore, `warnings` don't. Also counts what the site has now.",
   readOnly: true
 })
-  .input(z.object({ manifest: manifestInput }))
-  .handler(({ context: { engine }, input }) => snapshots.check(engine, input.manifest as BackupManifest));
+  .input(z.object({ manifest: manifestInput, skipUnknownTypes: z.boolean().optional().describe("Leave out documents of content types this site doesn't define, instead of refusing the snapshot") }))
+  .handler(({ context: { engine }, input }) => snapshots.check(engine, input.manifest as BackupManifest, { skipUnknownTypes: input.skipUnknownTypes }));
 
 const backupsRestoreBegin = base({
   summary: "Start a restore",
@@ -65,7 +65,8 @@ const backupsRestoreBegin = base({
   .input(z.object({
     manifest: manifestInput,
     resume: z.string().optional(),
-    force: z.boolean().optional().describe("Replace another unfinished restore")
+    force: z.boolean().optional().describe("Replace another unfinished restore"),
+    skipUnknownTypes: z.boolean().optional().describe("Leave out documents of content types this site doesn't define, instead of refusing the snapshot")
   }))
   .handler(({ context: { engine }, input }) => snapshots.restoreBegin(engine, { ...input, manifest: input.manifest as BackupManifest }));
 
@@ -98,7 +99,7 @@ const backupsRestoreFile = base({
 
 const backupsRestoreCommit = base({
   summary: "Finish a restore",
-  description: "Replaces the site's content with the restore's in one transaction, after checking each table has `expected` rows and every file arrived. Fails without changing anything otherwise. Can't be undone except by restoring another snapshot, so take one first.",
+  description: "Replaces the site's content with the restore's in one transaction, after checking each table has `expected` rows and every file arrived. With `skipUnknownTypes` set at the start, documents of types this site doesn't define are dropped first, and `skipped` counts them per table. Fails without changing anything otherwise. Can't be undone except by restoring another snapshot, so take one first.",
   destructive: true
 })
   .input(z.object({

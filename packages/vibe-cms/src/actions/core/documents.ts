@@ -242,6 +242,17 @@ const documentsUnschedule = base({
   }))
   .handler(({ context: { engine }, input }) => engine.cancelSchedule(input.type, input.id, input.locale, input.action));
 
+const documentsPurgeUnknown = base({
+  summary: "Purge documents of removed content types",
+  description: "Documents whose content type is no longer in the site's config can't be reached anywhere else, but they're still exported, and an import into a site without the type refuses them. Lists them per type, live and trashed; unless `dryRun`, deletes them permanently with their versions, branches and schedules. `type` limits it to one removed type. Needs `manageTrash`. Can't be undone.",
+  destructive: true
+})
+  .input(z.object({
+    type: z.string().optional().describe("Only this removed content type"),
+    dryRun: z.boolean().optional().describe("List what would be deleted, without deleting it")
+  }))
+  .handler(({ context: { engine }, input }) => engine.purgeUnknownTypes(input));
+
 export const documents = router({
   list: documentsList,
   search: documentsSearch,
@@ -259,5 +270,6 @@ export const documents = router({
   version: documentsVersion,
   restoreVersion: documentsRestoreVersion,
   schedule: documentsSchedule,
-  unschedule: documentsUnschedule
+  unschedule: documentsUnschedule,
+  purgeUnknown: documentsPurgeUnknown
 });

@@ -38,7 +38,7 @@ export const connection = {
 export function isDevAddress(site: string): boolean {
   if(!URL.canParse(site)) return false;
   const host = new URL(site).hostname.toLowerCase();
-  return host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host)
+  return host === "localhost" || host === "0.0.0.0" || host === "[::1]" || host.startsWith("127.")
     || host.endsWith(".localhost") || host.endsWith(".test");
 }
 

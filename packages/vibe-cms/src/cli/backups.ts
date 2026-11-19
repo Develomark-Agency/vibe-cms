@@ -140,7 +140,8 @@ export const importCommand = command({
     dryRun: flag({ long: "dry-run", description: "Check the file against the site and show what would change, without changing it" }),
     yes: flag({ long: "yes", short: "y", description: "Don't ask before replacing the site's content" }),
     noSafety: flag({ long: "no-safety-export", description: "Skip exporting the site as it is before importing" }),
-    force: flag({ long: "force", description: "Replace another unfinished import or restore" })
+    force: flag({ long: "force", description: "Replace another unfinished import or restore" }),
+    skipUnknownTypes: flag({ long: "skip-unknown-types", description: "Leave out documents of content types the site doesn't define, instead of refusing the file" })
   },
   examples: [
     { description: "See what an import would change", command: "vibe-cms import ct-moving-2026-11-02-1830.vibe --site https://ctmoving.com --dry-run" },
@@ -155,7 +156,7 @@ export const importCommand = command({
       const store = folderStore(work);
       const { path: snapshot } = await unpackSnapshot(Readable.toWeb(createReadStream(input)) as unknown as ReadableStream<Uint8Array>, store);
       const call = await caller(values);
-      const plan = await planRestore({ call, store, path: snapshot });
+      const plan = await planRestore({ call, store, path: snapshot, skipUnknownTypes: values.skipUnknownTypes });
       console.log(`${styleText("bold", "Import")} ${values.file}`);
       console.log(styleText("dim", `  of ${plan.snapshot.name ?? plan.snapshot.siteId}, taken ${new Date(plan.snapshot.takenAt).toLocaleString()}, into ${values.site}`));
       for(const [name, { now, after }] of Object.entries(plan.tables)) console.log(`  ${name.padEnd(10)} ${String(now).padStart(6)} → ${after}`);
@@ -180,11 +181,13 @@ export const importCommand = command({
         console.log(`${styleText("green", "✓")} Exported the site as it was first: ${styleText("cyan", path.relative(process.cwd(), safety.target) || safety.target)} ${styleText("dim", `(${formatElapsed(performance.now() - safetyStarted)})`)}`);
       }
       const importStarted = performance.now();
-      const result = await restoreSnapshot({ call, store, path: snapshot, force: values.force, onProgress: report.progress });
+      const result = await restoreSnapshot({ call, store, path: snapshot, force: values.force, skipUnknownTypes: values.skipUnknownTypes, onProgress: report.progress });
       report.done();
-      const verified = await verifyRestore({ call, store, path: snapshot });
+      const verified = await verifyRestore({ call, store, path: snapshot, skipped: result.skipped });
       console.log(`${styleText("green", "✓")} ${styleText("bold", "Imported")}${result.resumed ? " (resumed)" : ""}: ${result.files.uploaded} files uploaded, ${result.files.present} already there ${styleText("dim", `(${formatElapsed(performance.now() - importStarted)})`)}`);
       for(const warning of result.warnings) console.log(`  ${styleText("yellow", "!")} ${warning}`);
+      const left = Object.entries(result.skipped).filter(([, n]) => n);
+      if(left.length) console.log(`  ${styleText("yellow", "!")} Left out, as their content types aren't on the site: ${left.map(([table, n]) => `${n} ${table}`).join(", ")}`);
       if(!verified.ok) {
         console.log(`${styleText("yellow", "!")} The site doesn't match the file now (someone may have edited since):`);
         for(const difference of verified.differences) console.log(`  ${difference}`);

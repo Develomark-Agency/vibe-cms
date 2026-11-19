@@ -68,11 +68,13 @@ export async function authorize(site: Site, token = process.env.VIBE_TOKEN): Pro
     problem = (error as Error).message;
   }
   // No hub lists a development address, so asking one could only bring back a misleading refusal.
-  if(!isDevAddress(site.url)) try {
-    const fromHub = await hubSiteToken(site.url);
-    if(fromHub) return { token: fromHub, via: "hub", canLogIn: false };
-  } catch (error) {
-    problem ??= (error as Error).message;
+  if(!isDevAddress(site.url)) {
+    try {
+      const fromHub = await hubSiteToken(site.url);
+      if(fromHub) return { token: fromHub, via: "hub", canLogIn: false };
+    } catch (error) {
+      problem ??= (error as Error).message;
+    }
   }
   return { via: "none", problem, canLogIn: await canLogIn() };
 }

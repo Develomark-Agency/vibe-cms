@@ -265,10 +265,10 @@ export interface RestorePlan {
 }
 
 /** What restoring a snapshot would do, without changing anything. */
-export async function planRestore(options: RunOptions & { path: string }): Promise<RestorePlan> {
+export async function planRestore(options: RunOptions & { path: string, skipUnknownTypes?: boolean }): Promise<RestorePlan> {
   const call = steady(options);
   const { manifest } = await readSnapshot(options.store, options.path);
-  const check = await call<RestoreCheck>("backups.check", { manifest });
+  const check = await call<RestoreCheck>("backups.check", { manifest, ...options.skipUnknownTypes ? { skipUnknownTypes: true } : {} });
   const tables = Object.fromEntries(BACKUP_TABLE_NAMES.map(name => [name, { now: check.current.tables[name], after: manifest.tables[name] }])) as RestorePlan["tables"];
   return { check, snapshot: manifest, tables, files: { now: check.current.files, after: manifest.files } };
 }
@@ -277,7 +277,9 @@ export interface RestoreResult {
   restoreId: string,
   resumed: boolean,
   warnings: string[],
-  files: { uploaded: number, present: number }
+  files: { uploaded: number, present: number },
+  /** Rows per table left out because their documents' types aren't on the site (`skipUnknownTypes`). */
+  skipped: Partial<Record<BackupTable, number>>
 }
 
 /**
@@ -285,7 +287,7 @@ export interface RestoreResult {
  * after a failure resumes the same restore; the site only changes at the commit, and
  * only if every row and file arrived.
  */
-export async function restoreSnapshot(options: RunOptions & { path: string, force?: boolean }): Promise<RestoreResult> {
+export async function restoreSnapshot(options: RunOptions & { path: string, force?: boolean, skipUnknownTypes?: boolean }): Promise<RestoreResult> {
   const call = steady(options);
   const doFetch = options.fetch ?? fetch;
   const { manifest } = await readSnapshot(options.store, options.path);
@@ -295,7 +297,8 @@ export async function restoreSnapshot(options: RunOptions & { path: string, forc
   const begun = await call<{ restoreId: string, resumed: boolean, warnings: string[] }>("backups.restoreBegin", {
     manifest,
     resume: same ? status.restore!.id : undefined,
-    force: options.force
+    force: options.force,
+    ...options.skipUnknownTypes ? { skipUnknownTypes: true } : {}
   });
   const restoreId = begun.restoreId;
 
@@ -353,8 +356,8 @@ export async function restoreSnapshot(options: RunOptions & { path: string, forc
   });
 
   options.onProgress?.({ step: "commit" });
-  await call("backups.restoreCommit", { restoreId, expected: manifest.tables });
-  return { restoreId, resumed: begun.resumed, warnings, files: { uploaded, present } };
+  const committed = await call<{ skipped?: Partial<Record<BackupTable, number>> }>("backups.restoreCommit", { restoreId, expected: manifest.tables });
+  return { restoreId, resumed: begun.resumed, warnings, files: { uploaded, present }, skipped: committed.skipped ?? {} };
 }
 
 /** Media keys of the snapshot's assets, trashed ones included. */
@@ -412,12 +415,16 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
 }
 
 /** Checks a restored site against the snapshot: every table's rows and the file count. */
-export async function verifyRestore(options: RunOptions & { path: string }): Promise<{ ok: boolean, differences: string[] }> {
+export async function verifyRestore(options: RunOptions & { path: string, skipped?: Partial<Record<BackupTable, number>> }): Promise<{ ok: boolean, differences: string[] }> {
   const call = steady(options);
   const { manifest } = await readSnapshot(options.store, options.path);
   const now = await call<BackupManifest>("backups.manifest", {});
-  const differences = BACKUP_TABLE_NAMES.filter(name => now.tables[name] !== manifest.tables[name])
-    .map(name => `${name}: ${now.tables[name]} rows, the snapshot has ${manifest.tables[name]}`);
+  // Rows the restore left out on purpose aren't differences.
+  function expected(name: BackupTable) {
+    return manifest.tables[name] - (options.skipped?.[name] ?? 0);
+  }
+  const differences = BACKUP_TABLE_NAMES.filter(name => now.tables[name] !== expected(name))
+    .map(name => `${name}: ${now.tables[name]} rows, expected ${expected(name)}${options.skipped?.[name] ? ` (the snapshot's ${manifest.tables[name]}, less ${options.skipped[name]} left out)` : ""}`);
   if(now.files.count !== manifest.files.count) differences.push(`files: ${now.files.count}, the snapshot has ${manifest.files.count}`);
   return { ok: differences.length === 0, differences };
 }

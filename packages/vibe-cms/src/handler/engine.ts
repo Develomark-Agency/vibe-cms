@@ -21,7 +21,7 @@ import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
 import { BACKUP_ACCESS_KEY, backupAccess, can, canPlugin, require, requirePlugin, type Permit, type PluginPermit } from "./auth.ts";
 import { detectFavicon, type SiteFetch } from "./favicon.ts";
-import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { createDb } from "../db/client.ts";
 import { assets, branches, documents, folders, meta, schedules, trash, versions, type AssetRow, type BranchRow, type DocumentRow, type ScheduleRow, type TrashRow, type VersionRow } from "../db/schema.ts";
@@ -150,6 +150,17 @@ const detecting = new WeakMap<D1, Promise<DetectedSite | null>>();
 
 /** How long deleted items stay in the trash unless the Trash page says otherwise. */
 export const DEFAULT_TRASH_DAYS = 30;
+
+/** Documents of one content type the config no longer defines. */
+export interface UnknownTypeCount {
+  type: string,
+  /** Live documents, each counted once whatever its languages. */
+  documents: number,
+  /** Live rows: one per document and language. */
+  translations: number,
+  /** Trash entries: whole documents or single translations. */
+  trashed: number
+}
 
 export interface TrashItem {
   id: string,
@@ -1366,6 +1377,53 @@ export class Engine {
     this.writer({ action: "publish", type, locale });
     await this.orm.delete(schedules).where(and(eq(schedules.id, id), eq(schedules.locale, locale), eq(schedules.action, action)));
     return this.getDocument(type, id, locale);
+  }
+
+  /**
+   * Documents whose content type the config no longer defines: nothing else in the CMS can reach them,
+   * yet they're exported, and an import into a site without the type refuses them. Lists them per
+   * type, live documents and trashed ones; unless `dryRun`, deletes them for good with their versions,
+   * branches and schedules (search rows follow by trigger). `type` limits it to one removed type.
+   * Needs `manageTrash`, since no role can have rules for a type that doesn't exist.
+   */
+  async purgeUnknownTypes(options: { type?: string, dryRun?: boolean } = {}): Promise<{ types: UnknownTypeCount[], purged: boolean }> {
+    if(!this.scope.trusted || this.scope.session) require(this.state, this.scope.session, { action: "write", scope: "trash" });
+    const known = Object.keys(this.config.schemas);
+    if(options.type !== undefined && known.includes(options.type)) throw new HttpError(400, `"${options.type}" is still a content type in this site's config; delete its documents in the editor instead`);
+    const unknownDocs = known.length ? notInArray(documents.type, known) : sql`1`;
+    const unknownTrash = and(eq(trash.kind, "document"), isNotNull(trash.type), known.length ? notInArray(trash.type, known) : sql`1`);
+    const [live, trashed] = await Promise.all([
+      this.orm.select({ type: documents.type, documents: count(), ids: sql<number>`count(distinct ${documents.id})` }).from(documents)
+        .where(and(unknownDocs, options.type === undefined ? undefined : eq(documents.type, options.type))).groupBy(documents.type),
+      this.orm.select({ type: trash.type, trashed: count() }).from(trash)
+        .where(and(unknownTrash, options.type === undefined ? undefined : eq(trash.type, options.type))).groupBy(trash.type)
+    ]);
+    const byType = new Map<string, UnknownTypeCount>();
+    for(const row of live) byType.set(row.type, { type: row.type, documents: Number(row.ids), translations: row.documents, trashed: 0 });
+    for(const row of trashed) {
+      const entry = byType.get(row.type!) ?? { type: row.type!, documents: 0, translations: 0, trashed: 0 };
+      entry.trashed = row.trashed;
+      byType.set(row.type!, entry);
+    }
+    const types = [...byType.values()].sort((a, b) => a.type.localeCompare(b.type));
+    if(options.type !== undefined && !types.length) throw new HttpError(404, `There are no documents of type "${options.type}"`);
+    if(options.dryRun || !types.length) return { types, purged: false };
+
+    const names = types.map(t => t.type);
+    const liveIds = this.orm.select({ id: documents.id }).from(documents).where(inArray(documents.type, names));
+    const trashedIds = this.orm.select({ id: trash.item_id }).from(trash).where(and(eq(trash.kind, "document"), inArray(trash.type, names)));
+    // Dependents first, while the subqueries can still find their documents; one batch, so it all goes or none does.
+    await this.batch([
+      ...[liveIds, trashedIds].flatMap(ids => [
+        this.orm.delete(versions).where(inArray(versions.id, ids)),
+        this.orm.delete(branches).where(inArray(branches.id, ids)),
+        this.orm.delete(schedules).where(inArray(schedules.id, ids))
+      ]),
+      this.orm.delete(trash).where(and(eq(trash.kind, "document"), inArray(trash.type, names))),
+      this.orm.delete(documents).where(inArray(documents.type, names))
+    ]);
+    this.note({ types: names });
+    return { types, purged: true };
   }
 
   /** Called from the `scheduled` handler. */

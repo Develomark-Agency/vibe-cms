@@ -6,7 +6,7 @@ import { createDb } from "../db/client.ts";
 import { documents as documentsTable, meta } from "../db/schema.ts";
 import { all, first, getMeta, newId, run, searchRebuild, sha256 } from "./db.ts";
 import type { Engine } from "./engine.ts";
-import type { D1, R2 } from "./platform.ts";
+import type { D1, D1Statement, R2 } from "./platform.ts";
 
 /**
  * Backups: a site's content as rows and files, read out and written back in small
@@ -99,7 +99,9 @@ interface RestoreLock {
   id: string,
   startedAt: number,
   by: string,
-  from: { siteId: string, takenAt: number }
+  from: { siteId: string, takenAt: number },
+  /** Documents of types this site doesn't define are dropped at the commit instead of refusing the restore. */
+  skipUnknownTypes?: boolean
 }
 
 function staging(name: BackupTable): string {
@@ -243,7 +245,7 @@ export async function listFiles(engine: Engine, input: { after?: string, limit: 
 
 // --- Restoring -----------------------------------------------------------------
 
-export async function check(engine: Engine, snapshot: BackupManifest): Promise<RestoreCheck> {
+export async function check(engine: Engine, snapshot: BackupManifest, options: { skipUnknownTypes?: boolean } = {}): Promise<RestoreCheck> {
   guard(engine, "read");
   const problems: string[] = [];
   const warnings: string[] = [];
@@ -251,7 +253,8 @@ export async function check(engine: Engine, snapshot: BackupManifest): Promise<R
   const hashes = await typeHashes(engine);
   for(const [type, info] of Object.entries(snapshot.types ?? {})) {
     if(!(type in hashes)) {
-      if(info.documents > 0) problems.push(`The snapshot has ${info.documents} "${type}" documents, and this site has no "${type}" content type. Deploy the code that defines it first.`);
+      if(info.documents > 0 && options.skipUnknownTypes) warnings.push(`The snapshot's ${info.documents} "${type}" documents are left out: this site has no "${type}" content type.`);
+      else if(info.documents > 0) problems.push(`The snapshot has ${info.documents} "${type}" documents, and this site has no "${type}" content type. Deploy the code that defines it first, or leave them out (\`--skip-unknown-types\`).`);
     } else if(info.hash && info.hash !== hashes[type] && info.documents > 0) {
       warnings.push(`"${type}" changed since the snapshot. Its documents restore as they were saved; any that no longer fit show their issues in the editor (vibe-cms docs schema-changes).`);
     }
@@ -297,12 +300,12 @@ function dropStatements(db: D1) {
  * Starts a restore, or with `resume` picks one up where it stopped. Nothing live changes
  * until `restoreCommit`.
  */
-export async function restoreBegin(engine: Engine, input: { manifest: BackupManifest, resume?: string, force?: boolean }) {
+export async function restoreBegin(engine: Engine, input: { manifest: BackupManifest, resume?: string, force?: boolean, skipUnknownTypes?: boolean }) {
   guard(engine, "write");
-  const result = await check(engine, input.manifest);
+  const result = await check(engine, input.manifest, { skipUnknownTypes: input.skipUnknownTypes });
   if(!result.ok) throw new HttpError(422, `This snapshot can't be restored here: ${result.problems[0]}`, { problems: result.problems, warnings: result.warnings });
   const current = await lock(engine);
-  if(input.resume && current?.id === input.resume) {
+  if(input.resume && current?.id === input.resume && Boolean(current.skipUnknownTypes) === Boolean(input.skipUnknownTypes)) {
     await engine.db.batch(stagingStatements(engine.db, false));
     return { restoreId: current.id, resumed: true, warnings: result.warnings };
   }
@@ -313,7 +316,8 @@ export async function restoreBegin(engine: Engine, input: { manifest: BackupMani
     id: newId("restore"),
     startedAt: Date.now(),
     by: engine.scope.session?.email ?? engine.scope.session?.sub ?? "site",
-    from: { siteId: input.manifest.siteId, takenAt: input.manifest.takenAt }
+    from: { siteId: input.manifest.siteId, takenAt: input.manifest.takenAt },
+    ...input.skipUnknownTypes ? { skipUnknownTypes: true } : {}
   };
   await engine.db.batch([
     ...stagingStatements(engine.db, true),
@@ -412,7 +416,7 @@ export async function restoreFile(engine: Engine, input: { restoreId: string, ke
  */
 export async function restoreCommit(engine: Engine, input: { restoreId: string, expected: Partial<Record<BackupTable, number>> }) {
   guard(engine, "write");
-  await activeRestore(engine, input.restoreId);
+  const current = await activeRestore(engine, input.restoreId);
   const { db } = engine;
   const staged = await counts(db, name => staging(name));
   const mismatched = BACKUP_TABLE_NAMES.filter(name => input.expected[name] !== undefined && input.expected[name] !== staged[name]);
@@ -426,6 +430,7 @@ export async function restoreCommit(engine: Engine, input: { restoreId: string, 
   if(missing.length) {
     throw new HttpError(409, `The restore is incomplete: ${missing.length > 20 ? "more than 20" : missing.length} files weren't uploaded (${missing.slice(0, 3).map(m => m.key).join(", ")}${missing.length > 3 ? ", …" : ""}). Upload them again; nothing changed on the site.`, { missing: missing.slice(0, 20).map(m => m.key) });
   }
+  const skipped = current.skipUnknownTypes ? await skipUnknown(engine) : { statements: [], rows: emptyCounts() };
   const swap = BACKUP_TABLE_NAMES.flatMap(name => {
     const spec: TableSpec = BACKUP_TABLES[name];
     const columns = spec.columns.join(", ");
@@ -435,13 +440,51 @@ export async function restoreCommit(engine: Engine, input: { restoreId: string, 
     ];
   });
   await db.batch([
+    ...skipped.statements,
     ...swap,
     // The favicon is detected again for the restored settings.
     prepared(db, createDb(db).delete(meta).where(inArray(meta.key, ["site_detected", RESTORE_KEY]))),
     ...searchRebuild(engine.config).map(sql => db.prepare(sql)),
     ...dropStatements(db)
   ]);
-  return { restored: true as const, tables: staged };
+  const tables = Object.fromEntries(BACKUP_TABLE_NAMES.map(name => [name, staged[name] - skipped.rows[name]])) as Record<BackupTable, number>;
+  return { restored: true as const, tables, skipped: skipped.rows };
+}
+
+function emptyCounts(): Record<BackupTable, number> {
+  return Object.fromEntries(BACKUP_TABLE_NAMES.map(name => [name, 0])) as Record<BackupTable, number>;
+}
+
+/**
+ * The statements that drop staged documents of types this site doesn't define, with their branches,
+ * versions, schedules and trash entries, and how many rows of each table that is. Run in the commit's
+ * batch, so they never reach the live tables.
+ */
+async function skipUnknown(engine: Engine): Promise<{ statements: D1Statement[], rows: Record<BackupTable, number> }> {
+  const { db } = engine;
+  const known = Object.keys(engine.config.schemas);
+  const marks = known.map(() => "?").join(", ") || "NULL";
+  const ids = `SELECT id FROM ${staging("documents")} WHERE type NOT IN (${marks})
+    UNION SELECT item_id FROM ${staging("trash")} WHERE kind = 'document' AND type IS NOT NULL AND type NOT IN (${marks})`;
+  const where: Partial<Record<BackupTable, string>> = {
+    branches: `id IN (${ids})`,
+    versions: `id IN (${ids})`,
+    schedules: `id IN (${ids})`,
+    trash: `kind = 'document' AND type IS NOT NULL AND type NOT IN (${marks})`,
+    // Last, so the other tables' subqueries still find the documents.
+    documents: `type NOT IN (${marks})`
+  };
+  function params(name: BackupTable) {
+    return name === "trash" || name === "documents" ? known : [...known, ...known];
+  }
+  const rows = emptyCounts();
+  const statements: D1Statement[] = [];
+  for(const name of Object.keys(where) as BackupTable[]) {
+    const counted = await first<{ n: number }>(db, `SELECT count(*) AS n FROM ${staging(name)} WHERE ${where[name]}`, params(name));
+    rows[name] = counted?.n ?? 0;
+    statements.push(db.prepare(`DELETE FROM ${staging(name)} WHERE ${where[name]}`).bind(...params(name)));
+  }
+  return { statements, rows };
 }
 
 /** Drops a restore's staging tables. Files it uploaded stay in the bucket; nothing points at new ones. */
