@@ -26,7 +26,7 @@ Run it with `bunx vibe-cms` (or `npx vibe-cms`) in a project that depends on vib
 | `vibe-cms admin deploy` | A wizard that deploys the agency panel to Cloudflare, or redeploys, reconfigures or finds one (below). |
 | `vibe-cms build-admin --out <dir>` | Build the editor without the Vite plugin, for plain `wrangler deploy` (`vibe-cms docs wrangler`). `--config`, `--prefix` and `--root` if not the defaults. |
 | `vibe-cms export --site <url> [--file x.vibe]` | Save the site's content and media as one `.vibe` file (`vibe-cms docs backups`). |
-| `vibe-cms import <file.vibe> --site <url>` | Replace the site's content and media with the file's, after a check and a safety export. `--dry-run` shows what would change. |
+| `vibe-cms import <file.vibe> --site <url>` | Replace the site's content and media with the file's, after a check and a safety export. `--dry-run` shows what would change; `--skip-unknown-types` leaves out documents of content types the site doesn't define (`vibe-cms docs schema-changes`). |
 | `vibe-cms <group> <action> --site <url>` | Run an action (below). |
 | `vibe-cms action <name> --input <json> --site <url>` | Run any action by name, including a plugin's. |
 | `vibe-cms actions --site <url>` | List a site's actions, plugins' included, and which agents get as tools. |
@@ -38,7 +38,7 @@ Every action the editor uses is a command: `vibe-cms <group> <action>`, with fla
 | Group | Actions |
 |---|---|
 | `schema` | `list`, `get` |
-| `documents` | `list`, `get`, `create`, `update`, `delete`, `publish`, `changes`, `pending`, `discard-changes`, `unpublish`, `references`, `versions`, `version`, `restore-version`, `schedule`, `unschedule` |
+| `documents` | `list`, `get`, `create`, `update`, `delete`, `publish`, `changes`, `pending`, `discard-changes`, `unpublish`, `references`, `versions`, `version`, `restore-version`, `schedule`, `unschedule`, `purge-unknown` |
 | `assets` | `list`, `get`, `upload`, `update`, `replace-content`, `delete` |
 | `folders` | `list`, `create`, `move`, `delete` |
 | `trash` | `list`, `get`, `restore`, `purge`, `empty` |

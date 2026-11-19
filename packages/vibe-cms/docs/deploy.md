@@ -12,6 +12,7 @@ Deploy an agency panel and a site on Cloudflare, connect them, and move your con
 
 - **Bun.** The CLI runs on Bun: `bunx vibe-cms …`.
 - **A Cloudflare login for `wrangler`.** Run `bunx wrangler login` as the account that will own the panel and the sites (`bunx wrangler whoami` shows who you are). It needs permission for Workers, D1 and R2. To let the wizard attach a custom domain or add the org's DNS record it also needs DNS access on that domain's zone; without it, the wizard prints what to add instead. With several accounts, the wizard asks which one (or set `CLOUDFLARE_ACCOUNT_ID`).
+- **With Alchemy, its own Cloudflare login as well.** Alchemy deploys sites with its own saved profiles (in `~/.alchemy`), not `wrangler`'s login, so `bunx wrangler whoami` can show the right account while Alchemy deploys to another. Sign a profile in to the right account with `bunx alchemy configure --profile <name>`, then choose it in the project's `.env` with `ALCHEMY_PROFILE=<name>`. Set `CLOUDFLARE_ACCOUNT_ID` there too if the login can reach several accounts.
 - **An OpenID Connect identity provider.** People sign in to the panel through it. Any OIDC provider works: Google, Okta, Microsoft Entra, Auth0, Keycloak, Clerk, Cloudflare Access. In the provider, create an application with a client secret, then note three things:
   - the **issuer** (or the provider's discovery URL, which is fine to paste),
   - the **client ID**,
@@ -94,6 +95,12 @@ export const site = await Website("site", {
 });
 ```
 
+If `alchemy.run.ts` keeps its state on Cloudflare with `CloudflareStateStore`, know how its token works. The store is one Worker per Cloudflare account (`alchemy-state-service`), and `ALCHEMY_STATE_TOKEN` guards it, so every project on the account shares that one token:
+
+- **A new project:** copy `ALCHEMY_STATE_TOKEN` from another project on the same account. A newly generated token fails with `[CloudflareStateStore] The token is invalid`.
+- **To keep a project's state apart:** give it a state Worker of its own, which then takes a token of its own: `stateStore: scope => new CloudflareStateStore(scope, { scriptName: "my-site-state" })` in the `alchemy()` options.
+- **If the token is lost:** set `forceUpdate: true` on the store for one deploy to replace it, then remove it. Every other project still on the old token stops deploying until its `.env` has the new one.
+
 Build and deploy:
 
 | Setup | Build | Deploy |
@@ -104,6 +111,8 @@ Build and deploy:
 | Wrangler only | `vibe-cms build-admin --out <assets dir>/_vibe/admin` | `wrangler deploy` |
 
 Check that the client output contains `_vibe/admin/index.html` before deploying. Note the site's address when it's done.
+
+A newly deployed site has no content until you import it (step 4). If its layout reads documents it can't do without, such as site settings or a footer, every page errors until then. That's expected, not a broken deploy.
 
 ## 3. Connect the site to the panel
 
@@ -151,6 +160,19 @@ bunx vibe-cms import <file>.vibe --site https://<site>
 - The warning "The snapshot is of another site" is expected when importing a local export: the deployed site keeps its own identity, its place in the panel, and everyone's sign-in.
 - You need `backups` permission on the site. The person who attached it is its owner, which has every permission.
 - An import that stops part-way can be run again, and it resumes.
+- `import` refuses a file with documents of content types the site doesn't define. If you removed those types from the config on purpose, see [Removing a content type](#removing-a-content-type) below.
+
+### Removing a content type
+
+Documents of a type you've removed from the config stay in your local database. Nothing in the CMS shows them, but `export` still includes them, and `import` then refuses the file. Either delete them before exporting, or leave them out of the import:
+
+```sh
+bunx vibe-cms documents purge-unknown --site http://localhost:1337 --dry-run
+bunx vibe-cms documents purge-unknown --site http://localhost:1337
+bunx vibe-cms import <file>.vibe --site https://<site> --skip-unknown-types
+```
+
+`vibe-cms docs schema-changes` covers removing a type safely before it comes to this.
 
 For copies kept outside Cloudflare on a schedule, use the panel's backups (`vibe-cms docs backups`).
 
@@ -202,4 +224,6 @@ Also good to know:
 | The claim link isn't in the logs | Run `bunx vibe-cms admin claim-link https://<site>`. A site deployed before claim links existed needs redeploying first. |
 | Attaching says the org's record or keys can't be found | Add the `_vibe-hub` TXT record (or use the panel's own address as the org), then try the same link again. |
 | The site says it already belongs to an org, or has its own owners | It's already attached, or someone claimed it with its setup link. Add it by its address instead. |
-| `import` fails the check | The file has content types the site doesn't define: deploy the site code that defines them first (`vibe-cms docs schema-changes`). |
+| `import` fails the check | The file has documents of content types the site doesn't define. If the site should have them, deploy the code that defines them first. If you removed those types on purpose, purge them where you exported from, or import with `--skip-unknown-types` ([Removing a content type](#removing-a-content-type)). |
+| Alchemy deploys to the wrong Cloudflare account | Alchemy uses its own login, not `wrangler`'s. Set `ALCHEMY_PROFILE` in `.env` to a profile signed in to the right account (`bunx alchemy configure --profile <name>`). |
+| `[CloudflareStateStore] The token is invalid` | Every project on a Cloudflare account shares one `ALCHEMY_STATE_TOKEN`. Copy it from another project, or give this one its own state Worker with `scriptName` (above). |

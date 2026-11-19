@@ -26,7 +26,7 @@ changed after this was published. Fix the document in the editor, or move the da
 | Remove a field | The stored value stays and still comes back in query results (outside the types) until the document is next saved, which drops it. |
 | Rename a field | A remove plus an add: the old value is stranded under the old name. |
 | Change a field's type (text → `image()`, number → text, …) | Published reads of documents with an old value fail with `CONFLICT`, naming each document and field (above), until they're fixed or the change is undone. |
-| Rename or remove a content type | Its documents stay in the database under the old name, unreachable. |
+| Rename or remove a content type | Its documents stay in the database under the old name, unreachable, but `export` still includes them, and `import` into a site without the type refuses the file. See [Removing a content type safely](#removing-a-content-type-safely). |
 | Add a content type, collection settings, labels, widgets | Safe. |
 
 ## Renaming or retyping a field safely
@@ -39,6 +39,25 @@ Don't change a field's type in place: reads of documents with old values fail un
 4. **Remove the old field.** Its stored values disappear as documents are next saved.
 
 For a type change such as a URL text field becoming an `image()`, the backfill step uploads each file first (`assets.upload`, `vibe-cms docs media`) and writes `{ asset: id, alt }` into the new field.
+
+## Removing a content type safely
+
+Delete a type's documents before you remove the type, while the editor can still show them:
+
+1. **Delete its documents** in the editor (or `vibe-cms documents delete`).
+2. **Empty them from the trash** on the Trash page (or `vibe-cms trash purge` for each, or `vibe-cms trash empty`).
+3. **Remove the type** from `vibe-cms.config.ts`.
+
+If you've already removed it, delete what it left behind from the CLI. The dry run lists each removed type's documents, live and in the trash; without it, they're deleted for good with their versions, unpublished changes and schedules:
+
+```sh
+bunx vibe-cms documents purge-unknown --site http://localhost:1337 --dry-run
+bunx vibe-cms documents purge-unknown --site http://localhost:1337
+```
+
+`--type <name>` limits it to one removed type. It needs `manageTrash` in your role (owners have it), and it can't be undone.
+
+To import a file that still has them (an export taken before you purged) into a site without the type, leave them out with `vibe-cms import <file>.vibe --site <url> --skip-unknown-types`. It imports everything else and lists what it left out.
 
 ## A backfill script
 
