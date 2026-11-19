@@ -44,16 +44,8 @@ function attach(body: Record<string, unknown>) {
   return panel("/api/sites/attach", { method: "POST", body: JSON.stringify(body) });
 }
 
-// A hub of its own, so these sites don't show up in other files' lists.
-const shared = env.DB;
-beforeAll(() => {
-  installMock();
-  env.DB = createD1() as unknown as D1Database;
-});
-afterAll(() => {
-  env.DB = shared;
-  removeMock();
-});
+beforeAll(installMock);
+afterAll(removeMock);
 beforeEach(async () => {
   clearOrgCache();
   env.VIBE_ORG = ORG;

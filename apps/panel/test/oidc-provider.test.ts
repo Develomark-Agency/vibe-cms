@@ -1,19 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createD1 } from "../../../packages/vibe-cms/test/helpers.ts";
 import { freshIdToken, db } from "../src/server/shared.ts";
 import * as t from "../src/server/schema.ts";
 import { env, idp, installMock, jar, panel, removeMock, setupToken } from "./mock.ts";
 
 /** Providers that don't say whether an email is verified (Clerk's metadata lists no such claim; Access's docs don't either). */
 
-const shared = env.DB;
-beforeAll(() => {
-  installMock();
-  env.DB = createD1() as unknown as D1Database;
-});
+beforeAll(installMock);
 afterAll(() => {
-  env.DB = shared;
   idp.claims = {};
   idp.refresh = "id_token";
   delete env.OIDC_TRUST_EMAIL;

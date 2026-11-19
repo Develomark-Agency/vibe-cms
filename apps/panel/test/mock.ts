@@ -112,8 +112,15 @@ export async function siteId(origin: string): Promise<string> {
 
 const realFetch = globalThis.fetch;
 
-/** Routes fetches to the mock provider and the in-memory sites. Call from `beforeAll`. */
+/**
+ * Routes fetches to the mock provider and the in-memory sites, and starts the file on a hub of its own.
+ * Call from `beforeAll`. Bun runs every test file in one process, in an order that can change from run
+ * to run, so a hub shared between files would carry one file's members, roles and sites into the next.
+ */
 export function installMock() {
+  env.DB = createD1() as unknown as D1Database;
+  jar.clear();
+  Object.assign(idp, { email: "jane@agency.test", sub: "u-jane", nonce: "", claims: {}, refresh: "id_token" });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);

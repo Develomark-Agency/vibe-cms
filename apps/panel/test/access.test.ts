@@ -29,16 +29,8 @@ async function json<T = any>(response: Response | Promise<Response>): Promise<T>
   return (await response).json() as Promise<T>;
 }
 
-// A hub of its own, so other files' sites and members don't show up here.
-const shared = env.DB;
-beforeAll(() => {
-  installMock();
-  env.DB = createD1() as unknown as D1Database;
-});
+beforeAll(installMock);
 afterAll(async () => {
-  env.DB = shared;
-  idp.email = "jane@agency.test";
-  idp.sub = "u-jane";
   removeMock();
 });
 
