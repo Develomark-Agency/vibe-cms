@@ -56,17 +56,18 @@ function script(answers: Array<[RegExp, unknown]>) {
 
 interface Call {
   args: string[],
+  cwd?: string,
   secrets?: Record<string, string>
 }
 
-function fakeWrangler(options: { loggedIn?: boolean } = {}) {
+function fakeWrangler(options: { loggedIn?: boolean, accounts?: () => Array<{ id: string, name: string }> } = {}) {
   const calls: Call[] = [];
-  async function exec(args: string[]) {
-    const call: Call = { args };
+  async function exec(args: string[], { cwd }: { cwd?: string } = {}) {
+    const call: Call = { args, cwd };
     const file = args[args.indexOf("--secrets-file") + 1];
     if(args.includes("--secrets-file") && file) call.secrets = JSON.parse(await readFile(file, "utf8"));
     calls.push(call);
-    if(args[0] === "whoami") return { code: 0, stdout: options.loggedIn === false ? JSON.stringify({ loggedIn: false }) : JSON.stringify({ loggedIn: true, email: "me@agency.test", accounts: [{ id: "acc1", name: "Agency" }] }), stderr: "" };
+    if(args[0] === "whoami") return { code: 0, stdout: options.loggedIn === false ? JSON.stringify({ loggedIn: false }) : JSON.stringify({ loggedIn: true, email: "me@agency.test", accounts: options.accounts?.() ?? [{ id: "acc1", name: "Agency" }] }), stderr: "" };
     if(args[0] === "d1") return { code: 0, stdout: "database_id = \"22222222-2222-2222-2222-222222222222\"", stderr: "" };
     return { code: 0, stdout: "", stderr: "" };
   }
@@ -179,8 +180,8 @@ describe("admin deploy", () => {
     await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => null });
 
     const commands = wrangler.calls.map(c => c.args.slice(0, 4).join(" "));
-    expect(commands.slice(0, 3)).toEqual(["whoami --json", "d1 create vibe-panel", "r2 bucket create vibe-panel-backups"]);
-    expect(commands[3]).toMatch(/^deploy /);
+    expect(commands.slice(0, 4)).toEqual(["whoami --json", "whoami --json", "d1 create vibe-panel", "r2 bucket create vibe-panel-backups"]);
+    expect(commands[4]).toMatch(/^deploy /);
     const deployed = wrangler.calls.find(c => c.args[0] === "deploy")!;
     expect(Object.keys(deployed.secrets!).sort()).toEqual(["HUB_SIGNING_KEY", "OIDC_CLIENT_SECRET", "PANEL_SETUP_TOKEN"]);
     expect(deployed.secrets!.OIDC_CLIENT_SECRET).toBe("s3cret");
@@ -241,6 +242,38 @@ describe("admin deploy", () => {
     expect(deployed.args).not.toContain("--secrets-file");
     expect(ui.log.join("\n")).not.toContain("#setup=");
     expect(ui.left()).toEqual([]);
+  });
+
+  test("deploys from the folder the wizard started in, so wrangler keeps the same login profile", async () => {
+    const root = await tmpRoot();
+    await writeHub(root, { ...record, secrets: ["OIDC_CLIENT_SECRET", "HUB_SIGNING_KEY"] }, bundle);
+    const wrangler = fakeWrangler();
+    const { api } = fakeApi();
+    const ui = script([
+      [/Which panel/, "hub:acc1:vibe-panel"],
+      [/what next/, "redeploy"],
+      [/deploy now/i, true],
+      [/Add the DNS record/, false]
+    ]);
+    await runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
+    expect(wrangler.calls.every(c => c.cwd === undefined)).toBe(true);
+  });
+
+  test("stops before deploying when wrangler's login can't reach the panel's account, naming both", async () => {
+    const root = await tmpRoot();
+    await writeHub(root, { ...record, accountName: "Client", secrets: ["OIDC_CLIENT_SECRET", "HUB_SIGNING_KEY"] }, bundle);
+    // Logged in to the panel's account when the wizard starts; switched to another before the deploy.
+    let whoamis = 0;
+    const wrangler = fakeWrangler({ accounts: () => ++whoamis === 1 ? [{ id: "acc1", name: "Client" }] : [{ id: "acc2", name: "Personal" }] });
+    const { api } = fakeApi();
+    const ui = script([
+      [/Which panel/, "hub:acc1:vibe-panel"],
+      [/what next/, "redeploy"],
+      [/deploy now/i, true]
+    ]);
+    const run = runWizard({ checkOidc: fineProvider, exec: wrangler.exec, prompts: ui.prompts, bundle, root, api: async () => api, needsOwner: async () => false });
+    await expect(run).rejects.toThrow(/Client \(acc1\).*only reach Personal.*wrangler auth activate/s);
+    expect(wrangler.calls.some(c => c.args[0] === "deploy")).toBe(false);
   });
 
   test("replacing the signing key sends just the new key", async () => {

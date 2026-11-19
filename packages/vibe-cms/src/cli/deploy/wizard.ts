@@ -394,6 +394,18 @@ async function createResources(deps: WizardDeps, api: CloudflareApi | null, reco
   }
 }
 
+/**
+ * Stops before anything is created when wrangler's login can't reach the panel's account, naming both,
+ * instead of letting the deploy fail with Cloudflare's bare "Authentication error [code: 10000]".
+ */
+async function checkLogin({ exec }: WizardDeps, record: HubRecord) {
+  const who = await whoami(exec);
+  if(who?.accounts.some(a => a.id === record.accountId)) return;
+  const name = record.accountName ? `${record.accountName} (${record.accountId})` : record.accountId;
+  const login = who ? `wrangler's login here${who.email ? ` (${who.email})` : ""} can only reach ${who.accounts.map(a => a.name).join(", ") || "no accounts"}` : "wrangler isn't logged in here";
+  throw new Error(`${record.name} lives in the Cloudflare account ${name}, but ${login}. Log in to that account (\`wrangler login\`), or bind the wrangler profile that can reach it to this folder (\`wrangler auth activate <profile> ${process.cwd()}\`), then run the wizard again.`);
+}
+
 /** Shows a wrangler command, runs it, and stops with wrangler's own message if it fails. */
 async function runShown({ exec, prompts: p }: WizardDeps, args: string[]) {
   p.info(`$ ${show(args)}`);
@@ -446,6 +458,7 @@ async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secre
   }
   if(!await p.confirm({ message: create.length ? "Create these and deploy now?" : "Deploy now?", initial: true })) throw new Cancelled();
 
+  await checkLogin(deps, record);
   await createResources(deps, api, record, create);
   // The version is recorded only once the deploy succeeds.
   const dir = await writeHub(root, { ...record, url, panelVersion: deployed?.panelVersion }, deps.bundle);
@@ -458,7 +471,10 @@ async function deploy(deps: WizardDeps, root: string, plan: Plan, replace: Secre
     const args = ["deploy", "--config", configPath, ...Object.keys(secrets).length ? ["--secrets-file", secretsPath] : []];
     if(Object.keys(secrets).length) await writeFile(secretsPath, JSON.stringify(secrets), { mode: 0o600 });
     p.info(`$ ${show(args.map(a => a === secretsPath ? "<secrets file>" : a))}`);
-    const result = await exec(args, { cwd: dir, stream: true });
+    // Run from the folder the wizard started in, not the panel's: wrangler picks its login profile by
+    // folder, and the panel's folder has none bound, so it would fall back to `default`, which may be
+    // signed in to another account (Cloudflare then answers "Authentication error [code: 10000]").
+    const result = await exec(args, { stream: true });
     if(result.code) throw new Error("wrangler deploy failed (its output is above). Run the wizard again after fixing it.");
   } finally {
     await rm(tmp, { recursive: true, force: true });
