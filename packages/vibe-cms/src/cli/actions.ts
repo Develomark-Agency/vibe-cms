@@ -30,24 +30,56 @@ export const connection = {
   prefix: option({ long: "prefix", type: string, defaultValue: () => "/_vibe", defaultValueIsSerializable: true, description: "Path the CMS is mounted at" })
 };
 
-/** Development sites hand out a session to anyone, like the editor's dev sign-in. */
-export async function devToken(site: string, prefix: string): Promise<string | undefined> {
-  const response = await fetch(`${site.replace(/\/$/, "")}${prefix}/api/session`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ dev: true })
-  }).catch(() => null);
-  if(!response?.ok) return undefined;
-  return (await response.json() as { token?: string }).token;
+/**
+ * A development address: loopback, `*.localhost` or `*.test`. Never a site on a hub, so commands
+ * against one don't go through the project's hub login.
+ */
+export function isDevAddress(site: string): boolean {
+  if(!URL.canParse(site)) return false;
+  const host = new URL(site).hostname.toLowerCase();
+  return host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host)
+    || host.endsWith(".localhost") || host.endsWith(".test");
+}
+
+/** Why a request never got an answer: fetch's own message is just "fetch failed", the reason is its cause. */
+function failure(error: unknown): string {
+  const cause = (error as { cause?: { message?: string, code?: string } }).cause;
+  return cause?.message ?? (error as Error).message;
+}
+
+/**
+ * The development sign-in, like the editor's: development sites hand a session to anyone. `problem` says
+ * why there's none when the site couldn't be reached at all, as opposed to not being in development.
+ */
+export async function devSession(site: string, prefix: string): Promise<{ token?: string, problem?: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${site.replace(/\/$/, "")}${prefix}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dev: true })
+    });
+  } catch (error) {
+    return { problem: `Couldn't reach ${new URL(site).origin}: ${failure(error)}` };
+  }
+  if(!response.ok) return {};
+  return { token: (await response.json() as { token?: string }).token };
 }
 
 /**
  * `--token`, else a development sign-in, else your login to the site itself, else a session from this
  * project's hub login. At a terminal, a site that signs people in itself asks you to log in right then.
+ * Development addresses never go to the hub: no hub lists them, so it could only refuse.
  */
 export async function siteToken(values: { site: string, token?: string, prefix: string }): Promise<string | undefined> {
-  const direct = values.token ?? await devToken(values.site, values.prefix) ?? await siteLoginToken(values.site, values.prefix);
-  if(direct) return direct;
+  if(values.token) return values.token;
+  const dev = await devSession(values.site, values.prefix);
+  if(dev.token) return dev.token;
+  // An unreachable site can't be signed in to any other way either: say why now.
+  if(dev.problem) throw new Error(dev.problem);
+  const own = await siteLoginToken(values.site, values.prefix);
+  if(own) return own;
+  if(isDevAddress(values.site)) return loginIfInteractive(values.site, values.prefix);
   let fromHub: string | undefined;
   try {
     fromHub = await hubSiteToken(values.site);

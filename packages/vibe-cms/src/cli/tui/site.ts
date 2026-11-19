@@ -1,7 +1,7 @@
 import { coreActions } from "../../actions/core.ts";
 import { listActions } from "../../actions/define.ts";
 import { describeActions, type ActionDescription } from "../../actions/describe.ts";
-import { devToken } from "../actions.ts";
+import { devSession, isDevAddress } from "../actions.ts";
 import { hubSiteToken, siteLoginToken, siteMetadata } from "../login.ts";
 
 /** The site the TUI works on: its origin and where the CMS is mounted. */
@@ -58,16 +58,17 @@ export async function authorize(site: Site, token = process.env.VIBE_TOKEN): Pro
     return Boolean(await siteMetadata(site.url, site.prefix).catch(() => null));
   }
   if(token) return { token, via: "token", canLogIn: false };
-  const dev = await devToken(site.url, site.prefix);
-  if(dev) return { token: dev, via: "dev", canLogIn: false };
-  let problem: string | undefined;
+  const dev = await devSession(site.url, site.prefix);
+  if(dev.token) return { token: dev.token, via: "dev", canLogIn: false };
+  let problem = dev.problem;
   try {
     const own = await siteLoginToken(site.url, site.prefix);
     if(own) return { token: own, via: "site login", canLogIn: true };
   } catch (error) {
     problem = (error as Error).message;
   }
-  try {
+  // No hub lists a development address, so asking one could only bring back a misleading refusal.
+  if(!isDevAddress(site.url)) try {
     const fromHub = await hubSiteToken(site.url);
     if(fromHub) return { token: fromHub, via: "hub", canLogIn: false };
   } catch (error) {
