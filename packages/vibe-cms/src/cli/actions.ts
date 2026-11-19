@@ -7,6 +7,7 @@ import { coreActions } from "../actions/core.ts";
 import { listActions, type ActionEntry } from "../actions/define.ts";
 import { fromText, inputFields } from "../actions/inputs.ts";
 import { httpCaller } from "../actions/client.ts";
+import { certificateProblem } from "../backups/index.ts";
 import { CLI_CALLER } from "./caller.ts";
 import { hubSiteToken, loginIfInteractive, siteLoginToken } from "./login.ts";
 
@@ -60,7 +61,7 @@ export async function devSession(site: string, prefix: string): Promise<{ token?
       body: JSON.stringify({ dev: true })
     });
   } catch (error) {
-    return { problem: `Couldn't reach ${new URL(site).origin}: ${failure(error)}` };
+    return { problem: `Couldn't reach ${new URL(site).origin}: ${certificateProblem(error) ?? failure(error)}` };
   }
   if(!response.ok) return {};
   return { token: (await response.json() as { token?: string }).token };

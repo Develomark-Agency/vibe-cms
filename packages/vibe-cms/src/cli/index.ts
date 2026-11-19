@@ -10,6 +10,7 @@ import { docs } from "./docs.ts";
 import { locateBundle } from "./deploy/bundle.ts";
 import { hubCommand } from "./hub.ts";
 import { loginCommand, logoutCommand } from "./login.ts";
+import { trustSystemCertificates } from "./trust.ts";
 
 const Port = extendType(number, {
   displayName: "port",
@@ -200,6 +201,9 @@ const cli = subcommands({
     ...actionCommands()
   }
 });
+
+// Before anything connects: local dev sites behind a system-trusted certificate authority work here too.
+trustSystemCertificates();
 
 const argv = process.argv.slice(2);
 // `vibe-cms` on its own at a terminal opens the TUI; `vibe-cms --help` lists the commands. Commands the

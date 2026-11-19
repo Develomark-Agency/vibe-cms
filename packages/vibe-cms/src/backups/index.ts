@@ -92,6 +92,26 @@ function limits(options: RunOptions) {
   return { limit: options.concurrency ?? FILE_CONCURRENCY, budget: options.memoryBudget ?? MEMORY_BUDGET };
 }
 
+/** The codes Node, Bun and OpenSSL give a certificate that can't be verified. */
+const CERTIFICATE_CODES = new Set([
+  "SELF_SIGNED_CERT_IN_CHAIN", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "CERT_UNTRUSTED", "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID", "CERT_SIGNATURE_FAILURE", "ERR_TLS_CERT_ALTNAME_INVALID", "HOSTNAME_MISMATCH"
+]);
+
+/**
+ * What's wrong when a request failed on the site's certificate, or null for any other failure. Retrying
+ * can't fix a certificate, so these fail at once and say so, instead of looking like a flaky network.
+ */
+export function certificateProblem(error: unknown): string | null {
+  for(let e = error as { code?: unknown, message?: unknown, cause?: unknown } | undefined, depth = 0; e && depth < 5; e = e.cause as typeof e, depth++) {
+    if(typeof e.code === "string" && CERTIFICATE_CODES.has(e.code)) {
+      return `The site's certificate isn't trusted (${typeof e.message === "string" && e.message ? e.message : e.code}). For a local dev site, trust its certificate authority in your system, or point NODE_EXTRA_CA_CERTS at it.`;
+    }
+  }
+  return null;
+}
+
 async function backoff(attempt: number) {
   await new Promise(resolve => setTimeout(resolve, Math.min(30_000, 500 * 2 ** attempt) * (0.5 + Math.random() / 2)));
 }
@@ -107,6 +127,8 @@ function steady(options: RunOptions) {
       } catch (error) {
         if(error instanceof ORPCError && (!isRetryable(error) || attempt >= attempts)) throw new BackupError(`${name}: ${error.message}`, { code: error.code, data: error.data });
         if(error instanceof BackupError || attempt >= attempts) throw error;
+        const certificate = certificateProblem(error);
+        if(certificate) throw new BackupError(`${name}: ${certificate}`);
         failure = (error as Error).message;
       }
       options.onProgress?.({ step: "retry", what: name, attempt, error: failure });
@@ -134,6 +156,8 @@ async function transfer(options: RunOptions, what: string, run: () => Promise<Re
       failure = message;
     } catch (error) {
       if(error instanceof BackupError || attempt >= attempts) throw error;
+      const certificate = certificateProblem(error);
+      if(certificate) throw new BackupError(`${what}: ${certificate}`);
       failure = (error as Error).message;
     }
     if(attempt >= attempts) throw new BackupError(`${what}: ${failure}`);
