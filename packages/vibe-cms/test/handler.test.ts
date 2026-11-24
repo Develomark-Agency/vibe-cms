@@ -751,7 +751,8 @@ describe("site settings", () => {
     async function descriptor() {
       return await (await worker.fetch!(new Request("https://site.test/.well-known/vibe-cms"), env, ctx)).json() as any;
     }
-    expect((await descriptor()).icon).toBe("https://site.test/brand/mark.svg?v=2");
+    // Inline, so a panel on another origin needn't request it (a dev server refuses that).
+    expect((await descriptor()).icon).toBe(`data:image/svg+xml;base64,${btoa("<svg/>")}`);
     expect((await vibe.site(env)).favicon).toBe("/brand/mark.svg?v=2");
     await descriptor();
     // Looked at once, then kept for a day.
@@ -770,7 +771,7 @@ describe("site settings", () => {
       });
       return (await (await worker.fetch!(new Request("https://site.test/.well-known/vibe-cms"), env, ctx)).json() as any).icon;
     }
-    expect(await favicon({ "/": "text/html", "/favicon.ico": "image/x-icon" })).toBe("https://site.test/favicon.ico");
+    expect(await favicon({ "/": "text/html", "/favicon.ico": "image/x-icon" })).toBe(`data:image/x-icon;base64,${btoa("x")}`);
     expect(await favicon({ "/": "text/html" })).toBe(null);
   });
 

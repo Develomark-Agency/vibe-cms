@@ -20,7 +20,7 @@ import { findReferences, isAssetValue, isRecord, pickUnionOption, schemaAt, shap
 import type { Session, WriteAction } from "../server/index.ts";
 import { analyzeImage, extensionFor, mimeFor, mimeMatches } from "./analyze.ts";
 import { BACKUP_ACCESS_KEY, backupAccess, can, canPlugin, require, requirePlugin, type Permit, type PluginPermit } from "./auth.ts";
-import { detectFavicon, type SiteFetch } from "./favicon.ts";
+import { detectFavicon, inlineIcon, type SiteFetch } from "./favicon.ts";
 import { and, count, desc, eq, inArray, isNotNull, isNull, like, lte, ne, notExists, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { createDb } from "../db/client.ts";
@@ -135,6 +135,8 @@ interface DetectedSite {
   host: string,
   /** Root-relative when it's on the site itself. */
   favicon: string | null,
+  /** The favicon's bytes as a `data:` URI, for panels on other origins. Only when it's on the site and small. */
+  inline?: string,
   checked: number
 }
 
@@ -2026,7 +2028,8 @@ export class Engine {
     let pending = detecting.get(this.db);
     if(!pending) {
       pending = detectFavicon(origin, siteFetch).then(async favicon => {
-        const next: DetectedSite = { host, favicon, checked: Date.now() };
+        const inline = favicon?.startsWith("/") ? await inlineIcon(origin, favicon, siteFetch) : null;
+        const next: DetectedSite = { host, favicon, ...inline && { inline }, checked: Date.now() };
         await this.putMeta(DETECTED_KEY, JSON.stringify(next));
         return next;
       }).catch(() => stored).finally(() => detecting.delete(this.db));
@@ -2035,6 +2038,11 @@ export class Engine {
     if(!stored) return pending;
     this.scope.ctx?.waitUntil(pending);
     return stored;
+  }
+
+  /** The detected favicon as a `data:` URI, when it could be read; what a panel on another origin shows. */
+  async faviconData(): Promise<string | null> {
+    return (await this.detect())?.inline ?? null;
   }
 
   /** Public: the panel shows sites by these before anyone signs in. */

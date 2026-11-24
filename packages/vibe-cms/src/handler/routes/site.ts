@@ -8,7 +8,7 @@ import { signInMode } from "../signin.ts";
 import { cors, json, type SiteEnv } from "../http.ts";
 import type { ExecutionContext } from "../platform.ts";
 
-export function descriptor(config: AnyConfig, url: URL, prefix: string, site: SiteSettings, org: OrgStatus, warnings: SiteWarning[] = []) {
+export function descriptor(config: AnyConfig, url: URL, prefix: string, site: SiteSettings, org: OrgStatus, warnings: SiteWarning[] = [], faviconData: string | null = null) {
   return {
     protocol: 1,
     /** The Vibe CMS release the site runs, so a panel can tell which sites are behind. */
@@ -16,7 +16,8 @@ export function descriptor(config: AnyConfig, url: URL, prefix: string, site: Si
     id: site.id,
     name: site.name,
     accent: site.accent,
-    icon: site.icon?.url ?? site.favicon,
+    // The favicon travels inline: the panel is on another origin, and a dev server refuses its image request.
+    icon: site.icon?.url ?? faviconData ?? site.favicon,
     /** The org whose hub the site trusts (`VIBE_ORG`), and the hub's address. */
     org: org.org,
     hub: org.hub,
@@ -44,8 +45,9 @@ discovery.use("/.well-known/vibe-cms", cors);
 discovery.get("/.well-known/vibe-cms", async c => {
   const { state, ctx } = c.env;
   const url = new URL(c.req.url);
-  const site = await new Engine(state, { origin: url.origin, session: null, trusted: false, ctx }).site();
-  return json(descriptor(state.config, url, state.prefix, site, await state.org.status(), await siteWarnings(state, ctx)), { headers: { "cache-control": "public, max-age=60" } });
+  const engine = new Engine(state, { origin: url.origin, session: null, trusted: false, ctx });
+  const site = await engine.site();
+  return json(descriptor(state.config, url, state.prefix, site, await state.org.status(), await siteWarnings(state, ctx), await engine.faviconData()), { headers: { "cache-control": "public, max-age=60" } });
 });
 
 /** `GET /info`: what the editor needs to start: the config, the sign-in mode, the site's settings. */
@@ -60,7 +62,7 @@ export const info = new Hono<SiteEnv>()
       dev,
       hub: org.hub,
       signIn: await signInMode(state),
-      site: descriptor(state.config, new URL(c.req.url), state.prefix, site, org, await siteWarnings(state, ctx)),
+      site: descriptor(state.config, new URL(c.req.url), state.prefix, site, org, await siteWarnings(state, ctx), await c.get("engine").faviconData()),
       settings: site
     });
   });

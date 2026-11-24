@@ -60,3 +60,29 @@ export async function detectFavicon(origin: string, fetchSite: SiteFetch): Promi
   }
   return null;
 }
+
+/** The most an inlined icon may weigh; a larger one stays a link. */
+const INLINE_MAX_BYTES = 256 * 1024;
+
+/**
+ * A same-origin icon as a `data:` URI. A panel on another origin can't load it by URL (dev servers
+ * refuse cross-site subresource requests), but it can read it from the site's descriptor. Null when
+ * it can't be read or is too large.
+ */
+export async function inlineIcon(origin: string, path: string, fetchSite: SiteFetch): Promise<string | null> {
+  try {
+    const response = await withTimeout(fetchSite(new Request(new URL(path, origin).href)));
+    const type = (response.headers.get("content-type") ?? "").split(";")[0]!.trim();
+    if(!response.ok || !type.startsWith("image/")) {
+      await response.body?.cancel();
+      return null;
+    }
+    const bytes = new Uint8Array(await withTimeout(response.arrayBuffer()));
+    if(!bytes.length || bytes.length > INLINE_MAX_BYTES) return null;
+    let binary = "";
+    for(let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return `data:${type};base64,${btoa(binary)}`;
+  } catch {
+    return null;
+  }
+}
